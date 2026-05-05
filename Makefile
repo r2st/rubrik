@@ -1,4 +1,4 @@
-.PHONY: help install test validate run dashboard notebook clean all
+.PHONY: help install test validate run dashboard notebook docs clean all
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -20,6 +20,9 @@ dashboard:  ## Launch the Streamlit dashboard
 
 notebook:  ## Open the narrative notebook
 	jupyter lab transcript_intelligence.ipynb
+
+docs:  ## Build the static HTML documentation site (docs/html/)
+	python build_docs.py
 
 clean:  ## Remove generated outputs and caches
 	rm -rf output/* __pycache__ .pytest_cache src/__pycache__ tests/__pycache__

@@ -108,7 +108,9 @@ transcript-intelligence/
 │   └── test_categorizer.py       # 31 unit tests
 ├── docs/
 │   ├── ARCHITECTURE.md           # system design with diagrams
-│   └── APPROACH.md               # methodology decisions
+│   ├── APPROACH.md               # methodology decisions
+│   └── html/                     # built static site (make docs)
+├── build_docs.py                 # MD → HTML converter
 └── output/                       # generated artifacts (gitignored)
 ```
 
@@ -153,6 +155,17 @@ Five tabs with sidebar filters by call type, product area, and date:
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — system design, module dependencies, data model, pipeline stages, sequence diagrams
 - [`docs/APPROACH.md`](docs/APPROACH.md) — methodology decisions, why hybrid categorization, why silhouette, sentiment trajectory math, risk scoring weights
+
+### Standalone HTML docs
+
+For sharing without GitHub access (email, drive, etc.), build a self-contained static site:
+
+```bash
+make docs                       # writes docs/html/{index,architecture,approach}.html
+open docs/html/index.html       # macOS — or just double-click
+```
+
+Each page is a single HTML file (CSS inlined, Mermaid via CDN). No server needed; no build dependencies at view time.
 
 ## License
 

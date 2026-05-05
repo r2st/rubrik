@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Approach · Transcript Intelligence</title>
+<style>
+:root {
+  --fg: #1f2328;
+  --fg-muted: #59636e;
+  --bg: #ffffff;
+  --bg-soft: #f6f8fa;
+  --bg-code: #f6f8fa;
+  --border: #d0d7de;
+  --link: #0969da;
+  --accent: #2196f3;
+  --warn: #fff8c5;
+  --warn-border: #d4a72c;
+}
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--fg);
+  background: var(--bg);
+  margin: 0;
+}
+.nav {
+  background: #0d1117;
+  color: #f0f6fc;
+  padding: 14px 32px;
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  border-bottom: 1px solid #21262d;
+}
+.nav .brand {
+  font-weight: 700;
+  font-size: 16px;
+  margin-right: auto;
+  letter-spacing: 0.2px;
+}
+.nav .brand::before { content: "📞 "; }
+.nav a {
+  color: #adbac7;
+  text-decoration: none;
+  font-size: 14px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+}
+.nav a:hover { background: #21262d; color: #f0f6fc; }
+.nav a.active { color: #f0f6fc; background: #21262d; }
+main {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 40px 32px 80px;
+}
+h1, h2, h3, h4 { line-height: 1.25; margin-top: 28px; margin-bottom: 12px; }
+h1 { font-size: 32px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+h2 { font-size: 24px; padding-bottom: 6px; border-bottom: 1px solid var(--border); margin-top: 36px; }
+h3 { font-size: 20px; }
+h4 { font-size: 17px; color: var(--fg-muted); }
+p, ul, ol { margin: 12px 0; }
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code {
+  background: var(--bg-code);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.92em;
+}
+pre {
+  background: var(--bg-code);
+  padding: 16px;
+  border-radius: 6px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  font-size: 0.92em;
+}
+pre code { background: none; padding: 0; }
+table {
+  border-collapse: collapse;
+  margin: 16px 0;
+  width: 100%;
+  font-size: 0.94em;
+}
+th, td {
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  text-align: left;
+}
+th { background: var(--bg-soft); font-weight: 600; }
+tr:nth-child(even) td { background: #fafbfc; }
+blockquote {
+  border-left: 4px solid var(--border);
+  padding: 6px 16px;
+  color: var(--fg-muted);
+  margin: 16px 0;
+  background: var(--bg-soft);
+}
+hr { border: 0; border-top: 1px solid var(--border); margin: 32px 0; }
+img { max-width: 100%; }
+.mermaid {
+  background: var(--bg-soft);
+  padding: 18px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  margin: 18px 0;
+  text-align: center;
+  overflow-x: auto;
+}
+.toc-card {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 20px;
+  margin: 20px 0;
+}
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.85em;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  margin-right: 4px;
+}
+footer {
+  margin-top: 48px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--fg-muted);
+  text-align: center;
+}
+@media (max-width: 720px) {
+  .nav { padding: 12px 16px; gap: 12px; }
+  main { padding: 24px 16px 56px; }
+  h1 { font-size: 26px; }
+  h2 { font-size: 20px; }
+}
+</style>
+</head>
+<body>
+<nav class="nav">
+  <span class="brand">Transcript Intelligence</span>
+  <a href="index.html">Home</a>
+  <a href="architecture.html">Architecture</a>
+  <a href="approach.html" class="active">Approach</a>
+</nav>
+<main>
+<h1 id="approach-methodology">Approach &amp; Methodology</h1>
+<p>This document captures the <em>why</em> behind the design — the decisions made, the alternatives considered, and the tradeoffs accepted.</p>
+<h2 id="contents">Contents</h2>
+<ul>
+<li><a href="#categorization-why-hybrid">Categorization: why hybrid</a></li>
+<li><a href="#categorization-how-the-rules-are-layered">Categorization: how the rules are layered</a></li>
+<li><a href="#clustering-why-silhouette">Clustering: why silhouette</a></li>
+<li><a href="#sentiment-two-granularities">Sentiment: two granularities</a></li>
+<li><a href="#customer-churn-risk-score">Customer churn risk score</a></li>
+<li><a href="#why-these-six-insights">Why these six insights</a></li>
+<li><a href="#what-we-deliberately-did-not-do">What we deliberately did not do</a></li>
+</ul>
+<hr />
+<h2 id="categorization-why-hybrid">Categorization: why hybrid</h2>
+<p>The dataset has two kinds of structure: <strong>explicit</strong> (title patterns, topic tags) and <strong>latent</strong> (themes that cut across the explicit categories). A single approach handles only one kind well.</p>
+<div class="mermaid">flowchart LR
+    Doc[Meeting] --> S1{Has structured signal?<br/>title, topics field}
+
+    S1 -->|Yes| Rules[Regex rules<br/>fast · reproducible · auditable]
+    S1 -->|No / Latent| Cluster[TF-IDF + KMeans<br/>finds cross-category themes]
+
+    Rules --> Out[call_type · purpose · product_areas · customer]
+    Cluster --> Out2[content_cluster]</div>
+
+<table>
+<thead>
+<tr>
+<th>Approach</th>
+<th>Pros</th>
+<th>Cons</th>
+<th>Used for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Pure rules</strong></td>
+<td>100% reproducible, fast, auditable, free</td>
+<td>Misses latent themes; brittle on new title formats</td>
+<td>Call type, purpose, product, customer</td>
+</tr>
+<tr>
+<td><strong>Pure LLM</strong></td>
+<td>Handles ambiguity well, no engineering</td>
+<td>Slow, expensive, non-deterministic, opaque</td>
+<td>— (overkill at this scale)</td>
+</tr>
+<tr>
+<td><strong>Pure clustering</strong></td>
+<td>Finds latent themes</td>
+<td>Hard to label, no obvious mapping to business categories</td>
+<td>—</td>
+</tr>
+<tr>
+<td><strong>Hybrid (this)</strong></td>
+<td>Each layer doing what it's good at</td>
+<td>Two systems to maintain</td>
+<td>✅</td>
+</tr>
+</tbody>
+</table>
+<p><strong>At what scale would I switch?</strong> Pure-LLM becomes the right tool around 10k+ docs <em>or</em> when the title format becomes inconsistent (free-text titles, multilingual data, no structured fields). Below that, rules win on cost and reproducibility — and you can always layer an LLM on top of the catch-all bucket later.</p>
+<hr />
+<h2 id="categorization-how-the-rules-are-layered">Categorization: how the rules are layered</h2>
+<div class="mermaid">flowchart TD
+    Title[Meeting title + summary] --> R1{Call type pattern}
+    R1 -->|"^Support Case"| CT1[support]
+    R1 -->|"Aegis / · URGENT: · ESCALATION:"| CT2[external]
+    R1 -->|fallback| CT3[internal]
+
+    Title --> R2{Purpose pattern<br/>first match wins<br/>ordered by specificity}
+    R2 --> P1[Incident Response]
+    R2 --> P2[Support Resolution]
+    R2 --> P3[Renewal/Contract]
+    R2 --> P4[Engineering Cadence]
+    R2 --> P5[Planning/Strategy]
+    R2 --> P6[Competitive Intelligence]
+    R2 --> P7[Customer Onboarding]
+    R2 --> P8[Product Feedback]
+    R2 --> P9[Company Update]
+    R2 --> P10[Review]
+    R2 --> P11[Account Management<br/>catch-all]
+
+    Title --> R3{Product keywords<br/>multi-label}
+    R3 --> Pr1[Detect]
+    R3 --> Pr2[Comply]
+    R3 --> Pr3[Protect]
+    R3 --> Pr4[Identity]
+    R3 --> Pr5[General<br/>fallback]</div>
+
+<p><strong>Why first-match (not best-match) for purpose?</strong> Because the rules are <em>ordered by specificity</em>. "Detect Outage - Final Review" should be Incident Response, not Review. The cost is rule-order maintenance; the benefit is no probabilistic ambiguity to debug.</p>
+<p><strong>Why multi-label for product?</strong> A single meeting can absolutely touch multiple products — e.g., a SOC 2 audit (Comply) discussing Detect's evidence collection. Forcing single-label loses information.</p>
+<p><strong>The catch-all is a feature.</strong> Anything that doesn't match a specific purpose lands in "Account Management". <code>validate.py</code> measures this bucket's size — it's currently 13%, an honest reflection of how many meetings genuinely <em>are</em> general account management.</p>
+<hr />
+<h2 id="clustering-why-silhouette">Clustering: why silhouette</h2>
+<p>Hard-coding <code>k=7</code> works, but it leaves an obvious question: "why 7?" Silhouette score gives a defensible answer.</p>
+<div class="mermaid">flowchart LR
+    Texts[Transcripts] --> TFIDF["TF-IDF<br/>(stopwords + fillers,<br/>1-2 grams, min_df=3)"]
+    TFIDF --> Sweep["Fit KMeans for k ∈ [4..10]"]
+    Sweep --> Score["Compute silhouette per k"]
+    Score --> Pick["Pick k with max silhouette"]
+    Pick --> Result["k = 7 selected<br/>silhouette = 0.082"]</div>
+
+<p><strong>Why silhouette and not elbow?</strong> Elbow is eyeballed and reviewer-dependent. Silhouette is a single number that's easy to explain and easy to validate.</p>
+<p><strong>Why is silhouette so low (0.082)?</strong> Conversational text is genuinely overlapping — meetings about "Detect outage" share vocabulary with "Detect roadmap" and with "Reliability review". Low silhouette is honest about that. The clusters are still useful as an <em>exploratory</em> layer; we don't pretend they're hard categories.</p>
+<p><strong>Stop word handling matters.</strong> Default sklearn stop words drop "the/and/of"; that's not enough for transcripts. We add ~30 conversational fillers (<code>yeah</code>, <code>okay</code>, <code>like</code>, <code>just</code>, <code>actually</code> …) — this alone moved cluster top-terms from "yeah, want, just" garbage to "comply, audit, evidence, control". Stored in <code>config.CONVERSATIONAL_FILLERS</code> so it's tunable.</p>
+<hr />
+<h2 id="sentiment-two-granularities">Sentiment: two granularities</h2>
+<p>The dataset gives us <strong>meeting-level</strong> scores (1–5 from the summary) and <strong>per-sentence</strong> labels (positive/neutral/negative from the transcript). Most analyses use only the first. We use both.</p>
+<h3 id="within-meeting-trajectory">Within-meeting trajectory</h3>
+<p>For each meeting:</p>
+<div class="mermaid">flowchart LR
+    Sentences["Sentences<br/>(in order)"] --> Bucket["Split into N=5 buckets"]
+    Bucket --> Score["Map labels to numeric:<br/>+1 / 0 / -1"]
+    Score --> Avg["Mean per bucket"]
+    Avg --> Traj["Trajectory<br/>e.g. [0.3, 0.1, -0.4, -0.2, 0.0]"]
+    Traj --> Drop["max_drop = min(diff(traj))"]
+    Traj --> EndStart["end_minus_start"]
+    Score --> ShareNeg["share_negative"]</div>
+
+<p><strong>Why this matters.</strong> A meeting with average score 3.4 sounds fine — but if the trajectory is <code>[0.5, 0.4, -0.6, 0.0, 0.2]</code>, there was a sharp friction moment in the middle that the average smoothed out. That's a coaching opportunity invisible to standard summary stats.</p>
+<p><strong>Why 5 buckets?</strong> Enough resolution to see start/middle/end shapes; not so many that small meetings get one-sentence buckets. Tunable via the <code>n_buckets</code> parameter.</p>
+<p><strong>Numeric mapping.</strong> <code>positive=+1, neutral=0, negative=-1</code> — simple, sufficient for trajectory shape. We don't try to extract magnitude from the categorical labels because the dataset doesn't provide it.</p>
+<h3 id="why-not-derive-sentiment-from-a-model">Why not derive sentiment from a model?</h3>
+<p>We could run a HuggingFace classifier on each sentence — but the dataset already provides per-sentence labels with confidence scores (avg 0.92). Using them is faster, free, and stays consistent with the meeting-level scores. If the dataset shape changed (raw text only, no labels), swapping in a classifier would be a one-function change in <code>sentiment.py</code>.</p>
+<hr />
+<h2 id="customer-churn-risk-score">Customer churn risk score</h2>
+<p>Three normalized signals, weighted, summed. Each signal answers a different question:</p>
+<div class="mermaid">flowchart TD
+    A[Avg meeting sentiment<br/>per customer] --> N1["Normalize:<br/>max(0, 3 - avg) / 2<br/>↓ in [0, 1]"]
+    B[Explicit churn_signal<br/>key moments] --> N2["Normalize:<br/>count / max_count<br/>↓ in [0, 1]"]
+    C[Within-meeting<br/>negative pivots] --> N3["Normalize:<br/>|max_drop| / 2<br/>↓ in [0, 1]"]
+
+    N1 --> W1["× 0.5"]
+    N2 --> W2["× 0.3"]
+    N3 --> W3["× 0.2"]
+
+    W1 --> Sum["sum"]
+    W2 --> Sum
+    W3 --> Sum
+    Sum --> Score["risk_score ∈ [0, 1]"]
+    Score --> Tier{Tier}
+    Tier -->|≥ 0.40| High[🔴 high]
+    Tier -->|≥ 0.25| Med[🟡 medium]
+    Tier -->|else| Low[🟢 low]</div>
+
+<p><strong>Why these weights?</strong> Sentiment is the strongest single signal (0.5) because it's the most consistent across meetings. Explicit churn moments are rarer but more decisive (0.3). Within-meeting pivots are the weakest signal (0.2) because they can fire on a single bad moment in an otherwise healthy account. Weights live in <code>config.RISK_WEIGHTS</code>.</p>
+<p><strong>Why these thresholds?</strong> Empirically calibrated from the actual score distribution (max=0.54, p75=0.24). The first version had <code>high=0.55</code> — <code>validate.py</code> flagged that <em>zero</em> customers landed in the high tier, which is useless for triage. We dropped it to 0.40 so 6% of customers (the genuinely concerning ones) are flagged. This is exactly what the validation layer is for.</p>
+<p><strong>Could we use a learned model?</strong> Sure — logistic regression on these features against actual churn outcomes, once we have labels. The current scoring is a sensible prior for the cold-start period.</p>
+<hr />
+<h2 id="why-these-six-insights">Why these six insights</h2>
+<p>We picked one insight per primary stakeholder, plus one that uses the unique sentence-level data:</p>
+<table>
+<thead>
+<tr>
+<th>Insight</th>
+<th>Primary audience</th>
+<th>Question it answers</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Customer churn risk</strong></td>
+<td>Sales, CS</td>
+<td>Which accounts are at risk before the renewal call?</td>
+</tr>
+<tr>
+<td><strong>Incident blast radius</strong></td>
+<td>Eng leadership, board</td>
+<td>What's the total business impact of an outage, beyond MTTR?</td>
+</tr>
+<tr>
+<td><strong>Action item load</strong></td>
+<td>Eng managers, ops</td>
+<td>Who's bottlenecking execution?</td>
+</tr>
+<tr>
+<td><strong>Competitive language</strong></td>
+<td>Product, comp intel</td>
+<td>Which accounts are evaluating alternatives?</td>
+</tr>
+<tr>
+<td><strong>Speaker dominance</strong></td>
+<td>Team leads, L&amp;D</td>
+<td>Are we listening to customers, or talking at them?</td>
+</tr>
+<tr>
+<td><strong>Negative pivots</strong> ⭐</td>
+<td>CS, sales coaching</td>
+<td>Where are the friction moments worth reviewing?</td>
+</tr>
+</tbody>
+</table>
+<p>The starred insight is unique to this analysis — it depends on the per-sentence sentiment data that most pipelines don't touch.</p>
+<hr />
+<h2 id="what-we-deliberately-did-not-do">What we deliberately did not do</h2>
+<table>
+<thead>
+<tr>
+<th>Skipped</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Build a production API</td>
+<td>The deliverables are a slide deck + notebook + demo — not a deployment</td>
+</tr>
+<tr>
+<td>Train a custom embedding model</td>
+<td>TF-IDF is sufficient at 100 docs; embeddings would be runtime overhead with marginal lift</td>
+</tr>
+<tr>
+<td>Use an LLM for categorization</td>
+<td>Rules are 99% accurate vs the dataset's own topic tags. LLMs would add latency and cost without measurable lift</td>
+</tr>
+<tr>
+<td>Generate synthetic data</td>
+<td>The 100 meetings cover all three call types and a meaningful incident — the dataset is already useful</td>
+</tr>
+<tr>
+<td>Add a database / persistence layer</td>
+<td>Pipeline runs in 10s; running it on demand is simpler than caching to disk</td>
+</tr>
+<tr>
+<td>Build a CI/CD pipeline</td>
+<td>Out of scope for a take-home</td>
+</tr>
+<tr>
+<td>Cross-validate clustering with multiple random seeds</td>
+<td>Silhouette is stable enough at this scale</td>
+</tr>
+<tr>
+<td>Add forecasting / time-series modeling</td>
+<td>Three months of data is too short for meaningful forecasts; we surface trends, not predictions</td>
+</tr>
+</tbody>
+</table>
+<p>The principle: ship the simplest thing that produces correct, defensible insights. Complexity earns its way in.</p>
+<footer>
+  Generated from <code>docs/APPROACH.md</code> · <a href="https://github.com/">view on GitHub</a>
+</footer>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    securityLevel: 'loose',
+    flowchart: { htmlLabels: true, curve: 'basis' }
+  });
+</script>
+</body>
+</html>

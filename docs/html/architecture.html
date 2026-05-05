@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architecture · Transcript Intelligence</title>
+<style>
+:root {
+  --fg: #1f2328;
+  --fg-muted: #59636e;
+  --bg: #ffffff;
+  --bg-soft: #f6f8fa;
+  --bg-code: #f6f8fa;
+  --border: #d0d7de;
+  --link: #0969da;
+  --accent: #2196f3;
+  --warn: #fff8c5;
+  --warn-border: #d4a72c;
+}
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--fg);
+  background: var(--bg);
+  margin: 0;
+}
+.nav {
+  background: #0d1117;
+  color: #f0f6fc;
+  padding: 14px 32px;
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  border-bottom: 1px solid #21262d;
+}
+.nav .brand {
+  font-weight: 700;
+  font-size: 16px;
+  margin-right: auto;
+  letter-spacing: 0.2px;
+}
+.nav .brand::before { content: "📞 "; }
+.nav a {
+  color: #adbac7;
+  text-decoration: none;
+  font-size: 14px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+}
+.nav a:hover { background: #21262d; color: #f0f6fc; }
+.nav a.active { color: #f0f6fc; background: #21262d; }
+main {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 40px 32px 80px;
+}
+h1, h2, h3, h4 { line-height: 1.25; margin-top: 28px; margin-bottom: 12px; }
+h1 { font-size: 32px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+h2 { font-size: 24px; padding-bottom: 6px; border-bottom: 1px solid var(--border); margin-top: 36px; }
+h3 { font-size: 20px; }
+h4 { font-size: 17px; color: var(--fg-muted); }
+p, ul, ol { margin: 12px 0; }
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code {
+  background: var(--bg-code);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.92em;
+}
+pre {
+  background: var(--bg-code);
+  padding: 16px;
+  border-radius: 6px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  font-size: 0.92em;
+}
+pre code { background: none; padding: 0; }
+table {
+  border-collapse: collapse;
+  margin: 16px 0;
+  width: 100%;
+  font-size: 0.94em;
+}
+th, td {
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  text-align: left;
+}
+th { background: var(--bg-soft); font-weight: 600; }
+tr:nth-child(even) td { background: #fafbfc; }
+blockquote {
+  border-left: 4px solid var(--border);
+  padding: 6px 16px;
+  color: var(--fg-muted);
+  margin: 16px 0;
+  background: var(--bg-soft);
+}
+hr { border: 0; border-top: 1px solid var(--border); margin: 32px 0; }
+img { max-width: 100%; }
+.mermaid {
+  background: var(--bg-soft);
+  padding: 18px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  margin: 18px 0;
+  text-align: center;
+  overflow-x: auto;
+}
+.toc-card {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 20px;
+  margin: 20px 0;
+}
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.85em;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  margin-right: 4px;
+}
+footer {
+  margin-top: 48px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--fg-muted);
+  text-align: center;
+}
+@media (max-width: 720px) {
+  .nav { padding: 12px 16px; gap: 12px; }
+  main { padding: 24px 16px 56px; }
+  h1 { font-size: 26px; }
+  h2 { font-size: 20px; }
+}
+</style>
+</head>
+<body>
+<nav class="nav">
+  <span class="brand">Transcript Intelligence</span>
+  <a href="index.html">Home</a>
+  <a href="architecture.html" class="active">Architecture</a>
+  <a href="approach.html">Approach</a>
+</nav>
+<main>
+<h1 id="architecture">Architecture</h1>
+<p>This document explains how the system is organized, how data flows through it, and how the three interfaces (notebook, dashboard, CLI) share a single analytical core.</p>
+<h2 id="contents">Contents</h2>
+<ul>
+<li><a href="#design-principles">Design principles</a></li>
+<li><a href="#system-overview">System overview</a></li>
+<li><a href="#module-dependencies">Module dependencies</a></li>
+<li><a href="#data-model">Data model</a></li>
+<li><a href="#pipeline-stages">Pipeline stages</a></li>
+<li><a href="#interface-layering">Interface layering</a></li>
+<li><a href="#validation-flow">Validation flow</a></li>
+<li><a href="#caching--performance">Caching &amp; performance</a></li>
+</ul>
+<hr />
+<h2 id="design-principles">Design principles</h2>
+<ol>
+<li><strong>Single source of truth.</strong> All categorization rules, thresholds, and keyword lists live in <code>src/config.py</code>. Analysis modules read from config — they never hardcode their own values.</li>
+<li><strong>Pure functions where possible.</strong> Each insight module is a function: takes DataFrames in, returns a DataFrame out. Composable, testable, dashboard-friendly.</li>
+<li><strong>Three interfaces, one core.</strong> The notebook, Streamlit dashboard, and CLI runner all import from <code>src/</code>. No duplicated logic.</li>
+<li><strong>Rules + ML, not rules vs. ML.</strong> Regex for high-structure decisions (call type, product area). TF-IDF/KMeans for latent themes. The two layers are complementary, not competing.</li>
+<li><strong>Validate semantically, not just syntactically.</strong> Unit tests verify rule behavior; <code>validate.py</code> audits the rules against the actual dataset.</li>
+</ol>
+<hr />
+<h2 id="system-overview">System overview</h2>
+<div class="mermaid">flowchart LR
+    subgraph "Input"
+        Data[("100 meeting<br/>directories<br/>(JSON × 6)")]
+    end
+
+    subgraph "Core (src/)"
+        direction TB
+        Loader["data_loader<br/>📄 raw → DataFrames"]
+        Cat["categorizer<br/>🏷️ rules"]
+        Sent["sentiment<br/>📈 trajectories"]
+        Clust["clustering<br/>🎯 TF-IDF + KMeans"]
+        Ins["insights<br/>💡 6 modules"]
+        Viz["visualizations<br/>📊 matplotlib"]
+        Cfg[("config<br/>⚙️ keywords<br/>thresholds")]
+    end
+
+    subgraph "Interfaces"
+        NB["📓 Notebook"]
+        DB["📊 Dashboard<br/>(Streamlit)"]
+        CLI["⚙️ run_analysis.py"]
+        Val["🔍 validate.py"]
+    end
+
+    subgraph "Output"
+        Out[("output/<br/>CSVs · JSON · PNGs")]
+    end
+
+    Data --> Loader
+    Loader --> Cat
+    Loader --> Sent
+    Loader --> Clust
+    Cat --> Ins
+    Sent --> Ins
+    Clust --> Ins
+    Ins --> Viz
+
+    Cfg -.-> Cat
+    Cfg -.-> Clust
+    Cfg -.-> Ins
+
+    Ins --> NB
+    Ins --> DB
+    Ins --> CLI
+    Ins --> Val
+    Viz --> NB
+    Viz --> CLI
+
+    CLI --> Out
+    NB --> Out</div>
+
+<p><strong>Reading this diagram:</strong> raw JSON flows in from the left, gets parsed into typed DataFrames, then enriched in three parallel passes (categorize, sentiment, cluster). Insight modules consume those enriched DataFrames. The four interfaces on the right all draw from the same insight functions — there is no logic duplicated across them.</p>
+<hr />
+<h2 id="module-dependencies">Module dependencies</h2>
+<div class="mermaid">graph TD
+    config[config.py]
+    loader[data_loader.py]
+    cat[categorizer.py]
+    sent[sentiment.py]
+    clust[clustering.py]
+    ins[insights.py]
+    viz[visualizations.py]
+
+    config --> loader
+    config --> cat
+    config --> clust
+    config --> ins
+    config --> viz
+
+    loader --> cat
+    loader --> sent
+    loader --> clust
+
+    cat --> ins
+    sent --> ins
+
+    cat --> viz
+    sent --> viz
+    clust --> viz
+    ins --> viz
+
+    classDef root fill:#1f77b4,color:#fff
+    classDef leaf fill:#aec7e8
+    class config root
+    class viz leaf</div>
+
+<p><code>config.py</code> is the dependency root — every other module reads from it. <code>visualizations.py</code> is the leaf — nothing imports from it. This is a clean DAG; no cycles.</p>
+<hr />
+<h2 id="data-model">Data model</h2>
+<p>A meeting directory contains six JSON files. We project them into three tabular shapes for analysis.</p>
+<div class="mermaid">erDiagram
+    MEETING ||--o{ SENTENCE : has
+    MEETING ||--o{ SPEAKER_SEGMENT : has
+    MEETING ||--o{ ACTION_ITEM : has
+    MEETING ||--o{ KEY_MOMENT : has
+    MEETING ||--o{ EVENT : has
+
+    MEETING {
+        string meeting_id PK
+        string title
+        string call_type "support|external|internal"
+        string meeting_purpose "11 categories"
+        list product_areas "multi-label"
+        string customer "external only"
+        datetime start_time
+        float duration_min
+        float sentiment_score "1..5"
+        list trajectory "5 buckets, [-1..1]"
+        float max_drop "within-call pivot"
+        int content_cluster
+    }
+
+    SENTENCE {
+        string meeting_id FK
+        int index
+        string speaker
+        string text
+        string sentiment "pos|neutral|neg"
+        float confidence
+        float time_offset
+    }
+
+    SPEAKER_SEGMENT {
+        string meeting_id FK
+        string speaker
+        float start_ts
+        float end_ts
+        float duration
+    }
+
+    ACTION_ITEM {
+        string meeting_id FK
+        string owner
+        string text
+    }
+
+    KEY_MOMENT {
+        string meeting_id FK
+        string type "churn_signal|technical_issue|concern|positive_pivot"
+        string speaker
+        float time_offset
+    }</div>
+
+<p><code>MEETING</code> is the analysis-ready row. The categorizer adds <code>call_type</code>, <code>meeting_purpose</code>, <code>product_areas</code>, <code>customer</code>. The sentiment module adds <code>trajectory</code>, <code>max_drop</code>, <code>share_negative</code>. The clustering module adds <code>content_cluster</code>.</p>
+<hr />
+<h2 id="pipeline-stages">Pipeline stages</h2>
+<div class="mermaid">flowchart TD
+    Start([Start]) --> S1[1\. Load all meetings<br/>data_loader.load_all_meetings]
+    S1 --> S2[2\. Project to DataFrames<br/>meetings_to_dataframe<br/>sentences_dataframe<br/>speakers_dataframe]
+    S2 --> S3[3\. Categorize<br/>regex rules → call_type, purpose,<br/>product_areas, customer]
+    S3 --> S4[4\. Sentiment trajectories<br/>bucket sentences × 5 → trajectory,<br/>max_drop, share_negative]
+    S4 --> S5[5\. Cluster content<br/>TF-IDF → KMeans<br/>k chosen via silhouette]
+    S5 --> S6[6\. Run insights<br/>customer_health · incident_impact ·<br/>action_item_load · competitive_signals ·<br/>speaker_dominance · negative_pivots]
+    S6 --> S7[7\. Render visualizations<br/>10 PNGs]
+    S7 --> S8[8\. Export<br/>CSV · JSON]
+    S8 --> End([Done])
+
+    style S3 fill:#e3f2fd
+    style S4 fill:#e3f2fd
+    style S5 fill:#e3f2fd
+    style S6 fill:#fff3e0</div>
+
+<p>Stages 3–5 run in series in <code>run_analysis.py</code> but are mutually independent on data — they could be parallelized. Stage 6 depends on all three enrichments being present.</p>
+<hr />
+<h2 id="interface-layering">Interface layering</h2>
+<div class="mermaid">flowchart TB
+    subgraph "User interfaces"
+        UI1["transcript_intelligence.ipynb<br/>(narrative, panel-ready)"]
+        UI2["dashboard.py<br/>(Streamlit interactive)"]
+        UI3["run_analysis.py<br/>(batch / CI)"]
+        UI4["validate.py<br/>(audit)"]
+    end
+
+    subgraph "Public API (src/)"
+        API1["data_loader<br/>load_all_meetings()<br/>meetings_to_dataframe()<br/>sentences_dataframe()<br/>speakers_dataframe()"]
+        API2["categorizer.annotate(df)"]
+        API3["sentiment.add_trajectories(df, sentences)"]
+        API4["clustering.cluster_transcripts(texts)"]
+        API5["insights.*(df)"]
+        API6["visualizations.plot_*(...)"]
+    end
+
+    UI1 --> API1
+    UI1 --> API2
+    UI1 --> API3
+    UI1 --> API4
+    UI1 --> API5
+    UI1 --> API6
+
+    UI2 --> API1
+    UI2 --> API2
+    UI2 --> API3
+    UI2 --> API4
+    UI2 --> API5
+
+    UI3 --> API1
+    UI3 --> API2
+    UI3 --> API3
+    UI3 --> API4
+    UI3 --> API5
+    UI3 --> API6
+
+    UI4 --> API1
+    UI4 --> API2
+    UI4 --> API3
+    UI4 --> API4
+    UI4 --> API5</div>
+
+<p>Every interface uses the same public API. If you change <code>categorizer.annotate</code>, all four interfaces pick it up automatically. If you add a new insight, you import it in whichever interface needs it — no scaffolding.</p>
+<hr />
+<h2 id="validation-flow">Validation flow</h2>
+<div class="mermaid">flowchart LR
+    Data[(Dataset)] --> Pipeline[Pipeline]
+    Pipeline --> Audit{validate.py}
+
+    Audit --> C1["Rule coverage<br/>(catch-all bucket size)"]
+    Audit --> C2["Customer extraction<br/>(every external has a customer?)"]
+    Audit --> C3["Product cross-reference<br/>(rules ↔ dataset's topics field)"]
+    Audit --> C4["Data quality<br/>(empty transcripts, weird durations)"]
+    Audit --> C5["Cluster homogeneity<br/>(redundant w/ rules?)"]
+    Audit --> C6["Sentiment alignment<br/>(meeting ↔ sentence)"]
+    Audit --> C7["Risk distribution<br/>(threshold calibration)"]
+
+    C1 --> Report[/PASS · WARN · FAIL/]
+    C2 --> Report
+    C3 --> Report
+    C4 --> Report
+    C5 --> Report
+    C6 --> Report
+    C7 --> Report</div>
+
+<p>Each check is a small function returning a <code>Check(name, status, detail)</code>. Adding a new check is one new function and one line in <code>main()</code>.</p>
+<hr />
+<h2 id="caching-performance">Caching &amp; performance</h2>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Cache</th>
+<th>Reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Streamlit dashboard</td>
+<td><code>@st.cache_data</code> on <code>load_pipeline()</code></td>
+<td>Pipeline runs once per session, not on every widget change</td>
+</tr>
+<tr>
+<td>Notebook</td>
+<td>none</td>
+<td>Re-running cells is the user's intent</td>
+</tr>
+<tr>
+<td>CLI</td>
+<td>none</td>
+<td>Designed for one-shot batch</td>
+</tr>
+</tbody>
+</table>
+<p>Pipeline runtime: ~10 seconds end-to-end on 100 meetings. The bottleneck is silhouette-based <code>k</code> selection (fits 7 KMeans models). At 10x scale, switch to mini-batch KMeans or run the silhouette sweep on a sample.</p>
+<hr />
+<h2 id="extensibility-checklist">Extensibility checklist</h2>
+<ul>
+<li><strong>Add a new insight:</strong> new function in <code>insights.py</code> taking <code>df</code> → returning a DataFrame. Wire into <code>run_analysis.py</code>, the notebook, the dashboard.</li>
+<li><strong>Add a new categorization rule:</strong> edit <code>config.PURPOSE_RULES</code> or <code>config.PRODUCT_KEYWORDS</code>. Add a test in <code>tests/test_categorizer.py</code>. No analysis code touched.</li>
+<li><strong>Add a new check to validation:</strong> new function in <code>validate.py</code> returning <code>Check(...)</code>. One new line in <code>main()</code>.</li>
+<li><strong>Add a new visualization:</strong> new <code>plot_*</code> function in <code>visualizations.py</code>. Call from notebook or CLI runner.</li>
+</ul>
+<footer>
+  Generated from <code>docs/ARCHITECTURE.md</code> · <a href="https://github.com/">view on GitHub</a>
+</footer>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    securityLevel: 'loose',
+    flowchart: { htmlLabels: true, curve: 'basis' }
+  });
+</script>
+</body>
+</html>
