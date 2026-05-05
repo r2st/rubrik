@@ -1,10 +1,12 @@
 # Transcript Intelligence
 
-> Process meeting transcripts from a B2B SaaS company and surface topic categorization, sentiment trends, and strategic insights for product + engineering leadership.
+> A production-ready pipeline that processes B2B meeting transcripts and surfaces topic categorization, sentiment trends, and strategic insights — exposed as a REST API with a lightweight web dashboard.
 
-[![Tests](https://img.shields.io/badge/tests-31%20passing-brightgreen)](tests/)
+[![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue)](.github/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-71%20passing-brightgreen)](tests/)
+[![Coverage](https://img.shields.io/badge/coverage-94%25-brightgreen)](pyproject.toml)
 [![Validation](https://img.shields.io/badge/validation-9%2F10%20pass-brightgreen)](validate.py)
-[![Python](https://img.shields.io/badge/python-3.9%2B-blue)](requirements.txt)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue)](pyproject.toml)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 ---
@@ -17,46 +19,47 @@
 - [Project layout](#project-layout)
 - [Key findings](#key-findings)
 - [Testing & validation](#testing--validation)
-- [Interactive dashboard](#interactive-dashboard)
+- [API & web dashboard](#api--web-dashboard)
+- [Production readiness](#production-readiness)
 - [Documentation](#documentation)
 
 ---
 
 ## What this does
 
-Given ~100 meeting transcripts (support cases, customer-facing calls, and internal meetings), this pipeline:
+Given ~100 meeting transcripts (support cases, customer-facing calls, internal meetings), this pipeline:
 
-1. **Categorizes** every meeting along three dimensions — call type, purpose, and product area — using a hybrid of regex rules and TF-IDF clustering
-2. **Analyzes sentiment** at both meeting and *sentence* granularity, surfacing within-call friction moments that the meeting-level score hides
-3. **Generates six strategic insights** — customer churn risk, incident blast radius, action item bottlenecks, competitive language, speaker dominance, and within-meeting negative pivots
+1. **Categorizes** every meeting along three dimensions — call type, purpose, product area — using regex rules + TF-IDF clustering
+2. **Analyzes sentiment** at meeting *and* sentence granularity, surfacing within-call friction moments invisible to summary-level scores
+3. **Generates six strategic insights** — customer churn risk, incident blast radius, action item bottlenecks, competitive language, speaker dominance, within-meeting negative pivots
 
-Three interfaces over the same `src/` modules:
+Five interfaces over the same `src/` analysis core:
 
 | Interface | When to use |
 |---|---|
 | `transcript_intelligence.ipynb` | Reviewable narrative — the deliverable |
-| `dashboard.py` (Streamlit) | Live demo, drill-downs, Q&A |
-| `run_analysis.py` | Headless CI / batch refresh |
+| `api/` (FastAPI + Plotly.js dashboard at `/`) | Live demo, drill-downs, production-grade |
+| `run_analysis.py` | Batch / CI / scheduled refresh |
+| `validate.py` | Semantic audits against the dataset |
+| `docs/html/` | Standalone HTML docs (no server needed) |
 
 ## Quick start
 
 ```bash
-make install     # pip install -r requirements.txt
-make test        # 31 unit tests
-make validate    # 10 semantic audits
-make run         # full pipeline → output/
-make dashboard   # streamlit run dashboard.py
-make notebook    # jupyter lab transcript_intelligence.ipynb
+make install-dev   # install + dev tools + pre-commit hooks
+make test          # 71 tests across rules, sentiment, clusters, insights, API
+make validate      # 10 semantic audits against the dataset
+make dev           # FastAPI server with hot reload → http://127.0.0.1:8000
+make docker-build  # containerized
+make docs          # static HTML site at docs/html/
 ```
 
-Or without Make:
+Without Make:
 
 ```bash
-pip install -r requirements.txt
-python -m pytest tests/ -v
-python validate.py
-python run_analysis.py
-streamlit run dashboard.py
+pip install -e ".[dev]"
+pytest && python validate.py && python run_analysis.py
+uvicorn api.main:app --reload
 ```
 
 ## Architecture
@@ -77,40 +80,61 @@ flowchart LR
     Config -.-> Clustering
     Config -.-> Insights
 
-    Insights --> Notebook["📓 Notebook<br/>(narrative)"]
-    Insights --> Dashboard["📊 Streamlit<br/>(interactive)"]
-    Insights --> CLI["⚙️ run_analysis.py<br/>(batch)"]
+    Insights --> API["🚀 FastAPI<br/>REST API + dashboard"]
+    Insights --> Notebook["📓 Notebook<br/>narrative"]
+    Insights --> CLI["⚙️ run_analysis.py<br/>batch"]
+    Insights --> Validator["🔍 validate.py<br/>audits"]
 
-    Notebook --> Out[("output/<br/>CSV · JSON · PNG")]
-    CLI --> Out
+    API --> Web[("Web UI<br/>Plotly.js · vanilla JS")]
+    CLI --> Out[("output/<br/>CSV · JSON · PNG")]
 ```
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for module dependency, data model, and pipeline-stage diagrams. See [`docs/APPROACH.md`](docs/APPROACH.md) for methodology decisions.
+The four interfaces all import the same `src/` modules — single source of truth, no duplicated logic. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for module dependency, data model, pipeline-stage diagrams.
 
 ## Project layout
 
 ```
 transcript-intelligence/
-├── run_analysis.py               # end-to-end CLI pipeline
-├── dashboard.py                  # interactive Streamlit dashboard
-├── validate.py                   # semantic audits
-├── transcript_intelligence.ipynb # narrative notebook
+├── pyproject.toml                # PEP 621 packaging, ruff, mypy, pytest, coverage
+├── requirements.txt              # runtime deps (also installable via pyproject)
 ├── Makefile                      # common commands
-├── src/
+├── Dockerfile                    # multi-stage, non-root, JSON logs, healthcheck
+├── .dockerignore
+├── .pre-commit-config.yaml       # ruff + mypy + standard hooks
+├── .github/workflows/ci.yml      # lint · type-check · test (3.9/3.11/3.12) · docker build
+├── run_analysis.py               # batch pipeline (logs via src.logging_config)
+├── validate.py                   # semantic audits
+├── build_docs.py                 # MD → HTML
+├── transcript_intelligence.ipynb # narrative notebook
+├── src/                          # analysis core (importable package)
 │   ├── config.py                 # keyword maps, thresholds (single source of truth)
-│   ├── data_loader.py            # raw JSON → typed DataFrames
+│   ├── data_loader.py            # raw JSON → typed DataFrames + dataclass
 │   ├── categorizer.py            # call type / purpose / product / customer
 │   ├── sentiment.py              # meeting + sentence-level trajectories
 │   ├── clustering.py             # TF-IDF + KMeans, k via silhouette
-│   ├── insights.py               # 6 strategic insight modules
-│   └── visualizations.py         # matplotlib charts (notebook & CLI)
-├── tests/
-│   └── test_categorizer.py       # 31 unit tests
+│   ├── insights.py               # 6 strategic insights
+│   ├── visualizations.py         # matplotlib (notebook + CLI)
+│   └── logging_config.py         # structured logging (text or JSON)
+├── api/                          # FastAPI service
+│   ├── main.py                   # app, lifespan, static mount
+│   ├── routes.py                 # /api/* endpoints, OpenAPI auto-docs
+│   ├── models.py                 # Pydantic response schemas
+│   └── state.py                  # cached pipeline (thread-safe singleton)
+├── web/                          # static frontend (no build step)
+│   ├── index.html
+│   └── static/{app.js, style.css}
+├── tests/                        # 71 tests, 94% coverage
+│   ├── conftest.py               # session-scoped fixtures
+│   ├── test_categorizer.py       # 31 rule tests
+│   ├── test_data_loader.py       # 6 loader tests
+│   ├── test_sentiment.py         # 8 trajectory tests
+│   ├── test_clustering.py        # 3 clustering tests
+│   ├── test_insights.py          # 9 insight tests
+│   └── test_api.py               # 14 end-to-end API tests
 ├── docs/
-│   ├── ARCHITECTURE.md           # system design with diagrams
+│   ├── ARCHITECTURE.md           # system design with Mermaid diagrams
 │   ├── APPROACH.md               # methodology decisions
 │   └── html/                     # built static site (make docs)
-├── build_docs.py                 # MD → HTML converter
 └── output/                       # generated artifacts (gitignored)
 ```
 
@@ -128,44 +152,90 @@ transcript-intelligence/
 
 ## Testing & validation
 
-Two complementary layers — **unit tests** verify rules behave as written; **semantic validation** asks whether the rules hold up against the data:
+Three complementary layers:
+
+| Layer | Command | What it checks |
+|---|---|---|
+| **Unit + integration tests** | `make test` | 71 tests, 94% coverage. Categorizer, sentiment math, clustering, insights, end-to-end API |
+| **Semantic validation** | `make validate` | 10 audits against the *actual data* — rule coverage, cross-references, distribution checks |
+| **Lint + type-check** | `make lint && make type-check` | ruff (style + bugbear + simplify) + mypy |
 
 ```bash
-python -m pytest tests/ -v   # 31 tests, ~2s
-python validate.py           # 10 audits with PASS / WARN / FAIL flags
+$ make test
+71 passed in 2.69s   ·   coverage: 94%
+
+$ make validate
+9 pass · 1 warn · 0 fail   (10 checks)
 ```
 
-Validation checks include rule coverage, customer extraction completeness, cross-reference of detected products against the dataset's own `topics` field, cluster homogeneity, sentiment alignment between meeting-level and sentence-level signals, and churn risk distribution. Current state: **9 pass, 1 warn, 0 fail.** The remaining warning is a real finding (two clusters re-discover rule categories), not a defect.
+The remaining warning (cluster homogeneity) is a real finding — two clusters re-discover rule categories — not a defect.
 
-## Interactive dashboard
+## API & web dashboard
 
 ```bash
-streamlit run dashboard.py
+make dev   # http://127.0.0.1:8000
 ```
 
-Five tabs with sidebar filters by call type, product area, and date:
+The web app at `/` consumes the same JSON endpoints any external client would. OpenAPI docs at `/docs`.
 
-1. **Overview** — sentiment by call type & purpose, weekly trend with outage marker, distributions
-2. **Customers (at risk)** — full risk-tier table with per-customer drill-down
-3. **Incident impact** — KPIs, scatter plot of all affected meetings, response timeline
-4. **Meeting drill-down** — pick any meeting, see its **within-call sentiment trajectory** and the **full transcript with per-sentence color coding** (🔴 / ⚪ / 🟢)
-5. **Topics & clusters** — silhouette score, cluster top terms, members
+### Endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/health` | Liveness probe |
+| `GET /api/summary` | Dataset KPIs, call type / purpose / product distributions |
+| `GET /api/meetings?call_type=&product=&date_from=&date_to=&limit=` | Filtered meeting list |
+| `GET /api/meetings/{id}` | Full meeting detail with per-sentence sentiment + trajectory |
+| `GET /api/sentiment/{by-call-type, by-purpose, weekly, scores}` | Sentiment views |
+| `GET /api/clusters` | Cluster sizes, top terms, dominant purposes |
+| `GET /api/insights/customer-health` | Risk-ranked customer table |
+| `GET /api/insights/customer/{name}` | Drill-down per customer |
+| `GET /api/insights/incident-impact` | Outage blast radius |
+| `GET /api/insights/action-items` | Top owners with per-channel breakdown |
+| `GET /api/insights/competitive` | Competitive language flags |
+| `GET /api/insights/speaker-dominance` | Talk-time imbalance |
+| `GET /api/insights/negative-pivots` | Within-meeting friction moments |
+
+### Why FastAPI instead of Streamlit
+
+| Concern | Streamlit | FastAPI + static frontend |
+|---|---|---|
+| Multi-user / scale-out | Single session per process | Stateless, scales horizontally |
+| API contract | None — UI-only | OpenAPI schema, versioned models |
+| Testability | Hard to test the UI logic | `TestClient` covers every endpoint |
+| Deployment | Streamlit-specific runtime | Standard ASGI / Docker / Kubernetes |
+| Frontend flexibility | Streamlit components only | Any client (web, mobile, script, BI tool) |
+| Bundle size | Heavy framework + runtime | One Python service, zero-build static UI |
+
+## Production readiness
+
+| Concern | How it's handled |
+|---|---|
+| **Packaging** | `pyproject.toml` (PEP 621); installable via `pip install -e ".[dev]"`; entry-point scripts |
+| **Linting** | `ruff` (lint + format) configured in pyproject |
+| **Type checking** | `mypy` configured for `src/` and `api/` |
+| **Testing** | `pytest`, 71 tests, 94% coverage, session-scoped fixtures, FastAPI `TestClient` |
+| **CI/CD** | GitHub Actions: lint → type-check → test (3.9/3.11/3.12) → Docker build |
+| **Containerization** | Multi-stage Dockerfile, non-root user, healthcheck, JSON logs |
+| **Observability** | Structured logging (`LOG_FORMAT=json`), `/api/health` endpoint |
+| **Configuration** | Env vars (`LOG_LEVEL`, `LOG_FORMAT`, `PORT`); rules/thresholds in `src/config.py` |
+| **API contracts** | Pydantic response models + OpenAPI auto-docs at `/docs` |
+| **Caching** | Pipeline computed once at startup, cached in thread-safe singleton |
+| **Pre-commit** | ruff + mypy + standard hooks (`pre-commit install`) |
+| **Documentation** | README + 2 docs files with Mermaid diagrams + static HTML build |
+
+### What's deliberately not done
+
+- **Auth / multi-tenancy** — not in scope for a take-home; trivial to add via FastAPI dependencies
+- **Database persistence** — dataset is static JSON; pipeline runs in 10s
+- **Async I/O refactor** — not a bottleneck at this scale
+- **Metrics / tracing** — over-engineering for a single-instance demo; OpenTelemetry would slot in cleanly
 
 ## Documentation
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — system design, module dependencies, data model, pipeline stages, sequence diagrams
 - [`docs/APPROACH.md`](docs/APPROACH.md) — methodology decisions, why hybrid categorization, why silhouette, sentiment trajectory math, risk scoring weights
-
-### Standalone HTML docs
-
-For sharing without GitHub access (email, drive, etc.), build a self-contained static site:
-
-```bash
-make docs                       # writes docs/html/{index,architecture,approach}.html
-open docs/html/index.html       # macOS — or just double-click
-```
-
-Each page is a single HTML file (CSS inlined, Mermaid via CDN). No server needed; no build dependencies at view time.
+- **`docs/html/`** — same content as standalone HTML files. `make docs` to build, `open docs/html/index.html` to view
 
 ## License
 

@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Transcript Intelligence</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js" charset="utf-8"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">📞 Transcript Intelligence</div>
+    <nav class="tabs">
+      <button class="tab active" data-tab="overview">Overview</button>
+      <button class="tab" data-tab="customers">Customers</button>
+      <button class="tab" data-tab="incident">Incident</button>
+      <button class="tab" data-tab="meeting">Meeting drill-down</button>
+      <button class="tab" data-tab="clusters">Clusters</button>
+    </nav>
+    <div class="meta" id="meta"></div>
+  </header>
+
+  <main>
+    <!-- KPIs (always visible) -->
+    <section class="kpis" id="kpis"></section>
+
+    <!-- Overview -->
+    <section class="panel active" id="panel-overview">
+      <div class="grid-2">
+        <div class="card">
+          <h3>Sentiment by call type</h3>
+          <div id="chart-sentiment-calltype" class="chart"></div>
+        </div>
+        <div class="card">
+          <h3>Sentiment by meeting purpose</h3>
+          <div id="chart-sentiment-purpose" class="chart"></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Weekly sentiment trend</h3>
+        <p class="caption">Red band marks the Detect outage (week 10–12).</p>
+        <div id="chart-weekly" class="chart"></div>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <h3>Distribution by call type</h3>
+          <div id="chart-call-type-dist" class="chart"></div>
+        </div>
+        <div class="card">
+          <h3>Product area mentions</h3>
+          <div id="chart-product-dist" class="chart"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Customers -->
+    <section class="panel" id="panel-customers">
+      <div class="card">
+        <h3>Customer churn risk ranking</h3>
+        <p class="caption">Composite score in [0, 1]. Combines avg sentiment, churn signals, and within-meeting pivots.</p>
+        <table class="data" id="table-customers"></table>
+      </div>
+      <div class="card">
+        <h3>Drill-down</h3>
+        <select id="customer-select"></select>
+        <div id="customer-detail"></div>
+      </div>
+    </section>
+
+    <!-- Incident -->
+    <section class="panel" id="panel-incident">
+      <div class="card">
+        <h3>Detect outage — blast radius</h3>
+        <div id="incident-kpis" class="mini-kpis"></div>
+        <div id="chart-incident" class="chart"></div>
+      </div>
+      <div class="card">
+        <h3>Direct incident-response timeline</h3>
+        <table class="data" id="table-incident"></table>
+      </div>
+    </section>
+
+    <!-- Meeting drill-down -->
+    <section class="panel" id="panel-meeting">
+      <div class="card">
+        <h3>Pick a meeting</h3>
+        <select id="meeting-select"></select>
+        <div id="meeting-detail"></div>
+      </div>
+    </section>
+
+    <!-- Clusters -->
+    <section class="panel" id="panel-clusters">
+      <div class="card">
+        <h3>Content clusters</h3>
+        <p class="caption" id="cluster-caption"></p>
+        <table class="data" id="table-clusters"></table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

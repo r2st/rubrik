@@ -5,7 +5,6 @@ saves it, and returns the matplotlib Figure for inline notebook display.
 """
 from __future__ import annotations
 
-from collections import Counter
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -100,7 +99,7 @@ def plot_customer_health(health_df: pd.DataFrame) -> plt.Figure:
     ax.barh(plot_df["customer"], plot_df["risk_score"], color=colors)
     ax.set_xlabel("Composite Risk Score (0–1)")
     ax.set_title("Customer Churn Risk Ranking", fontweight="bold")
-    for thr_name, thr_val in config.CHURN_RISK_THRESHOLDS.items():
+    for thr_val in config.CHURN_RISK_THRESHOLDS.values():
         ax.axvline(x=thr_val, color="gray", ls="--", alpha=0.4)
     plt.tight_layout()
     _save(fig, "04_customer_health.png")

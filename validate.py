@@ -10,11 +10,13 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from typing import Callable
 
 import pandas as pd
 
 from src import categorizer, clustering, data_loader, sentiment
+from src.logging_config import configure_logging, get_logger
+
+log = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -219,13 +221,14 @@ def _render(checks: list[Check]) -> int:
 # Main
 # ---------------------------------------------------------------------------
 def main() -> int:
-    print("Loading data...")
+    configure_logging()
+    log.info("Loading data…")
     raw = data_loader.load_all_meetings()
     df = data_loader.meetings_to_dataframe(raw)
     sentences_df = data_loader.sentences_dataframe(raw)
     speakers_df = data_loader.speakers_dataframe(raw)
 
-    print("Running pipeline (categorize + trajectories + clusters)...")
+    log.info("Running pipeline (categorize + trajectories + clusters)…")
     df = categorizer.annotate(df)
     df["num_action_items"] = df["action_items"].apply(len)
     df = sentiment.add_trajectories(df, sentences_df)

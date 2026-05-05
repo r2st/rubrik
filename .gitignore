@@ -33,3 +33,11 @@ _executed.ipynb
 # OS
 .DS_Store
 Thumbs.db
+
+# Coverage & build
+htmlcov/
+.coverage
+coverage.xml
+*.egg-info/
+build/
+dist/

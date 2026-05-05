@@ -157,11 +157,13 @@ footer {
 <main>
 <h1 id="transcript-intelligence">Transcript Intelligence</h1>
 <blockquote>
-<p>Process meeting transcripts from a B2B SaaS company and surface topic categorization, sentiment trends, and strategic insights for product + engineering leadership.</p>
+<p>A production-ready pipeline that processes B2B meeting transcripts and surfaces topic categorization, sentiment trends, and strategic insights — exposed as a REST API with a lightweight web dashboard.</p>
 </blockquote>
-<p><a href="https://github.com/"><img alt="Tests" src="https://img.shields.io/badge/tests-31%20passing-brightgreen" /></a>
+<p><a href=".github/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-blue" /></a>
+<a href="https://github.com/"><img alt="Tests" src="https://img.shields.io/badge/tests-71%20passing-brightgreen" /></a>
+<a href="pyproject.toml"><img alt="Coverage" src="https://img.shields.io/badge/coverage-94%25-brightgreen" /></a>
 <a href="https://github.com/"><img alt="Validation" src="https://img.shields.io/badge/validation-9%2F10%20pass-brightgreen" /></a>
-<a href="https://github.com/"><img alt="Python" src="https://img.shields.io/badge/python-3.9%2B-blue" /></a>
+<a href="pyproject.toml"><img alt="Python" src="https://img.shields.io/badge/python-3.9%2B-blue" /></a>
 <a href="https://github.com/"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue" /></a></p>
 <hr />
 <h2 id="contents">Contents</h2>
@@ -172,18 +174,19 @@ footer {
 <li><a href="#project-layout">Project layout</a></li>
 <li><a href="#key-findings">Key findings</a></li>
 <li><a href="#testing--validation">Testing &amp; validation</a></li>
-<li><a href="#interactive-dashboard">Interactive dashboard</a></li>
+<li><a href="#api--web-dashboard">API &amp; web dashboard</a></li>
+<li><a href="#production-readiness">Production readiness</a></li>
 <li><a href="#documentation">Documentation</a></li>
 </ul>
 <hr />
 <h2 id="what-this-does">What this does</h2>
-<p>Given ~100 meeting transcripts (support cases, customer-facing calls, and internal meetings), this pipeline:</p>
+<p>Given ~100 meeting transcripts (support cases, customer-facing calls, internal meetings), this pipeline:</p>
 <ol>
-<li><strong>Categorizes</strong> every meeting along three dimensions — call type, purpose, and product area — using a hybrid of regex rules and TF-IDF clustering</li>
-<li><strong>Analyzes sentiment</strong> at both meeting and <em>sentence</em> granularity, surfacing within-call friction moments that the meeting-level score hides</li>
-<li><strong>Generates six strategic insights</strong> — customer churn risk, incident blast radius, action item bottlenecks, competitive language, speaker dominance, and within-meeting negative pivots</li>
+<li><strong>Categorizes</strong> every meeting along three dimensions — call type, purpose, product area — using regex rules + TF-IDF clustering</li>
+<li><strong>Analyzes sentiment</strong> at meeting <em>and</em> sentence granularity, surfacing within-call friction moments invisible to summary-level scores</li>
+<li><strong>Generates six strategic insights</strong> — customer churn risk, incident blast radius, action item bottlenecks, competitive language, speaker dominance, within-meeting negative pivots</li>
 </ol>
-<p>Three interfaces over the same <code>src/</code> modules:</p>
+<p>Five interfaces over the same <code>src/</code> analysis core:</p>
 <table>
 <thead>
 <tr>
@@ -197,29 +200,35 @@ footer {
 <td>Reviewable narrative — the deliverable</td>
 </tr>
 <tr>
-<td><code>dashboard.py</code> (Streamlit)</td>
-<td>Live demo, drill-downs, Q&amp;A</td>
+<td><code>api/</code> (FastAPI + Plotly.js dashboard at <code>/</code>)</td>
+<td>Live demo, drill-downs, production-grade</td>
 </tr>
 <tr>
 <td><code>run_analysis.py</code></td>
-<td>Headless CI / batch refresh</td>
+<td>Batch / CI / scheduled refresh</td>
+</tr>
+<tr>
+<td><code>validate.py</code></td>
+<td>Semantic audits against the dataset</td>
+</tr>
+<tr>
+<td><code>docs/html/</code></td>
+<td>Standalone HTML docs (no server needed)</td>
 </tr>
 </tbody>
 </table>
 <h2 id="quick-start">Quick start</h2>
-<pre><code class="language-bash">make install     # pip install -r requirements.txt
-make test        # 31 unit tests
-make validate    # 10 semantic audits
-make run         # full pipeline → output/
-make dashboard   # streamlit run dashboard.py
-make notebook    # jupyter lab transcript_intelligence.ipynb
+<pre><code class="language-bash">make install-dev   # install + dev tools + pre-commit hooks
+make test          # 71 tests across rules, sentiment, clusters, insights, API
+make validate      # 10 semantic audits against the dataset
+make dev           # FastAPI server with hot reload → http://127.0.0.1:8000
+make docker-build  # containerized
+make docs          # static HTML site at docs/html/
 </code></pre>
-<p>Or without Make:</p>
-<pre><code class="language-bash">pip install -r requirements.txt
-python -m pytest tests/ -v
-python validate.py
-python run_analysis.py
-streamlit run dashboard.py
+<p>Without Make:</p>
+<pre><code class="language-bash">pip install -e &quot;.[dev]&quot;
+pytest &amp;&amp; python validate.py &amp;&amp; python run_analysis.py
+uvicorn api.main:app --reload
 </code></pre>
 <h2 id="architecture">Architecture</h2>
 <div class="mermaid">flowchart LR
@@ -237,36 +246,57 @@ streamlit run dashboard.py
     Config -.-> Clustering
     Config -.-> Insights
 
-    Insights --> Notebook["📓 Notebook<br/>(narrative)"]
-    Insights --> Dashboard["📊 Streamlit<br/>(interactive)"]
-    Insights --> CLI["⚙️ run_analysis.py<br/>(batch)"]
+    Insights --> API["🚀 FastAPI<br/>REST API + dashboard"]
+    Insights --> Notebook["📓 Notebook<br/>narrative"]
+    Insights --> CLI["⚙️ run_analysis.py<br/>batch"]
+    Insights --> Validator["🔍 validate.py<br/>audits"]
 
-    Notebook --> Out[("output/<br/>CSV · JSON · PNG")]
-    CLI --> Out</div>
+    API --> Web[("Web UI<br/>Plotly.js · vanilla JS")]
+    CLI --> Out[("output/<br/>CSV · JSON · PNG")]</div>
 
-<p>See <a href="architecture.html"><code>docs/ARCHITECTURE.md</code></a> for module dependency, data model, and pipeline-stage diagrams. See <a href="approach.html"><code>docs/APPROACH.md</code></a> for methodology decisions.</p>
+<p>The four interfaces all import the same <code>src/</code> modules — single source of truth, no duplicated logic. See <a href="architecture.html"><code>docs/ARCHITECTURE.md</code></a> for module dependency, data model, pipeline-stage diagrams.</p>
 <h2 id="project-layout">Project layout</h2>
 <pre><code>transcript-intelligence/
-├── run_analysis.py               # end-to-end CLI pipeline
-├── dashboard.py                  # interactive Streamlit dashboard
-├── validate.py                   # semantic audits
-├── transcript_intelligence.ipynb # narrative notebook
+├── pyproject.toml                # PEP 621 packaging, ruff, mypy, pytest, coverage
+├── requirements.txt              # runtime deps (also installable via pyproject)
 ├── Makefile                      # common commands
-├── src/
+├── Dockerfile                    # multi-stage, non-root, JSON logs, healthcheck
+├── .dockerignore
+├── .pre-commit-config.yaml       # ruff + mypy + standard hooks
+├── .github/workflows/ci.yml      # lint · type-check · test (3.9/3.11/3.12) · docker build
+├── run_analysis.py               # batch pipeline (logs via src.logging_config)
+├── validate.py                   # semantic audits
+├── build_docs.py                 # MD → HTML
+├── transcript_intelligence.ipynb # narrative notebook
+├── src/                          # analysis core (importable package)
 │   ├── config.py                 # keyword maps, thresholds (single source of truth)
-│   ├── data_loader.py            # raw JSON → typed DataFrames
+│   ├── data_loader.py            # raw JSON → typed DataFrames + dataclass
 │   ├── categorizer.py            # call type / purpose / product / customer
 │   ├── sentiment.py              # meeting + sentence-level trajectories
 │   ├── clustering.py             # TF-IDF + KMeans, k via silhouette
-│   ├── insights.py               # 6 strategic insight modules
-│   └── visualizations.py         # matplotlib charts (notebook &amp; CLI)
-├── tests/
-│   └── test_categorizer.py       # 31 unit tests
+│   ├── insights.py               # 6 strategic insights
+│   ├── visualizations.py         # matplotlib (notebook + CLI)
+│   └── logging_config.py         # structured logging (text or JSON)
+├── api/                          # FastAPI service
+│   ├── main.py                   # app, lifespan, static mount
+│   ├── routes.py                 # /api/* endpoints, OpenAPI auto-docs
+│   ├── models.py                 # Pydantic response schemas
+│   └── state.py                  # cached pipeline (thread-safe singleton)
+├── web/                          # static frontend (no build step)
+│   ├── index.html
+│   └── static/{app.js, style.css}
+├── tests/                        # 71 tests, 94% coverage
+│   ├── conftest.py               # session-scoped fixtures
+│   ├── test_categorizer.py       # 31 rule tests
+│   ├── test_data_loader.py       # 6 loader tests
+│   ├── test_sentiment.py         # 8 trajectory tests
+│   ├── test_clustering.py        # 3 clustering tests
+│   ├── test_insights.py          # 9 insight tests
+│   └── test_api.py               # 14 end-to-end API tests
 ├── docs/
-│   ├── ARCHITECTURE.md           # system design with diagrams
+│   ├── ARCHITECTURE.md           # system design with Mermaid diagrams
 │   ├── APPROACH.md               # methodology decisions
 │   └── html/                     # built static site (make docs)
-├── build_docs.py                 # MD → HTML converter
 └── output/                       # generated artifacts (gitignored)
 </code></pre>
 <h2 id="key-findings">Key findings</h2>
@@ -309,33 +339,221 @@ streamlit run dashboard.py
 </tbody>
 </table>
 <h2 id="testing-validation">Testing &amp; validation</h2>
-<p>Two complementary layers — <strong>unit tests</strong> verify rules behave as written; <strong>semantic validation</strong> asks whether the rules hold up against the data:</p>
-<pre><code class="language-bash">python -m pytest tests/ -v   # 31 tests, ~2s
-python validate.py           # 10 audits with PASS / WARN / FAIL flags
+<p>Three complementary layers:</p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Command</th>
+<th>What it checks</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Unit + integration tests</strong></td>
+<td><code>make test</code></td>
+<td>71 tests, 94% coverage. Categorizer, sentiment math, clustering, insights, end-to-end API</td>
+</tr>
+<tr>
+<td><strong>Semantic validation</strong></td>
+<td><code>make validate</code></td>
+<td>10 audits against the <em>actual data</em> — rule coverage, cross-references, distribution checks</td>
+</tr>
+<tr>
+<td><strong>Lint + type-check</strong></td>
+<td><code>make lint &amp;&amp; make type-check</code></td>
+<td>ruff (style + bugbear + simplify) + mypy</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-bash">$ make test
+71 passed in 2.69s   ·   coverage: 94%
+
+$ make validate
+9 pass · 1 warn · 0 fail   (10 checks)
 </code></pre>
-<p>Validation checks include rule coverage, customer extraction completeness, cross-reference of detected products against the dataset's own <code>topics</code> field, cluster homogeneity, sentiment alignment between meeting-level and sentence-level signals, and churn risk distribution. Current state: <strong>9 pass, 1 warn, 0 fail.</strong> The remaining warning is a real finding (two clusters re-discover rule categories), not a defect.</p>
-<h2 id="interactive-dashboard">Interactive dashboard</h2>
-<pre><code class="language-bash">streamlit run dashboard.py
+<p>The remaining warning (cluster homogeneity) is a real finding — two clusters re-discover rule categories — not a defect.</p>
+<h2 id="api-web-dashboard">API &amp; web dashboard</h2>
+<pre><code class="language-bash">make dev   # http://127.0.0.1:8000
 </code></pre>
-<p>Five tabs with sidebar filters by call type, product area, and date:</p>
-<ol>
-<li><strong>Overview</strong> — sentiment by call type &amp; purpose, weekly trend with outage marker, distributions</li>
-<li><strong>Customers (at risk)</strong> — full risk-tier table with per-customer drill-down</li>
-<li><strong>Incident impact</strong> — KPIs, scatter plot of all affected meetings, response timeline</li>
-<li><strong>Meeting drill-down</strong> — pick any meeting, see its <strong>within-call sentiment trajectory</strong> and the <strong>full transcript with per-sentence color coding</strong> (🔴 / ⚪ / 🟢)</li>
-<li><strong>Topics &amp; clusters</strong> — silhouette score, cluster top terms, members</li>
-</ol>
+<p>The web app at <code>/</code> consumes the same JSON endpoints any external client would. OpenAPI docs at <code>/docs</code>.</p>
+<h3 id="endpoints">Endpoints</h3>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /api/health</code></td>
+<td>Liveness probe</td>
+</tr>
+<tr>
+<td><code>GET /api/summary</code></td>
+<td>Dataset KPIs, call type / purpose / product distributions</td>
+</tr>
+<tr>
+<td><code>GET /api/meetings?call_type=&amp;product=&amp;date_from=&amp;date_to=&amp;limit=</code></td>
+<td>Filtered meeting list</td>
+</tr>
+<tr>
+<td><code>GET /api/meetings/{id}</code></td>
+<td>Full meeting detail with per-sentence sentiment + trajectory</td>
+</tr>
+<tr>
+<td><code>GET /api/sentiment/{by-call-type, by-purpose, weekly, scores}</code></td>
+<td>Sentiment views</td>
+</tr>
+<tr>
+<td><code>GET /api/clusters</code></td>
+<td>Cluster sizes, top terms, dominant purposes</td>
+</tr>
+<tr>
+<td><code>GET /api/insights/customer-health</code></td>
+<td>Risk-ranked customer table</td>
+</tr>
+<tr>
+<td><code>GET /api/insights/customer/{name}</code></td>
+<td>Drill-down per customer</td>
+</tr>
+<tr>
+<td><code>GET /api/insights/incident-impact</code></td>
+<td>Outage blast radius</td>
+</tr>
+<tr>
+<td><code>GET /api/insights/action-items</code></td>
+<td>Top owners with per-channel breakdown</td>
+</tr>
+<tr>
+<td><code>GET /api/insights/competitive</code></td>
+<td>Competitive language flags</td>
+</tr>
+<tr>
+<td><code>GET /api/insights/speaker-dominance</code></td>
+<td>Talk-time imbalance</td>
+</tr>
+<tr>
+<td><code>GET /api/insights/negative-pivots</code></td>
+<td>Within-meeting friction moments</td>
+</tr>
+</tbody>
+</table>
+<h3 id="why-fastapi-instead-of-streamlit">Why FastAPI instead of Streamlit</h3>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>Streamlit</th>
+<th>FastAPI + static frontend</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Multi-user / scale-out</td>
+<td>Single session per process</td>
+<td>Stateless, scales horizontally</td>
+</tr>
+<tr>
+<td>API contract</td>
+<td>None — UI-only</td>
+<td>OpenAPI schema, versioned models</td>
+</tr>
+<tr>
+<td>Testability</td>
+<td>Hard to test the UI logic</td>
+<td><code>TestClient</code> covers every endpoint</td>
+</tr>
+<tr>
+<td>Deployment</td>
+<td>Streamlit-specific runtime</td>
+<td>Standard ASGI / Docker / Kubernetes</td>
+</tr>
+<tr>
+<td>Frontend flexibility</td>
+<td>Streamlit components only</td>
+<td>Any client (web, mobile, script, BI tool)</td>
+</tr>
+<tr>
+<td>Bundle size</td>
+<td>Heavy framework + runtime</td>
+<td>One Python service, zero-build static UI</td>
+</tr>
+</tbody>
+</table>
+<h2 id="production-readiness">Production readiness</h2>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>How it's handled</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Packaging</strong></td>
+<td><code>pyproject.toml</code> (PEP 621); installable via <code>pip install -e ".[dev]"</code>; entry-point scripts</td>
+</tr>
+<tr>
+<td><strong>Linting</strong></td>
+<td><code>ruff</code> (lint + format) configured in pyproject</td>
+</tr>
+<tr>
+<td><strong>Type checking</strong></td>
+<td><code>mypy</code> configured for <code>src/</code> and <code>api/</code></td>
+</tr>
+<tr>
+<td><strong>Testing</strong></td>
+<td><code>pytest</code>, 71 tests, 94% coverage, session-scoped fixtures, FastAPI <code>TestClient</code></td>
+</tr>
+<tr>
+<td><strong>CI/CD</strong></td>
+<td>GitHub Actions: lint → type-check → test (3.9/3.11/3.12) → Docker build</td>
+</tr>
+<tr>
+<td><strong>Containerization</strong></td>
+<td>Multi-stage Dockerfile, non-root user, healthcheck, JSON logs</td>
+</tr>
+<tr>
+<td><strong>Observability</strong></td>
+<td>Structured logging (<code>LOG_FORMAT=json</code>), <code>/api/health</code> endpoint</td>
+</tr>
+<tr>
+<td><strong>Configuration</strong></td>
+<td>Env vars (<code>LOG_LEVEL</code>, <code>LOG_FORMAT</code>, <code>PORT</code>); rules/thresholds in <code>src/config.py</code></td>
+</tr>
+<tr>
+<td><strong>API contracts</strong></td>
+<td>Pydantic response models + OpenAPI auto-docs at <code>/docs</code></td>
+</tr>
+<tr>
+<td><strong>Caching</strong></td>
+<td>Pipeline computed once at startup, cached in thread-safe singleton</td>
+</tr>
+<tr>
+<td><strong>Pre-commit</strong></td>
+<td>ruff + mypy + standard hooks (<code>pre-commit install</code>)</td>
+</tr>
+<tr>
+<td><strong>Documentation</strong></td>
+<td>README + 2 docs files with Mermaid diagrams + static HTML build</td>
+</tr>
+</tbody>
+</table>
+<h3 id="whats-deliberately-not-done">What's deliberately not done</h3>
+<ul>
+<li><strong>Auth / multi-tenancy</strong> — not in scope for a take-home; trivial to add via FastAPI dependencies</li>
+<li><strong>Database persistence</strong> — dataset is static JSON; pipeline runs in 10s</li>
+<li><strong>Async I/O refactor</strong> — not a bottleneck at this scale</li>
+<li><strong>Metrics / tracing</strong> — over-engineering for a single-instance demo; OpenTelemetry would slot in cleanly</li>
+</ul>
 <h2 id="documentation">Documentation</h2>
 <ul>
 <li><a href="architecture.html"><code>docs/ARCHITECTURE.md</code></a> — system design, module dependencies, data model, pipeline stages, sequence diagrams</li>
 <li><a href="approach.html"><code>docs/APPROACH.md</code></a> — methodology decisions, why hybrid categorization, why silhouette, sentiment trajectory math, risk scoring weights</li>
+<li><strong><code>docs/html/</code></strong> — same content as standalone HTML files. <code>make docs</code> to build, <code>open docs/html/index.html</code> to view</li>
 </ul>
-<h3 id="standalone-html-docs">Standalone HTML docs</h3>
-<p>For sharing without GitHub access (email, drive, etc.), build a self-contained static site:</p>
-<pre><code class="language-bash">make docs                       # writes docs/html/{index,architecture,approach}.html
-open docs/html/index.html       # macOS — or just double-click
-</code></pre>
-<p>Each page is a single HTML file (CSS inlined, Mermaid via CDN). No server needed; no build dependencies at view time.</p>
 <h2 id="license">License</h2>
 <p><a href="https://github.com/">MIT</a></p>
 <footer>
