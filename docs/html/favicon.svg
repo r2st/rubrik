@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Brand square -->
+  <rect width="32" height="32" rx="7" fill="#2196F3"/>
+  <!-- Chat bubble (white, with tail at bottom-left) -->
+  <path d="M9 8h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-7l-4 4v-4H9a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2z" fill="#fff"/>
+  <!-- Three transcript lines of varying length -->
+  <rect x="10" y="12" width="13" height="2" rx="1" fill="#2196F3"/>
+  <rect x="10" y="15.5" width="10" height="2" rx="1" fill="#2196F3"/>
+  <rect x="10" y="19" width="11" height="2" rx="1" fill="#2196F3"/>
+</svg>

@@ -67,8 +67,11 @@ def index() -> FileResponse:
 
 
 @app.get("/favicon.ico", include_in_schema=False)
+@app.get("/favicon.svg", include_in_schema=False)
 def favicon():
-    fpath = WEB_DIR / "static" / "favicon.ico"
-    if fpath.exists():
-        return FileResponse(fpath)
+    # Prefer SVG (modern, scalable, smaller); fall back to ICO if present.
+    for name in ("favicon.svg", "favicon.ico"):
+        fpath = WEB_DIR / "static" / name
+        if fpath.exists():
+            return FileResponse(fpath)
     return FileResponse(WEB_DIR / "index.html", status_code=404)

@@ -10,6 +10,7 @@ Run:  python build_docs.py
 from __future__ import annotations
 
 import re
+import shutil
 from pathlib import Path
 
 import markdown
@@ -17,6 +18,10 @@ import markdown
 ROOT = Path(__file__).resolve().parent
 HTML_DIR = ROOT / "docs" / "html"
 HTML_DIR.mkdir(parents=True, exist_ok=True)
+
+# Source of truth for the favicon — single SVG file shared between the
+# FastAPI dashboard (web/static/) and the standalone HTML docs.
+FAVICON_SRC = ROOT / "web" / "static" / "favicon.svg"
 
 # Pages: (source_md_path, output_html_filename, page_title, nav_label)
 PAGES = [
@@ -177,6 +182,7 @@ TEMPLATE = """<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
 <style>{css}</style>
 </head>
 <body>
@@ -270,6 +276,13 @@ def build_nav(active: str) -> str:
 
 def build() -> None:
     print(f"Building HTML docs → {HTML_DIR}/")
+
+    # Copy favicon next to the HTML so the docs are self-contained
+    # (works equally over file:// or any HTTP server).
+    if FAVICON_SRC.exists():
+        shutil.copy2(FAVICON_SRC, HTML_DIR / "favicon.svg")
+        print(f"  ✓ favicon.svg  ←  {FAVICON_SRC.relative_to(ROOT)}")
+
     for src, out, title, _ in PAGES:
         md = src.read_text()
         html_body = render_markdown(md)
