@@ -43,6 +43,12 @@ dev:  ## Run the FastAPI server with auto-reload (dev)
 notebook:  ## Open the narrative notebook
 	jupyter lab transcript_intelligence.ipynb
 
+load-test:  ## Run a 30s load test against a running API on :8000
+	python -m tests.load.run_load_test --duration 30 --vus 20
+
+load-test-quick:  ## Quick smoke load test (10s, 5 VUs)
+	python -m tests.load.run_load_test --duration 10 --vus 5
+
 docs:  ## Build the static HTML documentation site
 	python build_docs.py
 

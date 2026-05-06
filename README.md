@@ -3,7 +3,7 @@
 > A production-ready pipeline that processes B2B meeting transcripts and surfaces topic categorization, sentiment trends, and strategic insights — exposed as a REST API with a lightweight web dashboard.
 
 [![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue)](.github/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-86%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-95%20passing-brightgreen)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-94%25-brightgreen)](pyproject.toml)
 [![Validation](https://img.shields.io/badge/validation-9%2F10%20pass-brightgreen)](validate.py)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](pyproject.toml)
@@ -257,6 +257,14 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 | **API versioning** | All routes under `/api/v1/`. Future v2 ships side-by-side without breaking clients. |
 | **CI security scans** | `pip-audit` (dependencies), `trivy` (filesystem + image), `bandit` (Python SAST). |
 
+### Performance & caching
+| Concern | How it's handled |
+|---|---|
+| **Response compression** | `GZipMiddleware` (min 500 bytes, level 6). Typical `/api/v1/meetings` payload: 20 KB → 3.6 KB on the wire (5.5×). |
+| **HTTP cache (ETag)** | Read endpoints return `ETag` + `Cache-Control: max-age=60`; clients revalidate cheaply via `If-None-Match` → 304 Not Modified (no body). |
+| **Pinned dependencies** | Frontend CDN scripts (Plotly, Mermaid) pinned to specific versions with **Subresource Integrity (SRI)** — browsers refuse tampered bytes. |
+| **Load-tested baseline** | `make load-test` — 11 endpoints, weighted traffic mix. Local reference: ~395 RPS, p95 ≤ 35ms. |
+
 ### Observability (opt-in)
 | Concern | How it's handled |
 |---|---|
@@ -308,7 +316,17 @@ All operational knobs are env vars. Copy `.env.example` to `.env` and override.
 
 - [`docs/APPROACH.md`](docs/APPROACH.md) — methodology, comparisons, and verdicts (start here)
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — system design with Mermaid diagrams
+- [`docs/adr/`](docs/adr/) — Architecture Decision Records (immutable, dated, per-decision)
 - **`docs/html/`** — same content as standalone HTML files. `make docs` to build, `open docs/html/index.html` to view
+
+### Load testing
+
+```bash
+make dev               # start the API on :8000
+make load-test         # 30s, 20 VUs, all endpoints — exits non-zero if error rate >1%
+```
+
+Reference numbers from a local Mac (single uvicorn worker): **~395 RPS, p95 ≤ 35ms, 0% errors** across the 11-endpoint mix. The script lives in [`tests/load/run_load_test.py`](tests/load/run_load_test.py) — vanilla Python (httpx + asyncio), no external tool dependency.
 
 ## License
 
