@@ -478,56 +478,111 @@ def extract_toc(html: str) -> str:
     )
 
 
-def fix_internal_links(html: str) -> str:
+DEFAULT_LINK_REMAP = {
+    'href="docs/ARCHITECTURE.md"': 'href="architecture.html"',
+    'href="docs/APPROACH.md"': 'href="approach.html"',
+    'href="../README.md"': 'href="index.html"',
+    'href="ARCHITECTURE.md"': 'href="architecture.html"',
+    'href="APPROACH.md"': 'href="approach.html"',
+    'href="LICENSE"': 'href="https://github.com/"',
+    'href="tests/"': 'href="https://github.com/"',
+    'href="validate.py"': 'href="https://github.com/"',
+    'href="requirements.txt"': 'href="https://github.com/"',
+}
+
+
+def fix_internal_links(html: str, link_remap: dict[str, str] | None = None) -> str:
     """Rewrite cross-document markdown links to their HTML counterparts."""
-    replacements = {
-        'href="docs/ARCHITECTURE.md"': 'href="architecture.html"',
-        'href="docs/APPROACH.md"': 'href="approach.html"',
-        'href="../README.md"': 'href="index.html"',
-        'href="ARCHITECTURE.md"': 'href="architecture.html"',
-        'href="APPROACH.md"': 'href="approach.html"',
-        'href="LICENSE"': 'href="https://github.com/"',
-        'href="tests/"': 'href="https://github.com/"',
-        'href="validate.py"': 'href="https://github.com/"',
-        'href="requirements.txt"': 'href="https://github.com/"',
-    }
-    for old, new in replacements.items():
+    for old, new in (link_remap or DEFAULT_LINK_REMAP).items():
         html = html.replace(old, new)
     return html
 
 
-def build_nav(active: str) -> str:
+def build_nav(pages: list, active: str) -> str:
+    """Build the top nav from a list of (src, out, title, label) tuples."""
     items = []
-    for _, fname, _, label in PAGES:
+    for _, fname, _, label in pages:
         cls = ' class="active"' if fname == active else ""
         items.append(f'<a href="{fname}"{cls}>{label}</a>')
     return "\n  ".join(items)
 
 
-def build() -> None:
-    print(f"Building HTML docs → {HTML_DIR}/")
+def build_site(
+    pages: list,
+    html_dir: Path,
+    *,
+    brand: str = "Transcript Intelligence",
+    brand_url: str = "index.html",
+    link_remap: dict[str, str] | None = None,
+    favicon_src: Path | None = None,
+    project_root: Path | None = None,
+) -> None:
+    """Render a list of markdown pages into a self-contained HTML site.
 
-    # Copy favicon next to the HTML so the docs are self-contained
-    if FAVICON_SRC.exists():
-        shutil.copy2(FAVICON_SRC, HTML_DIR / "favicon.svg")
-        print(f"  ✓ favicon.svg  ←  {FAVICON_SRC.relative_to(ROOT)}")
+    Args:
+        pages: list of (Path, output_filename, title, nav_label) tuples
+        html_dir: output directory; created if missing
+        brand: text shown in the top nav
+        brand_url: where the brand link points
+        link_remap: dict of {'href="x.md"': 'href="x.html"'} substitutions
+        favicon_src: path to the SVG favicon (copied next to the output)
+        project_root: used only for the "Generated from <code>x</code>" footer
 
-    for src, out, title, _ in PAGES:
+    The resulting site:
+      - Self-contained (open the .html file directly; no server needed)
+      - Sidebar TOC with active-section highlighting
+      - Mermaid diagrams render via SRI-pinned CDN
+      - Hover anchor links on h2/h3
+    """
+    html_dir.mkdir(parents=True, exist_ok=True)
+    root = project_root or ROOT
+    print(f"Building HTML site → {html_dir}/")
+
+    if favicon_src and favicon_src.exists():
+        shutil.copy2(favicon_src, html_dir / "favicon.svg")
+        print(f"  ✓ favicon.svg  ←  {favicon_src.relative_to(root) if favicon_src.is_relative_to(root) else favicon_src}")
+
+    template = TEMPLATE.replace(
+        '<img src="favicon.svg" alt="" class="brand-icon">\n    Transcript Intelligence',
+        f'<img src="favicon.svg" alt="" class="brand-icon">\n    {brand}',
+    ).replace(
+        'href="favicon.svg"',
+        # keep favicon link path
+        'href="favicon.svg"',
+    )
+
+    for src, out, title, _ in pages:
         md = src.read_text()
         html_body = render_markdown(md)
-        html_body = fix_internal_links(html_body)
+        html_body = fix_internal_links(html_body, link_remap)
         toc_html = extract_toc(html_body)
-        page = TEMPLATE.format(
+        try:
+            source_rel = str(src.relative_to(root))
+        except ValueError:
+            source_rel = src.name
+        page = template.format(
             title=title,
             css=CSS,
-            nav_links=build_nav(out),
+            nav_links=build_nav(pages, out),
             body=html_body,
             toc_html=toc_html,
-            source=src.relative_to(ROOT),
+            source=source_rel,
         )
-        (HTML_DIR / out).write_text(page)
-        print(f"  ✓ {out}  ←  {src.relative_to(ROOT)}")
-    print(f"\nOpen: file://{HTML_DIR / 'index.html'}")
+        (html_dir / out).write_text(page)
+        print(f"  ✓ {out}  ←  {source_rel}")
+    print(f"\nOpen: file://{html_dir / 'index.html'}")
+
+
+def build() -> None:
+    """Default build: the public docs site under docs/html/."""
+    build_site(
+        PAGES,
+        HTML_DIR,
+        brand="Transcript Intelligence",
+        link_remap=DEFAULT_LINK_REMAP,
+        favicon_src=FAVICON_SRC,
+        project_root=ROOT,
+    )
 
 
 if __name__ == "__main__":
