@@ -1,27 +1,16 @@
 # Architecture
 
-This document explains how the system is organized, how data flows through it, and how the three interfaces (notebook, dashboard, CLI) share a single analytical core.
-
-## Contents
-
-- [Design principles](#design-principles)
-- [System overview](#system-overview)
-- [Module dependencies](#module-dependencies)
-- [Data model](#data-model)
-- [Pipeline stages](#pipeline-stages)
-- [Interface layering](#interface-layering)
-- [Validation flow](#validation-flow)
-- [Caching & performance](#caching--performance)
-
----
+How the system is organized and how data flows through it.
 
 ## Design principles
 
-1. **Single source of truth.** All categorization rules, thresholds, and keyword lists live in `src/config.py`. Analysis modules read from config — they never hardcode their own values.
-2. **Pure functions where possible.** Each insight module is a function: takes DataFrames in, returns a DataFrame out. Composable, testable, dashboard-friendly.
-3. **Three interfaces, one core.** The notebook, Streamlit dashboard, and CLI runner all import from `src/`. No duplicated logic.
-4. **Rules + ML, not rules vs. ML.** Regex for high-structure decisions (call type, product area). TF-IDF/KMeans for latent themes. The two layers are complementary, not competing.
-5. **Validate semantically, not just syntactically.** Unit tests verify rule behavior; `validate.py` audits the rules against the actual dataset.
+| Principle | What it means in practice |
+|---|---|
+| **Single source of truth** | All categorization rules, thresholds, and keyword lists live in `src/config.py`. Analysis modules read from config — they never hardcode their own values. |
+| **Pure functions where possible** | Each insight module takes DataFrames in, returns a DataFrame out. Composable, testable, dashboard-friendly. |
+| **One core, many surfaces** | The notebook, FastAPI dashboard, batch CLI, and validator all import from `src/`. No duplicated logic. |
+| **Rules + ML, not rules vs ML** | Regex for high-structure decisions; TF-IDF/KMeans for latent themes; fine-tuned LLM for tasks where rules can't compete. Layered, not opposed. |
+| **Validate semantically, not just syntactically** | Unit tests verify rule behavior; `validate.py` audits the rules against the actual dataset. |
 
 ---
 
@@ -46,7 +35,7 @@ flowchart LR
 
     subgraph "Interfaces"
         NB["📓 Notebook"]
-        DB["📊 Dashboard<br/>(Streamlit)"]
+        DB["📊 Dashboard<br/>(FastAPI + Plotly.js)"]
         CLI["⚙️ run_analysis.py"]
         Val["🔍 validate.py"]
     end
@@ -79,7 +68,7 @@ flowchart LR
     NB --> Out
 ```
 
-**Reading this diagram:** raw JSON flows in from the left, gets parsed into typed DataFrames, then enriched in three parallel passes (categorize, sentiment, cluster). Insight modules consume those enriched DataFrames. The four interfaces on the right all draw from the same insight functions — there is no logic duplicated across them.
+Raw JSON enters from the left, gets parsed into typed DataFrames, then enriched in three parallel passes (categorize · sentiment · cluster). Insight modules consume the enriched frames. Four interfaces draw from the same insight functions — no logic duplicated across them.
 
 ---
 
@@ -119,7 +108,7 @@ graph TD
     class viz leaf
 ```
 
-`config.py` is the dependency root — every other module reads from it. `visualizations.py` is the leaf — nothing imports from it. This is a clean DAG; no cycles.
+`config.py` is the dependency root — every other module reads from it. `visualizations.py` is the leaf. Clean DAG; no cycles.
 
 ---
 
@@ -133,7 +122,6 @@ erDiagram
     MEETING ||--o{ SPEAKER_SEGMENT : has
     MEETING ||--o{ ACTION_ITEM : has
     MEETING ||--o{ KEY_MOMENT : has
-    MEETING ||--o{ EVENT : has
 
     MEETING {
         string meeting_id PK
@@ -176,7 +164,7 @@ erDiagram
 
     KEY_MOMENT {
         string meeting_id FK
-        string type "churn_signal|technical_issue|concern|positive_pivot"
+        string type "churn_signal|technical|concern|positive_pivot"
         string speaker
         float time_offset
     }
@@ -190,15 +178,14 @@ erDiagram
 
 ```mermaid
 flowchart TD
-    Start([Start]) --> S1[1\. Load all meetings<br/>data_loader.load_all_meetings]
-    S1 --> S2[2\. Project to DataFrames<br/>meetings_to_dataframe<br/>sentences_dataframe<br/>speakers_dataframe]
-    S2 --> S3[3\. Categorize<br/>regex rules → call_type, purpose,<br/>product_areas, customer]
-    S3 --> S4[4\. Sentiment trajectories<br/>bucket sentences × 5 → trajectory,<br/>max_drop, share_negative]
-    S4 --> S5[5\. Cluster content<br/>TF-IDF → KMeans<br/>k chosen via silhouette]
-    S5 --> S6[6\. Run insights<br/>customer_health · incident_impact ·<br/>action_item_load · competitive_signals ·<br/>speaker_dominance · negative_pivots]
-    S6 --> S7[7\. Render visualizations<br/>10 PNGs]
-    S7 --> S8[8\. Export<br/>CSV · JSON]
-    S8 --> End([Done])
+    Start([Start]) --> S1["1\. Load all meetings"]
+    S1 --> S2["2\. Project to DataFrames"]
+    S2 --> S3["3\. Categorize<br/>regex rules → call_type · purpose · product · customer"]
+    S3 --> S4["4\. Sentiment trajectories<br/>bucket sentences × 5 → trajectory · max_drop · share_negative"]
+    S4 --> S5["5\. Cluster content<br/>TF-IDF → KMeans, k via silhouette"]
+    S5 --> S6["6\. Run insights<br/>customer_health · incident_impact · action_item_load · competitive · speaker_dominance · negative_pivots"]
+    S6 --> S7["7\. Visualize · Export"]
+    S7 --> End([Done])
 
     style S3 fill:#e3f2fd
     style S4 fill:#e3f2fd
@@ -206,7 +193,7 @@ flowchart TD
     style S6 fill:#fff3e0
 ```
 
-Stages 3–5 run in series in `run_analysis.py` but are mutually independent on data — they could be parallelized. Stage 6 depends on all three enrichments being present.
+Stages 3–5 run in series in `run_analysis.py` but are independent on data — could be parallelized.
 
 ---
 
@@ -214,11 +201,11 @@ Stages 3–5 run in series in `run_analysis.py` but are mutually independent on 
 
 ```mermaid
 flowchart TB
-    subgraph "User interfaces"
-        UI1["transcript_intelligence.ipynb<br/>(narrative, panel-ready)"]
-        UI2["dashboard.py<br/>(Streamlit interactive)"]
-        UI3["run_analysis.py<br/>(batch / CI)"]
-        UI4["validate.py<br/>(audit)"]
+    subgraph Interfaces
+        UI1["📓 transcript_intelligence.ipynb<br/>narrative · panel-ready"]
+        UI2["📊 dashboard.py<br/>FastAPI + Plotly.js"]
+        UI3["⚙️ run_analysis.py<br/>batch / CI"]
+        UI4["🔍 validate.py<br/>audit"]
     end
 
     subgraph "Public API (src/)"
@@ -236,20 +223,17 @@ flowchart TB
     UI1 --> API4
     UI1 --> API5
     UI1 --> API6
-
     UI2 --> API1
     UI2 --> API2
     UI2 --> API3
     UI2 --> API4
     UI2 --> API5
-
     UI3 --> API1
     UI3 --> API2
     UI3 --> API3
     UI3 --> API4
     UI3 --> API5
     UI3 --> API6
-
     UI4 --> API1
     UI4 --> API2
     UI4 --> API3
@@ -257,7 +241,7 @@ flowchart TB
     UI4 --> API5
 ```
 
-Every interface uses the same public API. If you change `categorizer.annotate`, all four interfaces pick it up automatically. If you add a new insight, you import it in whichever interface needs it — no scaffolding.
+Every interface uses the same public API. Change a function in `src/`, every interface picks it up automatically.
 
 ---
 
@@ -270,7 +254,7 @@ flowchart LR
 
     Audit --> C1["Rule coverage<br/>(catch-all bucket size)"]
     Audit --> C2["Customer extraction<br/>(every external has a customer?)"]
-    Audit --> C3["Product cross-reference<br/>(rules ↔ dataset's topics field)"]
+    Audit --> C3["Product cross-reference<br/>(rules ↔ topics field)"]
     Audit --> C4["Data quality<br/>(empty transcripts, weird durations)"]
     Audit --> C5["Cluster homogeneity<br/>(redundant w/ rules?)"]
     Audit --> C6["Sentiment alignment<br/>(meeting ↔ sentence)"]
@@ -285,25 +269,30 @@ flowchart LR
     C7 --> Report
 ```
 
-Each check is a small function returning a `Check(name, status, detail)`. Adding a new check is one new function and one line in `main()`.
+Each check is a small function returning a `Check(name, status, detail)`. Adding a new audit is one new function and one line in `main()`.
 
 ---
 
-## Caching & performance
+## Performance & caching
 
 | Layer | Cache | Reason |
 |---|---|---|
-| Streamlit dashboard | `@st.cache_data` on `load_pipeline()` | Pipeline runs once per session, not on every widget change |
-| Notebook | none | Re-running cells is the user's intent |
-| CLI | none | Designed for one-shot batch |
+| Streamlit / FastAPI | Pipeline state cached at startup (thread-safe singleton) | Pipeline runs once per process, not per request |
+| Notebook | None | Re-running cells is the user's intent |
+| CLI | None | Designed for one-shot batch |
 
-Pipeline runtime: ~10 seconds end-to-end on 100 meetings. The bottleneck is silhouette-based `k` selection (fits 7 KMeans models). At 10x scale, switch to mini-batch KMeans or run the silhouette sweep on a sample.
+End-to-end runtime: ~10s on 100 meetings. The bottleneck is silhouette-based `k` selection (fits 7 KMeans models). At 10x scale, switch to mini-batch KMeans or run the silhouette sweep on a sample.
 
 ---
 
-## Extensibility checklist
+## Extensibility
 
-- **Add a new insight:** new function in `insights.py` taking `df` → returning a DataFrame. Wire into `run_analysis.py`, the notebook, the dashboard.
-- **Add a new categorization rule:** edit `config.PURPOSE_RULES` or `config.PRODUCT_KEYWORDS`. Add a test in `tests/test_categorizer.py`. No analysis code touched.
-- **Add a new check to validation:** new function in `validate.py` returning `Check(...)`. One new line in `main()`.
-- **Add a new visualization:** new `plot_*` function in `visualizations.py`. Call from notebook or CLI runner.
+How to add new things without touching unrelated code:
+
+| Add a new… | Steps |
+|---|---|
+| **Insight** | New function in `insights.py` taking `df` → returning a DataFrame. Wire into `run_analysis.py`, the notebook, and the dashboard. |
+| **Categorization rule** | Edit `config.PURPOSE_RULES` or `config.PRODUCT_KEYWORDS`. Add a test in `tests/test_categorizer.py`. No analysis code touched. |
+| **Validation check** | New function in `validate.py` returning `Check(...)`. One new line in `main()`. |
+| **Visualization** | New `plot_*` function in `visualizations.py`. Call from notebook or CLI runner. |
+| **API endpoint** | New route in `api/routes.py` + Pydantic response model in `api/models.py`. |

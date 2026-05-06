@@ -9,24 +9,33 @@
 :root {
   --fg: #1f2328;
   --fg-muted: #59636e;
+  --fg-faint: #848d97;
   --bg: #ffffff;
   --bg-soft: #f6f8fa;
   --bg-code: #f6f8fa;
-  --border: #d0d7de;
+  --border: #d8dee4;
+  --border-soft: #eaeef2;
   --link: #0969da;
+  --link-hover: #0550ae;
   --accent: #2196f3;
-  --warn: #fff8c5;
-  --warn-border: #d4a72c;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+  --radius: 6px;
+  --content-width: 920px;
 }
 * { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", "Helvetica Neue", Arial, sans-serif;
   font-size: 16px;
-  line-height: 1.6;
+  line-height: 1.65;
   color: var(--fg);
   background: var(--bg);
   margin: 0;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
+
+/* --------------------------------------------------------------------- nav */
 .nav {
   background: #0d1117;
   color: #f0f6fc;
@@ -41,145 +50,325 @@ body {
 }
 .nav .brand {
   font-weight: 700;
-  font-size: 16px;
+  font-size: 15px;
+  letter-spacing: -0.01em;
   margin-right: auto;
-  letter-spacing: 0.2px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
-.nav .brand::before { content: "📞 "; }
+.nav .brand-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+}
 .nav a {
   color: #adbac7;
   text-decoration: none;
-  font-size: 14px;
-  padding: 6px 10px;
+  font-size: 13px;
+  padding: 6px 12px;
   border-radius: 6px;
-  transition: background 0.15s, color 0.15s;
+  transition: background 0.12s, color 0.12s;
+  font-weight: 500;
 }
 .nav a:hover { background: #21262d; color: #f0f6fc; }
 .nav a.active { color: #f0f6fc; background: #21262d; }
-main {
-  max-width: 920px;
+
+/* ----------------------------------------------------------------- layout */
+.layout {
+  max-width: 1280px;
   margin: 0 auto;
-  padding: 40px 32px 80px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  gap: 56px;
+  padding: 48px 32px 96px;
 }
-h1, h2, h3, h4 { line-height: 1.25; margin-top: 28px; margin-bottom: 12px; }
-h1 { font-size: 32px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
-h2 { font-size: 24px; padding-bottom: 6px; border-bottom: 1px solid var(--border); margin-top: 36px; }
-h3 { font-size: 20px; }
-h4 { font-size: 17px; color: var(--fg-muted); }
-p, ul, ol { margin: 12px 0; }
-a { color: var(--link); text-decoration: none; }
-a:hover { text-decoration: underline; }
-code {
-  background: var(--bg-code);
+main {
+  min-width: 0;
+}
+.toc {
+  position: sticky;
+  top: 88px;
+  align-self: start;
+  font-size: 13px;
+  line-height: 1.55;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.toc-title {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--fg-faint);
+  margin: 0 0 8px;
+}
+.toc ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  border-left: 1px solid var(--border-soft);
+}
+.toc li { margin: 0; }
+.toc a {
+  display: block;
+  padding: 4px 0 4px 12px;
+  margin-left: -1px;
+  border-left: 2px solid transparent;
+  color: var(--fg-muted);
+  text-decoration: none;
+  transition: color 0.1s, border-color 0.1s;
+}
+.toc a:hover { color: var(--fg); }
+.toc a.h3 { padding-left: 24px; font-size: 12.5px; }
+.toc a.active {
+  color: var(--accent);
+  border-left-color: var(--accent);
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- content */
+main h1, main h2, main h3, main h4 {
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  margin: 32px 0 12px;
+  scroll-margin-top: 80px;
+  position: relative;
+}
+main h1 {
+  font-size: 32px;
+  font-weight: 700;
+  margin-top: 0;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+main h2 {
+  font-size: 22px;
+  font-weight: 600;
+  margin-top: 44px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+main h3 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-top: 28px;
+}
+main h4 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Hover anchor link (GitHub-style). H1 has no anchor — it's the page title. */
+main h1 .anchor { display: none; }
+main h2 .anchor, main h3 .anchor, main h4 .anchor {
+  position: absolute;
+  left: -24px;
+  text-decoration: none;
+  color: var(--fg-faint);
+  opacity: 0;
+  transition: opacity 0.15s;
+  font-weight: 400;
+  font-size: 0.85em;
+}
+main h2:hover .anchor,
+main h3:hover .anchor,
+main h4:hover .anchor { opacity: 1; }
+
+main p, main ul, main ol { margin: 12px 0; }
+main ul, main ol { padding-left: 26px; }
+main li { margin: 4px 0; }
+main li > p { margin: 4px 0; }
+
+main a { color: var(--link); text-decoration: none; }
+main a:hover { color: var(--link-hover); text-decoration: underline; }
+main a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
+/* Strong / em */
+main strong { font-weight: 600; color: var(--fg); }
+
+/* ------------------------------------------------------------------ code */
+main code {
+  background: var(--bg-soft);
   padding: 2px 6px;
   border-radius: 4px;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 0.92em;
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  color: #24292f;
+  border: 1px solid var(--border-soft);
 }
-pre {
-  background: var(--bg-code);
-  padding: 16px;
-  border-radius: 6px;
+main pre {
+  background: var(--bg-soft);
+  padding: 16px 18px;
+  border-radius: var(--radius);
   overflow-x: auto;
   border: 1px solid var(--border);
-  font-size: 0.92em;
+  font-size: 13.5px;
+  line-height: 1.5;
+  margin: 16px 0;
 }
-pre code { background: none; padding: 0; }
-table {
+main pre code {
+  background: none;
+  padding: 0;
+  border: none;
+  font-size: 1em;
+}
+
+/* ----------------------------------------------------------------- tables */
+main table {
   border-collapse: collapse;
   margin: 16px 0;
   width: 100%;
-  font-size: 0.94em;
-}
-th, td {
+  font-size: 14px;
   border: 1px solid var(--border);
-  padding: 8px 12px;
-  text-align: left;
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
 }
-th { background: var(--bg-soft); font-weight: 600; }
-tr:nth-child(even) td { background: #fafbfc; }
-blockquote {
-  border-left: 4px solid var(--border);
-  padding: 6px 16px;
+main th, main td {
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-soft);
+}
+main th {
+  background: var(--bg-soft);
+  font-weight: 600;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
   color: var(--fg-muted);
+  border-bottom: 1px solid var(--border);
+}
+main td:first-child { font-weight: 500; color: var(--fg); }
+main tr:last-child td { border-bottom: none; }
+main tr:hover td { background: #fafbfc; }
+
+/* --------------------------------------------------------- blockquotes */
+main blockquote {
+  border-left: 3px solid var(--accent);
+  padding: 8px 18px;
   margin: 16px 0;
   background: var(--bg-soft);
+  color: var(--fg-muted);
+  border-radius: 0 var(--radius) var(--radius) 0;
 }
-hr { border: 0; border-top: 1px solid var(--border); margin: 32px 0; }
-img { max-width: 100%; }
-.mermaid {
+main blockquote p:first-child { margin-top: 0; }
+main blockquote p:last-child { margin-bottom: 0; }
+
+/* --------------------------------------------------------------- mermaid */
+main .mermaid {
   background: var(--bg-soft);
-  padding: 18px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  margin: 18px 0;
+  padding: 20px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-soft);
+  margin: 20px 0;
   text-align: center;
   overflow-x: auto;
 }
-.toc-card {
-  background: var(--bg-soft);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px 20px;
-  margin: 20px 0;
+main .mermaid svg { max-width: 100%; height: auto; }
+
+/* ---------------------------------------------------------- horizontal rule */
+main hr {
+  border: 0;
+  border-top: 1px solid var(--border-soft);
+  margin: 36px 0;
 }
-.badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 0.85em;
-  background: var(--bg-soft);
-  border: 1px solid var(--border);
-  margin-right: 4px;
-}
+
+main img { max-width: 100%; }
+
+/* ------------------------------------------------------------------ footer */
 footer {
-  margin-top: 48px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
+  margin-top: 56px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-soft);
   font-size: 13px;
-  color: var(--fg-muted);
+  color: var(--fg-faint);
   text-align: center;
 }
+footer code {
+  font-size: 0.95em;
+  background: var(--bg-soft);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+/* --------------------------------------------------------------- responsive */
+@media (max-width: 1080px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .toc { display: none; }
+}
 @media (max-width: 720px) {
-  .nav { padding: 12px 16px; gap: 12px; }
-  main { padding: 24px 16px 56px; }
-  h1 { font-size: 26px; }
-  h2 { font-size: 20px; }
+  .nav { padding: 12px 18px; gap: 12px; }
+  .nav a { padding: 5px 8px; font-size: 12.5px; }
+  .layout { padding: 28px 18px 64px; }
+  main h1 { font-size: 26px; }
+  main h2 { font-size: 19px; }
+  main table { display: block; overflow-x: auto; }
+}
+
+/* --------------------------------------------------------------- print */
+@media print {
+  .nav, .toc, footer { display: none; }
+  .layout { display: block; padding: 0; max-width: 100%; }
+  main h2 { page-break-after: avoid; }
+  main pre, main table, main .mermaid { page-break-inside: avoid; }
 }
 </style>
 </head>
 <body>
 <nav class="nav">
-  <span class="brand">Transcript Intelligence</span>
-  <a href="index.html">Home</a>
-  <a href="architecture.html" class="active">Architecture</a>
+  <span class="brand">
+    <img src="favicon.svg" alt="" class="brand-icon">
+    Transcript Intelligence
+  </span>
+  <a href="index.html">Overview</a>
   <a href="approach.html">Approach</a>
+  <a href="architecture.html" class="active">Architecture</a>
 </nav>
+<div class="layout">
 <main>
-<h1 id="architecture">Architecture</h1>
-<p>This document explains how the system is organized, how data flows through it, and how the three interfaces (notebook, dashboard, CLI) share a single analytical core.</p>
-<h2 id="contents">Contents</h2>
-<ul>
-<li><a href="#design-principles">Design principles</a></li>
-<li><a href="#system-overview">System overview</a></li>
-<li><a href="#module-dependencies">Module dependencies</a></li>
-<li><a href="#data-model">Data model</a></li>
-<li><a href="#pipeline-stages">Pipeline stages</a></li>
-<li><a href="#interface-layering">Interface layering</a></li>
-<li><a href="#validation-flow">Validation flow</a></li>
-<li><a href="#caching--performance">Caching &amp; performance</a></li>
-</ul>
+<h1 id="architecture">Architecture<a class="anchor" href="#architecture" title="Permanent link">¶</a></h1>
+<p>How the system is organized and how data flows through it.</p>
+<h2 id="design-principles">Design principles<a class="anchor" href="#design-principles" title="Permanent link">¶</a></h2>
+<table>
+<thead>
+<tr>
+<th>Principle</th>
+<th>What it means in practice</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Single source of truth</strong></td>
+<td>All categorization rules, thresholds, and keyword lists live in <code>src/config.py</code>. Analysis modules read from config — they never hardcode their own values.</td>
+</tr>
+<tr>
+<td><strong>Pure functions where possible</strong></td>
+<td>Each insight module takes DataFrames in, returns a DataFrame out. Composable, testable, dashboard-friendly.</td>
+</tr>
+<tr>
+<td><strong>One core, many surfaces</strong></td>
+<td>The notebook, FastAPI dashboard, batch CLI, and validator all import from <code>src/</code>. No duplicated logic.</td>
+</tr>
+<tr>
+<td><strong>Rules + ML, not rules vs ML</strong></td>
+<td>Regex for high-structure decisions; TF-IDF/KMeans for latent themes; fine-tuned LLM for tasks where rules can't compete. Layered, not opposed.</td>
+</tr>
+<tr>
+<td><strong>Validate semantically, not just syntactically</strong></td>
+<td>Unit tests verify rule behavior; <code>validate.py</code> audits the rules against the actual dataset.</td>
+</tr>
+</tbody>
+</table>
 <hr />
-<h2 id="design-principles">Design principles</h2>
-<ol>
-<li><strong>Single source of truth.</strong> All categorization rules, thresholds, and keyword lists live in <code>src/config.py</code>. Analysis modules read from config — they never hardcode their own values.</li>
-<li><strong>Pure functions where possible.</strong> Each insight module is a function: takes DataFrames in, returns a DataFrame out. Composable, testable, dashboard-friendly.</li>
-<li><strong>Three interfaces, one core.</strong> The notebook, Streamlit dashboard, and CLI runner all import from <code>src/</code>. No duplicated logic.</li>
-<li><strong>Rules + ML, not rules vs. ML.</strong> Regex for high-structure decisions (call type, product area). TF-IDF/KMeans for latent themes. The two layers are complementary, not competing.</li>
-<li><strong>Validate semantically, not just syntactically.</strong> Unit tests verify rule behavior; <code>validate.py</code> audits the rules against the actual dataset.</li>
-</ol>
-<hr />
-<h2 id="system-overview">System overview</h2>
+<h2 id="system-overview">System overview<a class="anchor" href="#system-overview" title="Permanent link">¶</a></h2>
 <div class="mermaid">flowchart LR
     subgraph "Input"
         Data[("100 meeting<br/>directories<br/>(JSON × 6)")]
@@ -198,7 +387,7 @@ footer {
 
     subgraph "Interfaces"
         NB["📓 Notebook"]
-        DB["📊 Dashboard<br/>(Streamlit)"]
+        DB["📊 Dashboard<br/>(FastAPI + Plotly.js)"]
         CLI["⚙️ run_analysis.py"]
         Val["🔍 validate.py"]
     end
@@ -230,9 +419,9 @@ footer {
     CLI --> Out
     NB --> Out</div>
 
-<p><strong>Reading this diagram:</strong> raw JSON flows in from the left, gets parsed into typed DataFrames, then enriched in three parallel passes (categorize, sentiment, cluster). Insight modules consume those enriched DataFrames. The four interfaces on the right all draw from the same insight functions — there is no logic duplicated across them.</p>
+<p>Raw JSON enters from the left, gets parsed into typed DataFrames, then enriched in three parallel passes (categorize · sentiment · cluster). Insight modules consume the enriched frames. Four interfaces draw from the same insight functions — no logic duplicated across them.</p>
 <hr />
-<h2 id="module-dependencies">Module dependencies</h2>
+<h2 id="module-dependencies">Module dependencies<a class="anchor" href="#module-dependencies" title="Permanent link">¶</a></h2>
 <div class="mermaid">graph TD
     config[config.py]
     loader[data_loader.py]
@@ -265,16 +454,15 @@ footer {
     class config root
     class viz leaf</div>
 
-<p><code>config.py</code> is the dependency root — every other module reads from it. <code>visualizations.py</code> is the leaf — nothing imports from it. This is a clean DAG; no cycles.</p>
+<p><code>config.py</code> is the dependency root — every other module reads from it. <code>visualizations.py</code> is the leaf. Clean DAG; no cycles.</p>
 <hr />
-<h2 id="data-model">Data model</h2>
+<h2 id="data-model">Data model<a class="anchor" href="#data-model" title="Permanent link">¶</a></h2>
 <p>A meeting directory contains six JSON files. We project them into three tabular shapes for analysis.</p>
 <div class="mermaid">erDiagram
     MEETING ||--o{ SENTENCE : has
     MEETING ||--o{ SPEAKER_SEGMENT : has
     MEETING ||--o{ ACTION_ITEM : has
     MEETING ||--o{ KEY_MOMENT : has
-    MEETING ||--o{ EVENT : has
 
     MEETING {
         string meeting_id PK
@@ -317,39 +505,38 @@ footer {
 
     KEY_MOMENT {
         string meeting_id FK
-        string type "churn_signal|technical_issue|concern|positive_pivot"
+        string type "churn_signal|technical|concern|positive_pivot"
         string speaker
         float time_offset
     }</div>
 
 <p><code>MEETING</code> is the analysis-ready row. The categorizer adds <code>call_type</code>, <code>meeting_purpose</code>, <code>product_areas</code>, <code>customer</code>. The sentiment module adds <code>trajectory</code>, <code>max_drop</code>, <code>share_negative</code>. The clustering module adds <code>content_cluster</code>.</p>
 <hr />
-<h2 id="pipeline-stages">Pipeline stages</h2>
+<h2 id="pipeline-stages">Pipeline stages<a class="anchor" href="#pipeline-stages" title="Permanent link">¶</a></h2>
 <div class="mermaid">flowchart TD
-    Start([Start]) --> S1[1\. Load all meetings<br/>data_loader.load_all_meetings]
-    S1 --> S2[2\. Project to DataFrames<br/>meetings_to_dataframe<br/>sentences_dataframe<br/>speakers_dataframe]
-    S2 --> S3[3\. Categorize<br/>regex rules → call_type, purpose,<br/>product_areas, customer]
-    S3 --> S4[4\. Sentiment trajectories<br/>bucket sentences × 5 → trajectory,<br/>max_drop, share_negative]
-    S4 --> S5[5\. Cluster content<br/>TF-IDF → KMeans<br/>k chosen via silhouette]
-    S5 --> S6[6\. Run insights<br/>customer_health · incident_impact ·<br/>action_item_load · competitive_signals ·<br/>speaker_dominance · negative_pivots]
-    S6 --> S7[7\. Render visualizations<br/>10 PNGs]
-    S7 --> S8[8\. Export<br/>CSV · JSON]
-    S8 --> End([Done])
+    Start([Start]) --> S1["1\. Load all meetings"]
+    S1 --> S2["2\. Project to DataFrames"]
+    S2 --> S3["3\. Categorize<br/>regex rules → call_type · purpose · product · customer"]
+    S3 --> S4["4\. Sentiment trajectories<br/>bucket sentences × 5 → trajectory · max_drop · share_negative"]
+    S4 --> S5["5\. Cluster content<br/>TF-IDF → KMeans, k via silhouette"]
+    S5 --> S6["6\. Run insights<br/>customer_health · incident_impact · action_item_load · competitive · speaker_dominance · negative_pivots"]
+    S6 --> S7["7\. Visualize · Export"]
+    S7 --> End([Done])
 
     style S3 fill:#e3f2fd
     style S4 fill:#e3f2fd
     style S5 fill:#e3f2fd
     style S6 fill:#fff3e0</div>
 
-<p>Stages 3–5 run in series in <code>run_analysis.py</code> but are mutually independent on data — they could be parallelized. Stage 6 depends on all three enrichments being present.</p>
+<p>Stages 3–5 run in series in <code>run_analysis.py</code> but are independent on data — could be parallelized.</p>
 <hr />
-<h2 id="interface-layering">Interface layering</h2>
+<h2 id="interface-layering">Interface layering<a class="anchor" href="#interface-layering" title="Permanent link">¶</a></h2>
 <div class="mermaid">flowchart TB
-    subgraph "User interfaces"
-        UI1["transcript_intelligence.ipynb<br/>(narrative, panel-ready)"]
-        UI2["dashboard.py<br/>(Streamlit interactive)"]
-        UI3["run_analysis.py<br/>(batch / CI)"]
-        UI4["validate.py<br/>(audit)"]
+    subgraph Interfaces
+        UI1["📓 transcript_intelligence.ipynb<br/>narrative · panel-ready"]
+        UI2["📊 dashboard.py<br/>FastAPI + Plotly.js"]
+        UI3["⚙️ run_analysis.py<br/>batch / CI"]
+        UI4["🔍 validate.py<br/>audit"]
     end
 
     subgraph "Public API (src/)"
@@ -367,36 +554,33 @@ footer {
     UI1 --> API4
     UI1 --> API5
     UI1 --> API6
-
     UI2 --> API1
     UI2 --> API2
     UI2 --> API3
     UI2 --> API4
     UI2 --> API5
-
     UI3 --> API1
     UI3 --> API2
     UI3 --> API3
     UI3 --> API4
     UI3 --> API5
     UI3 --> API6
-
     UI4 --> API1
     UI4 --> API2
     UI4 --> API3
     UI4 --> API4
     UI4 --> API5</div>
 
-<p>Every interface uses the same public API. If you change <code>categorizer.annotate</code>, all four interfaces pick it up automatically. If you add a new insight, you import it in whichever interface needs it — no scaffolding.</p>
+<p>Every interface uses the same public API. Change a function in <code>src/</code>, every interface picks it up automatically.</p>
 <hr />
-<h2 id="validation-flow">Validation flow</h2>
+<h2 id="validation-flow">Validation flow<a class="anchor" href="#validation-flow" title="Permanent link">¶</a></h2>
 <div class="mermaid">flowchart LR
     Data[(Dataset)] --> Pipeline[Pipeline]
     Pipeline --> Audit{validate.py}
 
     Audit --> C1["Rule coverage<br/>(catch-all bucket size)"]
     Audit --> C2["Customer extraction<br/>(every external has a customer?)"]
-    Audit --> C3["Product cross-reference<br/>(rules ↔ dataset's topics field)"]
+    Audit --> C3["Product cross-reference<br/>(rules ↔ topics field)"]
     Audit --> C4["Data quality<br/>(empty transcripts, weird durations)"]
     Audit --> C5["Cluster homogeneity<br/>(redundant w/ rules?)"]
     Audit --> C6["Sentiment alignment<br/>(meeting ↔ sentence)"]
@@ -410,9 +594,9 @@ footer {
     C6 --> Report
     C7 --> Report</div>
 
-<p>Each check is a small function returning a <code>Check(name, status, detail)</code>. Adding a new check is one new function and one line in <code>main()</code>.</p>
+<p>Each check is a small function returning a <code>Check(name, status, detail)</code>. Adding a new audit is one new function and one line in <code>main()</code>.</p>
 <hr />
-<h2 id="caching-performance">Caching &amp; performance</h2>
+<h2 id="performance-caching">Performance &amp; caching<a class="anchor" href="#performance-caching" title="Permanent link">¶</a></h2>
 <table>
 <thead>
 <tr>
@@ -423,35 +607,62 @@ footer {
 </thead>
 <tbody>
 <tr>
-<td>Streamlit dashboard</td>
-<td><code>@st.cache_data</code> on <code>load_pipeline()</code></td>
-<td>Pipeline runs once per session, not on every widget change</td>
+<td>Streamlit / FastAPI</td>
+<td>Pipeline state cached at startup (thread-safe singleton)</td>
+<td>Pipeline runs once per process, not per request</td>
 </tr>
 <tr>
 <td>Notebook</td>
-<td>none</td>
+<td>None</td>
 <td>Re-running cells is the user's intent</td>
 </tr>
 <tr>
 <td>CLI</td>
-<td>none</td>
+<td>None</td>
 <td>Designed for one-shot batch</td>
 </tr>
 </tbody>
 </table>
-<p>Pipeline runtime: ~10 seconds end-to-end on 100 meetings. The bottleneck is silhouette-based <code>k</code> selection (fits 7 KMeans models). At 10x scale, switch to mini-batch KMeans or run the silhouette sweep on a sample.</p>
+<p>End-to-end runtime: ~10s on 100 meetings. The bottleneck is silhouette-based <code>k</code> selection (fits 7 KMeans models). At 10x scale, switch to mini-batch KMeans or run the silhouette sweep on a sample.</p>
 <hr />
-<h2 id="extensibility-checklist">Extensibility checklist</h2>
-<ul>
-<li><strong>Add a new insight:</strong> new function in <code>insights.py</code> taking <code>df</code> → returning a DataFrame. Wire into <code>run_analysis.py</code>, the notebook, the dashboard.</li>
-<li><strong>Add a new categorization rule:</strong> edit <code>config.PURPOSE_RULES</code> or <code>config.PRODUCT_KEYWORDS</code>. Add a test in <code>tests/test_categorizer.py</code>. No analysis code touched.</li>
-<li><strong>Add a new check to validation:</strong> new function in <code>validate.py</code> returning <code>Check(...)</code>. One new line in <code>main()</code>.</li>
-<li><strong>Add a new visualization:</strong> new <code>plot_*</code> function in <code>visualizations.py</code>. Call from notebook or CLI runner.</li>
-</ul>
+<h2 id="extensibility">Extensibility<a class="anchor" href="#extensibility" title="Permanent link">¶</a></h2>
+<p>How to add new things without touching unrelated code:</p>
+<table>
+<thead>
+<tr>
+<th>Add a new…</th>
+<th>Steps</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Insight</strong></td>
+<td>New function in <code>insights.py</code> taking <code>df</code> → returning a DataFrame. Wire into <code>run_analysis.py</code>, the notebook, and the dashboard.</td>
+</tr>
+<tr>
+<td><strong>Categorization rule</strong></td>
+<td>Edit <code>config.PURPOSE_RULES</code> or <code>config.PRODUCT_KEYWORDS</code>. Add a test in <code>tests/test_categorizer.py</code>. No analysis code touched.</td>
+</tr>
+<tr>
+<td><strong>Validation check</strong></td>
+<td>New function in <code>validate.py</code> returning <code>Check(...)</code>. One new line in <code>main()</code>.</td>
+</tr>
+<tr>
+<td><strong>Visualization</strong></td>
+<td>New <code>plot_*</code> function in <code>visualizations.py</code>. Call from notebook or CLI runner.</td>
+</tr>
+<tr>
+<td><strong>API endpoint</strong></td>
+<td>New route in <code>api/routes.py</code> + Pydantic response model in <code>api/models.py</code>.</td>
+</tr>
+</tbody>
+</table>
 <footer>
-  Generated from <code>docs/ARCHITECTURE.md</code> · <a href="https://github.com/">view on GitHub</a>
+  Generated from <code>docs/ARCHITECTURE.md</code>
 </footer>
 </main>
+<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#design-principles" class="h2">Design principles</a></li><li><a href="#system-overview" class="h2">System overview</a></li><li><a href="#module-dependencies" class="h2">Module dependencies</a></li><li><a href="#data-model" class="h2">Data model</a></li><li><a href="#pipeline-stages" class="h2">Pipeline stages</a></li><li><a href="#interface-layering" class="h2">Interface layering</a></li><li><a href="#validation-flow" class="h2">Validation flow</a></li><li><a href="#performance-caching" class="h2">Performance &amp; caching</a></li><li><a href="#extensibility" class="h2">Extensibility</a></li></ul></aside>
+</div>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <script>
   mermaid.initialize({
@@ -460,6 +671,29 @@ footer {
     securityLevel: 'loose',
     flowchart: { htmlLabels: true, curve: 'basis' }
   });
+
+  // Active section highlighting in the TOC
+  (function() {
+    var tocLinks = Array.from(document.querySelectorAll('.toc a'));
+    if (!tocLinks.length) return;
+    var headings = tocLinks
+      .map(function(a) { return document.getElementById(a.getAttribute('href').slice(1)); })
+      .filter(Boolean);
+    function update() {
+      var pos = window.scrollY + 120;
+      var current = headings[0];
+      for (var i = 0; i < headings.length; i++) {
+        if (headings[i].offsetTop <= pos) current = headings[i];
+      }
+      tocLinks.forEach(function(a) { a.classList.remove('active'); });
+      var active = tocLinks.find(function(a) {
+        return a.getAttribute('href') === '#' + current.id;
+      });
+      if (active) active.classList.add('active');
+    }
+    window.addEventListener('scroll', update, { passive: true });
+    update();
+  })();
 </script>
 </body>
 </html>

@@ -9,24 +9,33 @@
 :root {
   --fg: #1f2328;
   --fg-muted: #59636e;
+  --fg-faint: #848d97;
   --bg: #ffffff;
   --bg-soft: #f6f8fa;
   --bg-code: #f6f8fa;
-  --border: #d0d7de;
+  --border: #d8dee4;
+  --border-soft: #eaeef2;
   --link: #0969da;
+  --link-hover: #0550ae;
   --accent: #2196f3;
-  --warn: #fff8c5;
-  --warn-border: #d4a72c;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+  --radius: 6px;
+  --content-width: 920px;
 }
 * { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", "Helvetica Neue", Arial, sans-serif;
   font-size: 16px;
-  line-height: 1.6;
+  line-height: 1.65;
   color: var(--fg);
   background: var(--bg);
   margin: 0;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
+
+/* --------------------------------------------------------------------- nav */
 .nav {
   background: #0d1117;
   color: #f0f6fc;
@@ -41,151 +50,325 @@ body {
 }
 .nav .brand {
   font-weight: 700;
-  font-size: 16px;
+  font-size: 15px;
+  letter-spacing: -0.01em;
   margin-right: auto;
-  letter-spacing: 0.2px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
-.nav .brand::before { content: "📞 "; }
+.nav .brand-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+}
 .nav a {
   color: #adbac7;
   text-decoration: none;
-  font-size: 14px;
-  padding: 6px 10px;
+  font-size: 13px;
+  padding: 6px 12px;
   border-radius: 6px;
-  transition: background 0.15s, color 0.15s;
+  transition: background 0.12s, color 0.12s;
+  font-weight: 500;
 }
 .nav a:hover { background: #21262d; color: #f0f6fc; }
 .nav a.active { color: #f0f6fc; background: #21262d; }
-main {
-  max-width: 920px;
+
+/* ----------------------------------------------------------------- layout */
+.layout {
+  max-width: 1280px;
   margin: 0 auto;
-  padding: 40px 32px 80px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  gap: 56px;
+  padding: 48px 32px 96px;
 }
-h1, h2, h3, h4 { line-height: 1.25; margin-top: 28px; margin-bottom: 12px; }
-h1 { font-size: 32px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
-h2 { font-size: 24px; padding-bottom: 6px; border-bottom: 1px solid var(--border); margin-top: 36px; }
-h3 { font-size: 20px; }
-h4 { font-size: 17px; color: var(--fg-muted); }
-p, ul, ol { margin: 12px 0; }
-a { color: var(--link); text-decoration: none; }
-a:hover { text-decoration: underline; }
-code {
-  background: var(--bg-code);
+main {
+  min-width: 0;
+}
+.toc {
+  position: sticky;
+  top: 88px;
+  align-self: start;
+  font-size: 13px;
+  line-height: 1.55;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.toc-title {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--fg-faint);
+  margin: 0 0 8px;
+}
+.toc ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  border-left: 1px solid var(--border-soft);
+}
+.toc li { margin: 0; }
+.toc a {
+  display: block;
+  padding: 4px 0 4px 12px;
+  margin-left: -1px;
+  border-left: 2px solid transparent;
+  color: var(--fg-muted);
+  text-decoration: none;
+  transition: color 0.1s, border-color 0.1s;
+}
+.toc a:hover { color: var(--fg); }
+.toc a.h3 { padding-left: 24px; font-size: 12.5px; }
+.toc a.active {
+  color: var(--accent);
+  border-left-color: var(--accent);
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- content */
+main h1, main h2, main h3, main h4 {
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  margin: 32px 0 12px;
+  scroll-margin-top: 80px;
+  position: relative;
+}
+main h1 {
+  font-size: 32px;
+  font-weight: 700;
+  margin-top: 0;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+main h2 {
+  font-size: 22px;
+  font-weight: 600;
+  margin-top: 44px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+main h3 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-top: 28px;
+}
+main h4 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Hover anchor link (GitHub-style). H1 has no anchor — it's the page title. */
+main h1 .anchor { display: none; }
+main h2 .anchor, main h3 .anchor, main h4 .anchor {
+  position: absolute;
+  left: -24px;
+  text-decoration: none;
+  color: var(--fg-faint);
+  opacity: 0;
+  transition: opacity 0.15s;
+  font-weight: 400;
+  font-size: 0.85em;
+}
+main h2:hover .anchor,
+main h3:hover .anchor,
+main h4:hover .anchor { opacity: 1; }
+
+main p, main ul, main ol { margin: 12px 0; }
+main ul, main ol { padding-left: 26px; }
+main li { margin: 4px 0; }
+main li > p { margin: 4px 0; }
+
+main a { color: var(--link); text-decoration: none; }
+main a:hover { color: var(--link-hover); text-decoration: underline; }
+main a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
+/* Strong / em */
+main strong { font-weight: 600; color: var(--fg); }
+
+/* ------------------------------------------------------------------ code */
+main code {
+  background: var(--bg-soft);
   padding: 2px 6px;
   border-radius: 4px;
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 0.92em;
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  color: #24292f;
+  border: 1px solid var(--border-soft);
 }
-pre {
-  background: var(--bg-code);
-  padding: 16px;
-  border-radius: 6px;
+main pre {
+  background: var(--bg-soft);
+  padding: 16px 18px;
+  border-radius: var(--radius);
   overflow-x: auto;
   border: 1px solid var(--border);
-  font-size: 0.92em;
+  font-size: 13.5px;
+  line-height: 1.5;
+  margin: 16px 0;
 }
-pre code { background: none; padding: 0; }
-table {
+main pre code {
+  background: none;
+  padding: 0;
+  border: none;
+  font-size: 1em;
+}
+
+/* ----------------------------------------------------------------- tables */
+main table {
   border-collapse: collapse;
   margin: 16px 0;
   width: 100%;
-  font-size: 0.94em;
-}
-th, td {
+  font-size: 14px;
   border: 1px solid var(--border);
-  padding: 8px 12px;
-  text-align: left;
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
 }
-th { background: var(--bg-soft); font-weight: 600; }
-tr:nth-child(even) td { background: #fafbfc; }
-blockquote {
-  border-left: 4px solid var(--border);
-  padding: 6px 16px;
+main th, main td {
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-soft);
+}
+main th {
+  background: var(--bg-soft);
+  font-weight: 600;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
   color: var(--fg-muted);
+  border-bottom: 1px solid var(--border);
+}
+main td:first-child { font-weight: 500; color: var(--fg); }
+main tr:last-child td { border-bottom: none; }
+main tr:hover td { background: #fafbfc; }
+
+/* --------------------------------------------------------- blockquotes */
+main blockquote {
+  border-left: 3px solid var(--accent);
+  padding: 8px 18px;
   margin: 16px 0;
   background: var(--bg-soft);
+  color: var(--fg-muted);
+  border-radius: 0 var(--radius) var(--radius) 0;
 }
-hr { border: 0; border-top: 1px solid var(--border); margin: 32px 0; }
-img { max-width: 100%; }
-.mermaid {
+main blockquote p:first-child { margin-top: 0; }
+main blockquote p:last-child { margin-bottom: 0; }
+
+/* --------------------------------------------------------------- mermaid */
+main .mermaid {
   background: var(--bg-soft);
-  padding: 18px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  margin: 18px 0;
+  padding: 20px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-soft);
+  margin: 20px 0;
   text-align: center;
   overflow-x: auto;
 }
-.toc-card {
-  background: var(--bg-soft);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px 20px;
-  margin: 20px 0;
+main .mermaid svg { max-width: 100%; height: auto; }
+
+/* ---------------------------------------------------------- horizontal rule */
+main hr {
+  border: 0;
+  border-top: 1px solid var(--border-soft);
+  margin: 36px 0;
 }
-.badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 0.85em;
-  background: var(--bg-soft);
-  border: 1px solid var(--border);
-  margin-right: 4px;
-}
+
+main img { max-width: 100%; }
+
+/* ------------------------------------------------------------------ footer */
 footer {
-  margin-top: 48px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border);
+  margin-top: 56px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-soft);
   font-size: 13px;
-  color: var(--fg-muted);
+  color: var(--fg-faint);
   text-align: center;
 }
+footer code {
+  font-size: 0.95em;
+  background: var(--bg-soft);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+/* --------------------------------------------------------------- responsive */
+@media (max-width: 1080px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .toc { display: none; }
+}
 @media (max-width: 720px) {
-  .nav { padding: 12px 16px; gap: 12px; }
-  main { padding: 24px 16px 56px; }
-  h1 { font-size: 26px; }
-  h2 { font-size: 20px; }
+  .nav { padding: 12px 18px; gap: 12px; }
+  .nav a { padding: 5px 8px; font-size: 12.5px; }
+  .layout { padding: 28px 18px 64px; }
+  main h1 { font-size: 26px; }
+  main h2 { font-size: 19px; }
+  main table { display: block; overflow-x: auto; }
+}
+
+/* --------------------------------------------------------------- print */
+@media print {
+  .nav, .toc, footer { display: none; }
+  .layout { display: block; padding: 0; max-width: 100%; }
+  main h2 { page-break-after: avoid; }
+  main pre, main table, main .mermaid { page-break-inside: avoid; }
 }
 </style>
 </head>
 <body>
 <nav class="nav">
-  <span class="brand">Transcript Intelligence</span>
-  <a href="index.html">Home</a>
-  <a href="architecture.html">Architecture</a>
+  <span class="brand">
+    <img src="favicon.svg" alt="" class="brand-icon">
+    Transcript Intelligence
+  </span>
+  <a href="index.html">Overview</a>
   <a href="approach.html" class="active">Approach</a>
+  <a href="architecture.html">Architecture</a>
 </nav>
+<div class="layout">
 <main>
-<h1 id="approach-methodology">Approach &amp; Methodology</h1>
-<p>This document captures the <em>why</em> behind the design — the decisions made, the alternatives considered, and the tradeoffs accepted.</p>
-<h2 id="contents">Contents</h2>
-<ul>
-<li><a href="#categorization-approaches-we-evaluated">Categorization: approaches we evaluated</a></li>
-<li><a href="#approach-1-rule-based-regex-shipped">Approach 1: rule-based regex (shipped)</a></li>
-<li><a href="#approach-2-tf-idf--kmeans-clustering-shipped">Approach 2: TF-IDF + KMeans clustering (shipped)</a></li>
-<li><a href="#approach-3-zero-shot-llm-evaluated-not-shipped">Approach 3: zero-shot LLM (evaluated, not shipped)</a></li>
-<li><a href="#categorization-how-the-rules-are-layered">Categorization: how the rules are layered</a></li>
-<li><a href="#clustering-why-silhouette">Clustering: why silhouette</a></li>
-<li><a href="#summarization--action-items-vendor-vs-self-hosted">Summarization &amp; action items: vendor vs self-hosted</a></li>
-<li><a href="#sentiment-two-granularities">Sentiment: two granularities</a></li>
-<li><a href="#customer-churn-risk-score">Customer churn risk score</a></li>
-<li><a href="#why-these-six-insights">Why these six insights</a></li>
-<li><a href="#what-we-deliberately-did-not-do">What we deliberately did not do</a></li>
-</ul>
+<h1 id="approach-methodology">Approach &amp; Methodology<a class="anchor" href="#approach-methodology" title="Permanent link">¶</a></h1>
+<p>This document captures the design decisions behind the pipeline — what we evaluated, what we shipped, and why.</p>
+<h2 id="executive-summary">Executive summary<a class="anchor" href="#executive-summary" title="Permanent link">¶</a></h2>
+<p>Four decisions drive the architecture. The verdict for each:</p>
+<table>
+<thead>
+<tr>
+<th>Decision</th>
+<th>Verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Categorization</strong> (call type · purpose · product · customer)</td>
+<td><strong>Ship hybrid: regex rules + TF-IDF/KMeans.</strong> Zero-shot LLM evaluated; no measurable lift over rules at this scale.</td>
+</tr>
+<tr>
+<td><strong>Summarization &amp; action items</strong></td>
+<td><strong>Adopt the fine-tuned Gemma 4 v3 adapter for production.</strong> Self-hosted, $0 per call after a one-time $1.40 training spend, +38% ROUGE-L over the baseline. Vendor APIs are a stopgap.</td>
+</tr>
+<tr>
+<td><strong>Sentiment analysis</strong></td>
+<td><strong>Use both granularities.</strong> Meeting-level scores for headlines; per-sentence labels for within-call trajectories. The trajectory signal is the differentiator.</td>
+</tr>
+<tr>
+<td><strong>Customer churn risk score</strong></td>
+<td><strong>Composite weighted score</strong> of sentiment gap + churn moments + within-meeting pivots. Thresholds empirically calibrated to surface ~6% of customers as 🔴 high tier.</td>
+</tr>
+</tbody>
+</table>
+<p>The rest of this document defends each verdict.</p>
 <hr />
-<h2 id="categorization-approaches-we-evaluated">Categorization: approaches we evaluated</h2>
-<p>We evaluated three approaches before settling on a hybrid. The dataset has two kinds of structure — <strong>explicit</strong> (title patterns, topic tags) and <strong>latent</strong> (themes that cut across explicit categories) — and a single approach handles only one kind well.</p>
-<div class="mermaid">flowchart LR
-    Doc[Meeting] --> Cls{Categorization<br/>approach}
-
-    Cls --> Rules["1. Regex rules<br/>shipped"]
-    Cls --> Cluster["2. TF-IDF + KMeans<br/>shipped"]
-    Cls --> Zero["3. Zero-shot LLM<br/>evaluated, not shipped"]
-
-    Rules --> Out[call_type · purpose · product · customer]
-    Cluster --> Out2[content_cluster]</div>
-
-<h3 id="comparison-matrix">Comparison matrix</h3>
+<h2 id="1-categorization">1. Categorization<a class="anchor" href="#1-categorization" title="Permanent link">¶</a></h2>
+<p>We need to classify every meeting along four dimensions: <strong>call type</strong> (support / external / internal), <strong>meeting purpose</strong> (11 categories), <strong>product area</strong> (Detect / Comply / Protect / Identity), and <strong>customer</strong> (for external calls).</p>
+<h3 id="comparison">Comparison<a class="anchor" href="#comparison" title="Permanent link">¶</a></h3>
 <table>
 <thead>
 <tr>
@@ -193,207 +376,86 @@ footer {
 <th>Regex rules</th>
 <th>TF-IDF + KMeans</th>
 <th>Zero-shot LLM</th>
+<th>Fine-tuned LLM</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><strong>Setup cost</strong></td>
-<td>~hours (write rules)</td>
-<td>~hour (vectorize + tune k)</td>
-<td>~hour (prompt design)</td>
+<td><strong>Setup</strong></td>
+<td>Hours</td>
+<td>~1 hour</td>
+<td>~1 hour</td>
+<td>~1 day</td>
 </tr>
 <tr>
-<td><strong>Inference cost / 1k docs</strong></td>
+<td><strong>Inference cost</strong> (per 1k docs)</td>
 <td>~$0</td>
 <td>~$0</td>
-<td>$1–$10 (API)</td>
+<td>$1–$10</td>
+<td>~$0 self-hosted</td>
 </tr>
 <tr>
-<td><strong>Latency / doc</strong></td>
+<td><strong>Latency</strong> (per doc)</td>
 <td>&lt;1ms</td>
 <td>&lt;1ms</td>
-<td>500ms–3s</td>
+<td>0.5–3s</td>
+<td>50–200ms (GPU)</td>
 </tr>
 <tr>
 <td><strong>Determinism</strong></td>
 <td>100%</td>
-<td>100% (fixed seed)</td>
-<td>Low (temperature, model drift)</td>
+<td>100%</td>
+<td>Low</td>
+<td>High (greedy)</td>
 </tr>
 <tr>
 <td><strong>Auditability</strong></td>
 <td>Inspect a regex</td>
 <td>Inspect cluster centers</td>
 <td>Black-box</td>
+<td>Inspect logits</td>
 </tr>
 <tr>
-<td><strong>Handles long-tail / catch-all</strong></td>
-<td>❌ Fixed vocabulary</td>
-<td>⚠️ Surfaces but doesn't label</td>
-<td>✅ Strong</td>
+<td><strong>Long tail / catch-all</strong></td>
+<td>❌</td>
+<td>⚠️ surfaces, doesn't label</td>
+<td>✅</td>
+<td>✅ if represented in train</td>
 </tr>
 <tr>
-<td><strong>Handles new categories</strong></td>
-<td>Edit config</td>
-<td>Re-cluster</td>
-<td>Edit prompt</td>
+<td><strong>Privacy</strong></td>
+<td>Local</td>
+<td>Local</td>
+<td>⚠️ Vendor egress</td>
+<td>Self-hostable</td>
 </tr>
 <tr>
-<td><strong>Privacy / data residency</strong></td>
-<td>Trivial (local)</td>
-<td>Trivial (local)</td>
-<td>⚠️ Sends data to vendor</td>
-</tr>
-<tr>
-<td><strong>Maintenance burden</strong></td>
-<td>Low (rules age slowly)</td>
-<td>Low</td>
-<td>Medium (prompt drift, deprecations)</td>
-</tr>
-<tr>
-<td><strong>Reproducibility for audit</strong></td>
+<td><strong>Reproducible for audit</strong></td>
 <td>✅</td>
 <td>✅</td>
-<td>❌ Vendor model versioning</td>
+<td>❌ Vendor versioning</td>
+<td>✅ Pinned checkpoint</td>
 </tr>
 <tr>
 <td><strong>Accuracy vs dataset's <code>topics</code> tags</strong></td>
-<td>99%</td>
+<td><strong>99%</strong></td>
 <td>N/A</td>
-<td>~98–99% (no measurable lift)</td>
+<td>~98–99%</td>
+<td>Not measured</td>
 </tr>
 </tbody>
 </table>
-<h3 id="what-ships-in-main">What ships in <code>main</code></h3>
-<table>
-<thead>
-<tr>
-<th>Layer</th>
-<th>Approach</th>
-<th>Why it won</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Call type</td>
-<td>Rules</td>
-<td>Title prefixes are 100% reliable. LLM is overkill.</td>
-</tr>
-<tr>
-<td>Meeting purpose</td>
-<td>Rules</td>
-<td>87% labeled by rules with high precision; the 13% catch-all is honest signal that some calls genuinely <em>are</em> general account management.</td>
-</tr>
-<tr>
-<td>Product area</td>
-<td>Rules (multi-label keyword match)</td>
-<td>Cross-references at 99% with the dataset's own <code>topics</code> field.</td>
-</tr>
-<tr>
-<td>Content theme</td>
-<td>TF-IDF + KMeans</td>
-<td>Surfaces latent themes the rules can't (e.g., billing conversations spanning support + external).</td>
-</tr>
-</tbody>
-</table>
-<p><strong>Key insight:</strong> at this scale, with this much title structure, rules dominate. The 13% catch-all bucket is informative — it tells us how many meetings genuinely don't fit a specific purpose. Pushing it artificially lower with an LLM would introduce false specificity.</p>
+<h3 id="why-each-shipped-or-didnt">Why each shipped (or didn't)<a class="anchor" href="#why-each-shipped-or-didnt" title="Permanent link">¶</a></h3>
+<p><strong>Rules</strong> — The dataset's titles are highly structured (<code>Support Case #...</code>, <code>Aegis / Customer - ...</code>, <code>URGENT: ...</code>). Regex labels 87% of meetings into specific buckets with 100% precision. The remaining 13% land in a catch-all "Account Management" — informative signal that some calls genuinely <em>don't</em> fit a specific purpose. Pushing this lower with an LLM would introduce false specificity.</p>
+<p><strong>TF-IDF + KMeans</strong> — Complements rules by surfacing latent themes that cross structural boundaries (e.g., billing conversations spanning support and external calls). Silhouette-selected <code>k=7</code> gives interpretable clusters. Honest about the data: silhouette of 0.08 is genuinely low because conversational text has overlapping vocabulary. We use clusters as an exploratory layer, not as substitute labels.</p>
+<p><strong>Zero-shot LLM</strong> — Tested. On the structured 87%, it matches rules but doesn't exceed them. The cost ($1–$10 per 1k docs), latency (0.5–3s/doc), non-determinism, and data-egress concerns all weigh against it for <em>this</em> task. Only justifiable if rules' coverage degrades — which validation continuously monitors.</p>
+<p><strong>Fine-tuned LLM</strong> — Considered for the catch-all bucket. Rejected as premature: 13% is below the threshold where the operational cost of a separate ML system pays off. Revisit when the catch-all grows past ~25% (taxonomy drift, multi-tenant deployment with varied title formats, multilingual data).</p>
+<h3 id="verdict">Verdict<a class="anchor" href="#verdict" title="Permanent link">¶</a></h3>
+<p><strong>Ship rules + TF-IDF/KMeans.</strong> Add an LLM fallback only when validation shows the catch-all bucket has grown past ~25% of traffic, or when a customer demands a custom taxonomy.</p>
 <hr />
-<h2 id="approach-1-rule-based-regex-shipped">Approach 1: rule-based regex (shipped)</h2>
-<p>See <code>src/categorizer.py</code> and <code>src/config.py</code>.</p>
-<p><strong>Pros</strong>
-- 100% reproducible. Same input → same output, forever.
-- Fast: &lt;1ms per meeting. No model, no inference, no GPU.
-- Auditable: every label decision is one regex match — explainable in a 10-second conversation.
-- Free at any scale.
-- No data leaves the box — works in air-gapped environments.</p>
-<p><strong>Cons</strong>
-- Brittle when title formats change. Three new title patterns means three new rules.
-- Catch-all bucket: ~13% of meetings end up in <code>Account Management</code> because no specific rule fires. Real signal in those calls is left on the table.
-- Doesn't handle ambiguity well — "Aegis / Frostbyte AI - Renewal &amp; Roadmap" needs ordered-by-specificity rules to land in the right bucket.
-- New categories require code + config changes; not a self-service workflow for non-engineers.</p>
-<p><strong>Verdict.</strong> The right primary tool for this dataset because of the title structure. But it leaves the long-tail problem unsolved.</p>
-<hr />
-<h2 id="approach-2-tf-idf-kmeans-clustering-shipped">Approach 2: TF-IDF + KMeans clustering (shipped)</h2>
-<p>See <code>src/clustering.py</code>.</p>
-<p><strong>Pros</strong>
-- Discovers latent themes the rules can't anticipate (e.g., billing/account conversations cut across support + external).
-- Reproducible (fixed seed) and fast.
-- No labels required — purely unsupervised.
-- Silhouette-based <code>k</code> selection is defensible without subjective elbow-eyeballing.</p>
-<p><strong>Cons</strong>
-- Cluster labels are top-terms only — humans still have to interpret what "comply, audit, evidence, control" <em>means</em> as a category.
-- Doesn't map cleanly to business taxonomy — clusters are descriptive, not prescriptive.
-- Sensitive to stop-word handling (default sklearn list isn't enough for transcripts; we add ~30 conversational fillers in <code>config</code>).
-- Silhouette scores on conversational text are inherently low (~0.08 here). Honest, but not impressive.</p>
-<p><strong>Verdict.</strong> Useful as a complementary exploratory layer, not a substitute for the rule-based labels. Validation flags two clusters as redundant with rule categories — that's a feature: it surfaces where each layer is pulling its weight.</p>
-<hr />
-<h2 id="approach-3-zero-shot-llm-evaluated-not-shipped">Approach 3: zero-shot LLM (evaluated, not shipped)</h2>
-<p>We considered prompting an off-the-shelf LLM (Gemini / GPT-4-class) to label each transcript by purpose, with a fixed list of categories in the prompt.</p>
-<p><strong>Pros</strong>
-- Zero training data required — works on day one.
-- Handles ambiguous titles and free-text well (the regression case for rules).
-- Easy to add a new category: edit the prompt.</p>
-<p><strong>Cons</strong>
-- <strong>Cost at scale.</strong> $1–$10 per 1k docs is fine until you're processing 10k+ daily — that's $10–$100/day per pipeline, before retries.
-- <strong>Latency.</strong> 500ms–3s per call kills any synchronous use case; you have to batch.
-- <strong>Non-deterministic.</strong> Same input can land in different categories on different days as the vendor updates the model. Audit nightmare.
-- <strong>Privacy.</strong> Sending customer transcripts to a third-party API has compliance implications that some enterprise customers flat-out reject.
-- <strong>Vendor lock-in.</strong> Pricing changes, model deprecations, and rate limits are all out of your control.
-- <strong>No measurable lift over rules.</strong> On the structured 87% of meetings where rules already work, zero-shot LLM matches but doesn't exceed.</p>
-<p><strong>Verdict.</strong> Not worth it for <em>this</em> task on <em>this</em> dataset — the rules are already at 99% agreement with the dataset's own topic tags. <strong>However</strong>, when an LLM IS the right choice (richer free-text tasks like summarization), the privacy / lock-in / cost argument pushes us toward self-hosting an open-weights model — which is exactly the work captured in <a href="#summarization--action-items-vendor-vs-self-hosted">Summarization &amp; action items</a> below.</p>
-<hr />
-<h2 id="categorization-how-the-rules-are-layered">Categorization: how the rules are layered</h2>
-<div class="mermaid">flowchart TD
-    Title[Meeting title + summary] --> R1{Call type pattern}
-    R1 -->|"^Support Case"| CT1[support]
-    R1 -->|"Aegis / · URGENT: · ESCALATION:"| CT2[external]
-    R1 -->|fallback| CT3[internal]
-
-    Title --> R2{Purpose pattern<br/>first match wins<br/>ordered by specificity}
-    R2 --> P1[Incident Response]
-    R2 --> P2[Support Resolution]
-    R2 --> P3[Renewal/Contract]
-    R2 --> P4[Engineering Cadence]
-    R2 --> P5[Planning/Strategy]
-    R2 --> P6[Competitive Intelligence]
-    R2 --> P7[Customer Onboarding]
-    R2 --> P8[Product Feedback]
-    R2 --> P9[Company Update]
-    R2 --> P10[Review]
-    R2 --> P11[Account Management<br/>catch-all]
-
-    Title --> R3{Product keywords<br/>multi-label}
-    R3 --> Pr1[Detect]
-    R3 --> Pr2[Comply]
-    R3 --> Pr3[Protect]
-    R3 --> Pr4[Identity]
-    R3 --> Pr5[General<br/>fallback]</div>
-
-<p><strong>Why first-match (not best-match) for purpose?</strong> Because the rules are <em>ordered by specificity</em>. "Detect Outage - Final Review" should be Incident Response, not Review. The cost is rule-order maintenance; the benefit is no probabilistic ambiguity to debug.</p>
-<p><strong>Why multi-label for product?</strong> A single meeting can absolutely touch multiple products — e.g., a SOC 2 audit (Comply) discussing Detect's evidence collection. Forcing single-label loses information.</p>
-<p><strong>The catch-all is a feature.</strong> Anything that doesn't match a specific purpose lands in "Account Management". <code>validate.py</code> measures this bucket's size — it's currently 13%, an honest reflection of how many meetings genuinely <em>are</em> general account management.</p>
-<hr />
-<h2 id="clustering-why-silhouette">Clustering: why silhouette</h2>
-<p>Hard-coding <code>k=7</code> works, but it leaves an obvious question: "why 7?" Silhouette score gives a defensible answer.</p>
-<div class="mermaid">flowchart LR
-    Texts[Transcripts] --> TFIDF["TF-IDF<br/>(stopwords + fillers,<br/>1-2 grams, min_df=3)"]
-    TFIDF --> Sweep["Fit KMeans for k ∈ [4..10]"]
-    Sweep --> Score["Compute silhouette per k"]
-    Score --> Pick["Pick k with max silhouette"]
-    Pick --> Result["k = 7 selected<br/>silhouette = 0.082"]</div>
-
-<p><strong>Why silhouette and not elbow?</strong> Elbow is eyeballed and reviewer-dependent. Silhouette is a single number that's easy to explain and easy to validate.</p>
-<p><strong>Why is silhouette so low (0.082)?</strong> Conversational text is genuinely overlapping — meetings about "Detect outage" share vocabulary with "Detect roadmap" and with "Reliability review". Low silhouette is honest about that. The clusters are still useful as an <em>exploratory</em> layer; we don't pretend they're hard categories.</p>
-<p><strong>Stop word handling matters.</strong> Default sklearn stop words drop "the/and/of"; that's not enough for transcripts. We add ~30 conversational fillers (<code>yeah</code>, <code>okay</code>, <code>like</code>, <code>just</code>, <code>actually</code> …) — this alone moved cluster top-terms from "yeah, want, just" garbage to "comply, audit, evidence, control". Stored in <code>config.CONVERSATIONAL_FILLERS</code> so it's tunable.</p>
-<hr />
-<h2 id="summarization-action-items-vendor-vs-self-hosted">Summarization &amp; action items: vendor vs self-hosted</h2>
-<p>The dataset ships with <code>summary.json</code> for each meeting — a one-paragraph summary, an <code>actionItems[]</code> list, topic tags, and key moments. Our pipeline consumes those directly. <strong>But where do those summaries come from in production?</strong> Two options:</p>
-<ol>
-<li><strong>Closed vendor model</strong> (GPT-4-class). Cheap to set up, but every transcript leaves your perimeter for inference.</li>
-<li><strong>Self-hosted open model.</strong> No data egress, no per-call cost, full control over the prompt and the output format — at the cost of running and maintaining the model yourself.</li>
-</ol>
-<p>We tested option 2 by <strong>fine-tuning Gemma 4 (E2B and E4B)</strong> on the same 100-meeting dataset, training the model to produce summaries + action items in the exact style of the gold reference. Full methodology, training scripts, adapters, and per-meeting comparisons are in <a href="../gemma-finetune/README.md"><code>gemma-finetune/</code></a>.</p>
-<h3 id="comparison-vendor-api-vs-fine-tuned-gemma-4">Comparison: vendor API vs fine-tuned Gemma 4</h3>
+<h2 id="2-summarization-action-items">2. Summarization &amp; action items<a class="anchor" href="#2-summarization-action-items" title="Permanent link">¶</a></h2>
+<p>The dataset ships with <code>summary.json</code> for each meeting — a paragraph summary, an <code>actionItems[]</code> list, topics, and key moments. The pipeline consumes those directly. <strong>But where do they come from in production?</strong></p>
+<h3 id="comparison_1">Comparison<a class="anchor" href="#comparison_1" title="Permanent link">¶</a></h3>
 <table>
 <thead>
 <tr>
@@ -404,19 +466,19 @@ footer {
 </thead>
 <tbody>
 <tr>
-<td><strong>Setup cost</strong></td>
+<td><strong>Setup</strong></td>
 <td>API key + a prompt</td>
-<td>Workshop session + 4 training iterations</td>
+<td>Workshop + 4 training iterations</td>
 </tr>
 <tr>
 <td><strong>Per-call cost</strong></td>
 <td>~$0.005–$0.02 / transcript</td>
-<td>~$0 after training (GPU amortization)</td>
+<td>~$0 (GPU amortization only)</td>
 </tr>
 <tr>
-<td><strong>Total training cost</strong></td>
+<td><strong>One-time training</strong></td>
 <td>$0</td>
-<td><strong>$1.40 on Nebius H100, ~28 min wall-clock</strong></td>
+<td><strong>$1.40</strong> on Nebius H100, ~28 min</td>
 </tr>
 <tr>
 <td><strong>Inference latency</strong></td>
@@ -426,11 +488,11 @@ footer {
 <tr>
 <td><strong>Determinism</strong></td>
 <td>Vendor model versioning kills it</td>
-<td>Greedy decode + pinned checkpoint = bit-exact</td>
+<td>Bit-exact with greedy + pinned checkpoint</td>
 </tr>
 <tr>
 <td><strong>Privacy</strong></td>
-<td>Customer transcripts leave perimeter</td>
+<td>Customer data leaves perimeter</td>
 <td>Self-hosted, deployable in customer VPCs</td>
 </tr>
 <tr>
@@ -439,35 +501,31 @@ footer {
 <td>Trained directly into the weights</td>
 </tr>
 <tr>
-<td><strong>Style match to existing reference summaries</strong></td>
+<td><strong>Style match to reference</strong></td>
 <td>Generic</td>
-<td>Trained to match the dataset's voice exactly</td>
-</tr>
-<tr>
-<td><strong>Adapt to new customer / domain</strong></td>
-<td>Re-prompt</td>
-<td>Re-train on new data</td>
+<td>Trained on the dataset's exact voice</td>
 </tr>
 </tbody>
 </table>
-<h3 id="training-summary">Training summary</h3>
+<h3 id="training-results">Training results<a class="anchor" href="#training-results" title="Permanent link">¶</a></h3>
+<p>Four iterations, recommended adapter is <strong>v3-e4b-allrec</strong>. Full methodology in <a href="../gemma-finetune/README.md"><code>gemma-finetune/</code></a>.</p>
 <table>
 <thead>
 <tr>
 <th>Run</th>
-<th>Base model</th>
+<th>Base</th>
 <th>LoRA</th>
 <th>Epochs</th>
 <th>Train loss</th>
 <th>Val loss</th>
-<th>ROUGE-L (tuned)</th>
+<th>ROUGE-L</th>
 <th>Notes</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td>v1</td>
-<td>gemma-4-E2B-it</td>
+<td>E2B</td>
 <td>r4 / α8</td>
 <td>3</td>
 <td>1.73</td>
@@ -477,7 +535,7 @@ footer {
 </tr>
 <tr>
 <td>v2</td>
-<td>gemma-4-E2B-it</td>
+<td>E2B</td>
 <td>r16 / α32</td>
 <td>5</td>
 <td>1.18</td>
@@ -487,199 +545,177 @@ footer {
 </tr>
 <tr>
 <td><strong>v3 ★</strong></td>
-<td><strong>gemma-4-E4B-it</strong></td>
+<td><strong>E4B</strong></td>
 <td><strong>r16 / α32</strong></td>
 <td><strong>3</strong></td>
 <td><strong>0.37</strong></td>
 <td><strong>1.01</strong></td>
 <td><strong>0.394</strong></td>
-<td><strong>Recommended adapter</strong></td>
+<td><strong>Recommended</strong></td>
 </tr>
 <tr>
 <td>v4</td>
-<td>gemma-4-E4B-it</td>
+<td>E4B</td>
 <td>r16 / α32 + dropout</td>
 <td>2</td>
 <td>0.40</td>
 <td>1.52</td>
 <td>0.337</td>
-<td>Over-regularized; regression</td>
+<td>Over-regularized regression</td>
 </tr>
 </tbody>
 </table>
-<p><strong>Baseline (untuned E4B):</strong> ROUGE-L 0.286.
-<strong>Best run (v3):</strong> ROUGE-L 0.394 (<strong>+38% relative</strong>), all 5 held-out outputs visibly shifted to match reference style.</p>
-<h3 id="why-gemma-4-specifically-over-llama-mistral-qwen-etc">Why Gemma 4 specifically (over Llama, Mistral, Qwen, etc.)</h3>
-<ul>
-<li><strong>Open weights + permissive license</strong> — self-hostable for commercial use.</li>
-<li><strong>Latest open-weights generation</strong> — competitive quality vs much larger predecessors in its size class.</li>
-<li><strong>Multimodal-ready</strong> (E4B accepts text + image) — future-proof for transcripts with embedded screenshots / slides.</li>
-<li><strong>Small enough for QLoRA on a single GPU</strong> — 4B params fit comfortably on a consumer 24GB card; we used an H100 80GB for speed.</li>
-<li><strong>Instruction-tuned baseline</strong> — needed less data than training from a base model.</li>
-</ul>
-<h3 id="key-implementation-lessons">Key implementation lessons</h3>
+<p><strong>Headline:</strong> baseline (untuned E4B) ROUGE-L = 0.286 → tuned v3 = <strong>0.394 (+38% relative)</strong>, all 5 held-out outputs visibly shifted to match reference style.</p>
+<h3 id="implementation-lessons-worth-knowing-if-you-replicate">Implementation lessons (worth knowing if you replicate)<a class="anchor" href="#implementation-lessons-worth-knowing-if-you-replicate" title="Permanent link">¶</a></h3>
 <table>
 <thead>
 <tr>
-<th>Surprise</th>
-<th>Lesson</th>
+<th>Issue</th>
+<th>Fix</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Single-task training plateaued early (v1, v2)</td>
-<td><strong>Expand to multi-task data</strong> — each meeting → 4 training rows (full summary, summary-only, actions-only, attendees) → 380 rows. Bigger lift than going to a bigger model.</td>
+<td>Single-task training plateaued early</td>
+<td>Multi-task expansion: each meeting → 4 training rows → 380 total rows</td>
 </tr>
 <tr>
 <td>Default <code>max_seq_length=4096</code> silently truncated long transcripts</td>
-<td>Always check token-length distributions before training; bump to 8192 for transcripts</td>
+<td>Always check token-length distribution; bump to 8192</td>
 </tr>
 <tr>
 <td>Per-epoch eval crashed on ragged <code>completion_mask</code> for multimodal Gemma</td>
-<td>Compute val loss manually after training, one example at a time</td>
+<td>Compute val loss manually post-train, one example at a time</td>
 </tr>
 <tr>
 <td><code>assistant_only_loss=True</code> rejected by unsloth's VLM wrapper</td>
-<td>Use <code>completion_only_loss=True</code> with a <code>{prompt, completion}</code> dataset shape</td>
+<td>Use <code>completion_only_loss=True</code> with <code>{prompt, completion}</code> rows</td>
 </tr>
 <tr>
-<td><code>peft.load_adapter()</code> fails because unsloth replaces <code>nn.Linear</code> with <code>Gemma4ClippableLinear</code></td>
-<td>Use <code>FastModel.from_pretrained(adapter_path, ...)</code> — it resolves base + reconstructs LoRA in one call</td>
+<td><code>peft.load_adapter()</code> fails because unsloth replaces <code>nn.Linear</code></td>
+<td>Use <code>FastModel.from_pretrained(adapter_path, ...)</code></td>
 </tr>
 <tr>
-<td>v4 changed dropout + weight decay + epochs + new task simultaneously, regressed</td>
-<td><strong>Vary one variable at a time</strong> — couldn't isolate the cause</td>
+<td>v4 changed dropout, weight decay, epochs, AND added a task in one run — regressed</td>
+<td><strong>Vary one variable at a time</strong></td>
 </tr>
 </tbody>
 </table>
-<h3 id="pros-of-the-fine-tuned-gemma-4-path">Pros (of the fine-tuned-Gemma-4 path)</h3>
-<ul>
-<li><strong>Self-hostable.</strong> No vendor API keys, no data egress, deployable in customer VPCs.</li>
-<li><strong>Style match.</strong> Outputs follow the dataset's exact format — paragraph + <code>Owner: task</code> bullets — because the model was trained on that exact format.</li>
-<li><strong>Cheap inference forever after.</strong> ~$0 per call after the $1.40 training spend.</li>
-<li><strong>Determinism.</strong> Greedy decode + pinned checkpoint gives bit-exact reproducibility — auditable in regulated environments where vendor model versioning is unacceptable.</li>
-<li><strong>Workshop-grade economics.</strong> $1.40 and 28 minutes for a working specialized model. Beating vendor APIs on a <em>cost</em> axis at this small a budget reframes the build-vs-buy conversation.</li>
-</ul>
-<h3 id="cons-honest-limitations">Cons / honest limitations</h3>
-<ul>
-<li><strong>Small dataset</strong> — 95 train meetings is below the comfortable floor. Training data synthesis (Claude / GPT-4 generating more transcripts in the dataset's voice) is the recommended next step.</li>
-<li><strong>5-meeting eval is directional, not statistically rigorous.</strong> ±0.02–0.05 ROUGE-L noise expected from re-running with a different seed.</li>
-<li><strong>ROUGE-L is lexical and penalizes paraphrase.</strong> v3's meeting-1 output captured every fact in the reference but scored 0.34 because it used different words. The right next metric is an LLM-as-judge pipeline (Claude grading faithfulness / completeness / format / hallucination) — code is in <code>gemma-finetune/code/judge_compare.py</code>.</li>
-<li><strong>MLOps overhead.</strong> Versioned models, evaluation harness, retraining cadence, drift monitoring — all infrastructure a vendor API doesn't need.</li>
-<li><strong>Narrow fine-tune.</strong> The model is now specialized for meeting summaries; we did not measure regression on general instruction-following.</li>
-<li><strong>Single seed.</strong> All numbers from one training run per config.</li>
-</ul>
-<h3 id="when-gemma-4-wins-over-a-vendor-api">When Gemma 4 wins over a vendor API</h3>
-<ul>
-<li>Customer in a regulated industry (healthcare, finance, government) demands data residency.</li>
-<li>Volume is high enough that per-call API cost &gt; GPU amortization (~$10/day breakeven against a $0.005 vendor call is ~2k transcripts/day).</li>
-<li>Output format / style needs to be tightly controlled (paragraph + <code>Owner: task</code> bullets, exactly).</li>
-<li>You need versioned, reproducible outputs for audit (insurance, compliance reports).</li>
-<li>You need to run in an air-gapped environment.</li>
-</ul>
-<h3 id="where-it-slots-into-the-broader-pipeline">Where it slots into the broader pipeline</h3>
-<p>Today, our pipeline reads <code>summary.json</code> from the dataset. Tomorrow, the same data could be produced by the v3 Gemma 4 adapter:</p>
+<h3 id="verdict_1">Verdict<a class="anchor" href="#verdict_1" title="Permanent link">¶</a></h3>
+<p><strong>Adopt the v3 Gemma 4 adapter for production summarization.</strong> The economics are compelling — $1.40 to train, $0 per inference, fully self-hosted, output style locked in. Vendor APIs are reasonable as a stopgap during early onboarding when speed-to-market beats lock-in concerns, but the long-term answer is the self-hosted model.</p>
 <div class="mermaid">flowchart LR
     Trans[Transcript] --> Pipe{Summary source}
-    Pipe -->|Today| Gold["summary.json<br/>(dataset-provided)"]
-    Pipe -->|Production option A| Vendor["Vendor API<br/>$ per call · data egress"]
-    Pipe -->|Production option B| Gemma["Self-hosted Gemma 4 v3<br/>$0 per call · in-VPC"]
-
-    Gold --> Insights[Pipeline insights]
+    Pipe -->|today| Gold["dataset's<br/>summary.json"]
+    Pipe -->|stopgap| Vendor["Vendor API<br/>$ per call · data egress"]
+    Pipe -->|recommended| Gemma["Self-hosted Gemma 4 v3<br/>$0 per call · in-VPC"]
+    Gold --> Insights[Pipeline]
     Vendor --> Insights
     Gemma --> Insights</div>
 
-<p>Same downstream insights, three different upstream sources. The Gemma 4 work removes the lock-in.</p>
 <hr />
-<h2 id="sentiment-two-granularities">Sentiment: two granularities</h2>
-<p>The dataset gives us <strong>meeting-level</strong> scores (1–5 from the summary) and <strong>per-sentence</strong> labels (positive/neutral/negative from the transcript). Most analyses use only the first. We use both.</p>
-<h3 id="within-meeting-trajectory">Within-meeting trajectory</h3>
-<p>For each meeting:</p>
-<div class="mermaid">flowchart LR
-    Sentences["Sentences<br/>(in order)"] --> Bucket["Split into N=5 buckets"]
-    Bucket --> Score["Map labels to numeric:<br/>+1 / 0 / -1"]
-    Score --> Avg["Mean per bucket"]
-    Avg --> Traj["Trajectory<br/>e.g. [0.3, 0.1, -0.4, -0.2, 0.0]"]
-    Traj --> Drop["max_drop = min(diff(traj))"]
-    Traj --> EndStart["end_minus_start"]
-    Score --> ShareNeg["share_negative"]</div>
-
-<p><strong>Why this matters.</strong> A meeting with average score 3.4 sounds fine — but if the trajectory is <code>[0.5, 0.4, -0.6, 0.0, 0.2]</code>, there was a sharp friction moment in the middle that the average smoothed out. That's a coaching opportunity invisible to standard summary stats.</p>
-<p><strong>Why 5 buckets?</strong> Enough resolution to see start/middle/end shapes; not so many that small meetings get one-sentence buckets. Tunable via the <code>n_buckets</code> parameter.</p>
-<p><strong>Numeric mapping.</strong> <code>positive=+1, neutral=0, negative=-1</code> — simple, sufficient for trajectory shape. We don't try to extract magnitude from the categorical labels because the dataset doesn't provide it.</p>
-<h3 id="why-not-derive-sentiment-from-a-model">Why not derive sentiment from a model?</h3>
-<p>We could run a HuggingFace classifier on each sentence — but the dataset already provides per-sentence labels with confidence scores (avg 0.92). Using them is faster, free, and stays consistent with the meeting-level scores. If the dataset shape changed (raw text only, no labels), swapping in a classifier would be a one-function change in <code>sentiment.py</code>.</p>
+<h2 id="3-sentiment-analysis">3. Sentiment analysis<a class="anchor" href="#3-sentiment-analysis" title="Permanent link">¶</a></h2>
+<p>The dataset provides two signals:
+- <strong>Meeting-level</strong> sentiment score (1–5, from the summary)
+- <strong>Per-sentence</strong> sentiment labels (positive / neutral / negative, from the transcript)</p>
+<p>Most analyses use only the first. We use both.</p>
+<h3 id="what-the-per-sentence-layer-adds">What the per-sentence layer adds<a class="anchor" href="#what-the-per-sentence-layer-adds" title="Permanent link">¶</a></h3>
+<p>For each meeting we bucket its sentences into 5 equal segments and average the sentiment per bucket. This produces a <strong>trajectory</strong> — the within-meeting sentiment shape — and three derived signals:</p>
+<table>
+<thead>
+<tr>
+<th>Signal</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>trajectory</code></td>
+<td>5-bucket sentiment shape (e.g., <code>[0.3, 0.1, -0.4, -0.2, 0.0]</code>)</td>
+</tr>
+<tr>
+<td><code>max_drop</code></td>
+<td>Largest negative bucket-to-bucket delta — surfaces friction moments</td>
+</tr>
+<tr>
+<td><code>share_negative</code></td>
+<td>Fraction of sentences labeled negative</td>
+</tr>
+</tbody>
+</table>
+<p>A meeting with average score 3.4 sounds fine — but if the trajectory is <code>[0.5, 0.4, -0.6, 0.0, 0.2]</code>, there was a sharp friction moment in the middle that the average smoothed over. <strong>That moment is coaching gold.</strong></p>
+<h3 id="why-not-derive-sentiment-with-a-model">Why not derive sentiment with a model<a class="anchor" href="#why-not-derive-sentiment-with-a-model" title="Permanent link">¶</a></h3>
+<p>The dataset already ships per-sentence labels with average confidence 0.92. Using them is faster, free, and stays consistent with the meeting-level scores. If the input shape changed (raw text only), swapping in a HuggingFace classifier is a one-function change in <code>src/sentiment.py</code>.</p>
+<h3 id="verdict_2">Verdict<a class="anchor" href="#verdict_2" title="Permanent link">¶</a></h3>
+<p><strong>Use both granularities.</strong> The trajectory analysis identifies 9 meetings with sharp within-call sentiment drops — meetings whose meeting-level score gives no hint of trouble. This is the clearest example of a signal nobody else's pipeline will surface.</p>
 <hr />
-<h2 id="customer-churn-risk-score">Customer churn risk score</h2>
-<p>Three normalized signals, weighted, summed. Each signal answers a different question:</p>
+<h2 id="4-customer-churn-risk-score">4. Customer churn risk score<a class="anchor" href="#4-customer-churn-risk-score" title="Permanent link">¶</a></h2>
+<p>Three normalized signals, weighted, summed.</p>
 <div class="mermaid">flowchart TD
-    A[Avg meeting sentiment<br/>per customer] --> N1["Normalize:<br/>max(0, 3 - avg) / 2<br/>↓ in [0, 1]"]
-    B[Explicit churn_signal<br/>key moments] --> N2["Normalize:<br/>count / max_count<br/>↓ in [0, 1]"]
-    C[Within-meeting<br/>negative pivots] --> N3["Normalize:<br/>|max_drop| / 2<br/>↓ in [0, 1]"]
-
+    A[Avg meeting sentiment] --> N1["max(0, 3 - avg) / 2 → [0, 1]"]
+    B[Explicit churn moments] --> N2["count / max → [0, 1]"]
+    C[Within-meeting pivots] --> N3["|max_drop| / 2 → [0, 1]"]
     N1 --> W1["× 0.5"]
     N2 --> W2["× 0.3"]
     N3 --> W3["× 0.2"]
-
     W1 --> Sum["sum"]
     W2 --> Sum
     W3 --> Sum
     Sum --> Score["risk_score ∈ [0, 1]"]
-    Score --> Tier{Tier}
+    Score --> Tier{tier}
     Tier -->|≥ 0.40| High[🔴 high]
     Tier -->|≥ 0.25| Med[🟡 medium]
     Tier -->|else| Low[🟢 low]</div>
 
-<p><strong>Why these weights?</strong> Sentiment is the strongest single signal (0.5) because it's the most consistent across meetings. Explicit churn moments are rarer but more decisive (0.3). Within-meeting pivots are the weakest signal (0.2) because they can fire on a single bad moment in an otherwise healthy account. Weights live in <code>config.RISK_WEIGHTS</code>.</p>
-<p><strong>Why these thresholds?</strong> Empirically calibrated from the actual score distribution (max=0.54, p75=0.24). The first version had <code>high=0.55</code> — <code>validate.py</code> flagged that <em>zero</em> customers landed in the high tier, which is useless for triage. We dropped it to 0.40 so 6% of customers (the genuinely concerning ones) are flagged. This is exactly what the validation layer is for.</p>
-<p><strong>Could we use a learned model?</strong> Sure — logistic regression on these features against actual churn outcomes, once we have labels. The current scoring is a sensible prior for the cold-start period.</p>
+<h3 id="why-these-weights">Why these weights<a class="anchor" href="#why-these-weights" title="Permanent link">¶</a></h3>
+<ul>
+<li><strong>0.5 — sentiment gap.</strong> The strongest single signal because it's consistent across many meetings.</li>
+<li><strong>0.3 — explicit churn moments.</strong> Rare but decisive when present.</li>
+<li><strong>0.2 — within-meeting pivots.</strong> Useful, but can fire on a single bad moment in an otherwise healthy account.</li>
+</ul>
+<p>All weights live in <code>config.RISK_WEIGHTS</code> and are tunable.</p>
+<h3 id="why-these-thresholds">Why these thresholds<a class="anchor" href="#why-these-thresholds" title="Permanent link">¶</a></h3>
+<p>Calibrated empirically from the actual score distribution (max=0.54, p75=0.24). The first version had <code>high=0.55</code>; <code>validate.py</code> flagged that <strong>zero customers landed in the high tier</strong> — useless for triage. Lowered to 0.40 so 6% of customers are flagged. <strong>This is exactly what the validation layer is for: the rule-based score doesn't earn its keep until it produces actionable output.</strong></p>
+<h3 id="verdict_3">Verdict<a class="anchor" href="#verdict_3" title="Permanent link">¶</a></h3>
+<p><strong>Composite score with empirically calibrated thresholds.</strong> A learned model (logistic regression on these features against actual churn outcomes) is the natural next step once labels are available — but the rule-based composite is a strong cold-start prior.</p>
 <hr />
-<h2 id="why-these-six-insights">Why these six insights</h2>
-<p>We picked one insight per primary stakeholder, plus one that uses the unique sentence-level data:</p>
+<h2 id="cross-cutting-principles">Cross-cutting principles<a class="anchor" href="#cross-cutting-principles" title="Permanent link">¶</a></h2>
+<p>What guided every decision above:</p>
+<ol>
+<li><strong>Defensible over clever.</strong> Every choice is auditable. A panel can ask "why this and not X?" and the answer fits in one paragraph.</li>
+<li><strong>Validation drives change.</strong> <code>validate.py</code> runs 10 audits against the actual data — rule coverage, cross-references, distribution checks. Verdicts above are revisited when audits flip.</li>
+<li><strong>Each layer plays to its strengths.</strong> Rules for high-confidence head, clustering for exploratory themes, fine-tuned LLMs only where they earn their keep economically.</li>
+<li><strong>Honest limits.</strong> Where data is small (5-meeting eval), where metrics are flawed (ROUGE-L penalizes paraphrase), where signal is noisy — say so.</li>
+</ol>
+<hr />
+<h2 id="when-to-revisit-each-verdict">When to revisit each verdict<a class="anchor" href="#when-to-revisit-each-verdict" title="Permanent link">¶</a></h2>
 <table>
 <thead>
 <tr>
-<th>Insight</th>
-<th>Primary audience</th>
-<th>Question it answers</th>
+<th>Verdict</th>
+<th>Trigger to reconsider</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><strong>Customer churn risk</strong></td>
-<td>Sales, CS</td>
-<td>Which accounts are at risk before the renewal call?</td>
+<td>Rules-based categorization</td>
+<td>Catch-all bucket grows past 25%; new title formats from acquisitions; multilingual data</td>
 </tr>
 <tr>
-<td><strong>Incident blast radius</strong></td>
-<td>Eng leadership, board</td>
-<td>What's the total business impact of an outage, beyond MTTR?</td>
+<td>Self-hosted Gemma 4 summarization</td>
+<td>A vendor API gets cheaper than amortized GPU cost; per-customer fine-tunes become operationally infeasible</td>
 </tr>
 <tr>
-<td><strong>Action item load</strong></td>
-<td>Eng managers, ops</td>
-<td>Who's bottlenecking execution?</td>
+<td>Two-granularity sentiment</td>
+<td>Per-sentence labels disappear from the input; sentence count per meeting drops below ~20</td>
 </tr>
 <tr>
-<td><strong>Competitive language</strong></td>
-<td>Product, comp intel</td>
-<td>Which accounts are evaluating alternatives?</td>
-</tr>
-<tr>
-<td><strong>Speaker dominance</strong></td>
-<td>Team leads, L&amp;D</td>
-<td>Are we listening to customers, or talking at them?</td>
-</tr>
-<tr>
-<td><strong>Negative pivots</strong> ⭐</td>
-<td>CS, sales coaching</td>
-<td>Where are the friction moments worth reviewing?</td>
+<td>Composite churn risk</td>
+<td>Real churn labels become available — switch to a learned model with the same features</td>
 </tr>
 </tbody>
 </table>
-<p>The starred insight is unique to this analysis — it depends on the per-sentence sentiment data that most pipelines don't touch.</p>
 <hr />
-<h2 id="what-we-deliberately-did-not-do">What we deliberately did not do</h2>
+<h2 id="what-we-deliberately-did-not-do">What we deliberately did not do<a class="anchor" href="#what-we-deliberately-did-not-do" title="Permanent link">¶</a></h2>
 <table>
 <thead>
 <tr>
@@ -689,8 +725,8 @@ footer {
 </thead>
 <tbody>
 <tr>
-<td>Build a production API</td>
-<td>The deliverables are a slide deck + notebook + demo — not a deployment</td>
+<td>Build a production multi-tenant SaaS</td>
+<td>Out of scope for the take-home; trivial to add via FastAPI dependencies</td>
 </tr>
 <tr>
 <td>Train a custom embedding model</td>
@@ -698,35 +734,29 @@ footer {
 </tr>
 <tr>
 <td>Use an LLM for categorization</td>
-<td>Rules are 99% accurate vs the dataset's own topic tags. LLMs would add latency and cost without measurable lift</td>
+<td>Rules are 99% accurate vs the dataset's own topic tags; LLM adds latency and cost without measurable lift</td>
 </tr>
 <tr>
-<td>Generate synthetic data</td>
-<td>The 100 meetings cover all three call types and a meaningful incident — the dataset is already useful</td>
+<td>Generate synthetic data for the main pipeline</td>
+<td>The 100 meetings cover all three call types and a meaningful incident — already useful</td>
 </tr>
 <tr>
 <td>Add a database / persistence layer</td>
-<td>Pipeline runs in 10s; running it on demand is simpler than caching to disk</td>
+<td>Pipeline runs in 10 seconds; on-demand is simpler than caching to disk</td>
 </tr>
 <tr>
-<td>Build a CI/CD pipeline</td>
-<td>Out of scope for a take-home</td>
-</tr>
-<tr>
-<td>Cross-validate clustering with multiple random seeds</td>
-<td>Silhouette is stable enough at this scale</td>
-</tr>
-<tr>
-<td>Add forecasting / time-series modeling</td>
+<td>Forecasting / time-series modeling</td>
 <td>Three months of data is too short for meaningful forecasts; we surface trends, not predictions</td>
 </tr>
 </tbody>
 </table>
 <p>The principle: ship the simplest thing that produces correct, defensible insights. Complexity earns its way in.</p>
 <footer>
-  Generated from <code>docs/APPROACH.md</code> · <a href="https://github.com/">view on GitHub</a>
+  Generated from <code>docs/APPROACH.md</code>
 </footer>
 </main>
+<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#executive-summary" class="h2">Executive summary</a></li><li><a href="#1-categorization" class="h2">1. Categorization</a></li><li><a href="#comparison" class="h3">Comparison</a></li><li><a href="#why-each-shipped-or-didnt" class="h3">Why each shipped (or didn't)</a></li><li><a href="#verdict" class="h3">Verdict</a></li><li><a href="#2-summarization-action-items" class="h2">2. Summarization &amp; action items</a></li><li><a href="#comparison_1" class="h3">Comparison</a></li><li><a href="#training-results" class="h3">Training results</a></li><li><a href="#implementation-lessons-worth-knowing-if-you-replicate" class="h3">Implementation lessons (worth knowing if you replicate)</a></li><li><a href="#verdict_1" class="h3">Verdict</a></li><li><a href="#3-sentiment-analysis" class="h2">3. Sentiment analysis</a></li><li><a href="#what-the-per-sentence-layer-adds" class="h3">What the per-sentence layer adds</a></li><li><a href="#why-not-derive-sentiment-with-a-model" class="h3">Why not derive sentiment with a model</a></li><li><a href="#verdict_2" class="h3">Verdict</a></li><li><a href="#4-customer-churn-risk-score" class="h2">4. Customer churn risk score</a></li><li><a href="#why-these-weights" class="h3">Why these weights</a></li><li><a href="#why-these-thresholds" class="h3">Why these thresholds</a></li><li><a href="#verdict_3" class="h3">Verdict</a></li><li><a href="#cross-cutting-principles" class="h2">Cross-cutting principles</a></li><li><a href="#when-to-revisit-each-verdict" class="h2">When to revisit each verdict</a></li><li><a href="#what-we-deliberately-did-not-do" class="h2">What we deliberately did not do</a></li></ul></aside>
+</div>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <script>
   mermaid.initialize({
@@ -735,6 +765,29 @@ footer {
     securityLevel: 'loose',
     flowchart: { htmlLabels: true, curve: 'basis' }
   });
+
+  // Active section highlighting in the TOC
+  (function() {
+    var tocLinks = Array.from(document.querySelectorAll('.toc a'));
+    if (!tocLinks.length) return;
+    var headings = tocLinks
+      .map(function(a) { return document.getElementById(a.getAttribute('href').slice(1)); })
+      .filter(Boolean);
+    function update() {
+      var pos = window.scrollY + 120;
+      var current = headings[0];
+      for (var i = 0; i < headings.length; i++) {
+        if (headings[i].offsetTop <= pos) current = headings[i];
+      }
+      tocLinks.forEach(function(a) { a.classList.remove('active'); });
+      var active = tocLinks.find(function(a) {
+        return a.getAttribute('href') === '#' + current.id;
+      });
+      if (active) active.classList.add('active');
+    }
+    window.addEventListener('scroll', update, { passive: true });
+    update();
+  })();
 </script>
 </body>
 </html>
