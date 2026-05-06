@@ -56,6 +56,34 @@ jobs:
           name: coverage-xml
           path: coverage.xml
 
+  security:
+    name: Security scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: Audit Python dependencies
+        run: pip-audit -r requirements.txt --strict --ignore-vuln GHSA-jr3w-rgvm-vc7q
+        continue-on-error: false
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: 1
+          format: table
+      - name: Bandit (Python SAST)
+        run: |
+          pip install bandit[toml]
+          bandit -r src api -ll -ii
+
   docker:
     name: Build Docker image
     runs-on: ubuntu-latest
@@ -69,5 +97,13 @@ jobs:
           context: .
           push: false
           tags: transcript-intelligence:ci
+          load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: transcript-intelligence:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: 1

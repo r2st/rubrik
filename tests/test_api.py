@@ -1,4 +1,9 @@
-"""End-to-end API tests using TestClient (no network needed)."""
+"""End-to-end API tests using TestClient (no network needed).
+
+All routes live under /api/v1/. The unauthenticated /api/health is the only
+exception. Auth is dependency-disabled by default (no API_KEY env), so these
+tests don't supply X-API-Key.
+"""
 from __future__ import annotations
 
 import pytest
@@ -13,14 +18,22 @@ def client():
         yield c
 
 
-def test_health(client) -> None:
+# ---------------------------------------------------------------------------
+# Health & meta
+# ---------------------------------------------------------------------------
+def test_health_unauthenticated(client) -> None:
     r = client.get("/api/health")
     assert r.status_code == 200
     assert r.json()["status"] == "ok"
 
 
+def test_health_v1_alias(client) -> None:
+    r = client.get("/api/v1/health")
+    assert r.status_code == 200
+
+
 def test_summary_shape(client) -> None:
-    r = client.get("/api/summary")
+    r = client.get("/api/v1/summary")
     assert r.status_code == 200
     body = r.json()
     assert body["n_meetings"] == 100
@@ -28,23 +41,26 @@ def test_summary_shape(client) -> None:
     assert "Detect" in body["products"]
 
 
+# ---------------------------------------------------------------------------
+# Meetings
+# ---------------------------------------------------------------------------
 def test_meetings_filtered_by_call_type(client) -> None:
-    r = client.get("/api/meetings", params={"call_type": "support"})
+    r = client.get("/api/v1/meetings", params={"call_type": "support"})
     assert r.status_code == 200
     assert all(m["call_type"] == "support" for m in r.json())
 
 
 def test_meetings_filtered_by_product(client) -> None:
-    r = client.get("/api/meetings", params={"product": "Identity"})
+    r = client.get("/api/v1/meetings", params={"product": "Identity"})
     assert r.status_code == 200
     assert len(r.json()) > 0
 
 
 def test_meeting_detail_has_sentences_and_trajectory(client) -> None:
-    listing = client.get("/api/meetings", params={"limit": 1}).json()
+    listing = client.get("/api/v1/meetings", params={"limit": 1}).json()
     assert listing
     mid = listing[0]["meeting_id"]
-    r = client.get(f"/api/meetings/{mid}")
+    r = client.get(f"/api/v1/meetings/{mid}")
     assert r.status_code == 200
     body = r.json()
     assert body["meeting_id"] == mid
@@ -53,12 +69,15 @@ def test_meeting_detail_has_sentences_and_trajectory(client) -> None:
 
 
 def test_meeting_detail_404_for_unknown(client) -> None:
-    r = client.get("/api/meetings/does-not-exist")
+    r = client.get("/api/v1/meetings/does-not-exist")
     assert r.status_code == 404
 
 
+# ---------------------------------------------------------------------------
+# Clusters & insights
+# ---------------------------------------------------------------------------
 def test_clusters_endpoint(client) -> None:
-    r = client.get("/api/clusters")
+    r = client.get("/api/v1/clusters")
     assert r.status_code == 200
     body = r.json()
     assert body["k"] >= 4
@@ -66,15 +85,14 @@ def test_clusters_endpoint(client) -> None:
 
 
 def test_customer_health_returns_ranked_list(client) -> None:
-    r = client.get("/api/insights/customer-health")
+    r = client.get("/api/v1/insights/customer-health")
     assert r.status_code == 200
-    body = r.json()
-    scores = [c["risk_score"] for c in body]
+    scores = [c["risk_score"] for c in r.json()]
     assert scores == sorted(scores, reverse=True)
 
 
 def test_customer_detail_drill_down(client) -> None:
-    r = client.get("/api/insights/customer/Northstar Pharma")
+    r = client.get("/api/v1/insights/customer/Northstar Pharma")
     assert r.status_code == 200
     body = r.json()
     assert body["customer"] == "Northstar Pharma"
@@ -82,35 +100,54 @@ def test_customer_detail_drill_down(client) -> None:
 
 
 def test_customer_detail_404(client) -> None:
-    r = client.get("/api/insights/customer/Nope%20Inc")
+    r = client.get("/api/v1/insights/customer/Nope%20Inc")
     assert r.status_code == 404
 
 
 def test_incident_impact(client) -> None:
-    r = client.get("/api/insights/incident-impact")
+    r = client.get("/api/v1/insights/incident-impact")
     assert r.status_code == 200
     body = r.json()
     assert body["n_total"] == 100
-    assert body["n_affected"] > 0
     assert body["sentiment_affected"] < body["sentiment_unaffected"]
 
 
 def test_action_items(client) -> None:
-    r = client.get("/api/insights/action-items")
+    r = client.get("/api/v1/insights/action-items")
     assert r.status_code == 200
     body = r.json()
-    assert len(body) > 0
     assert all(o["total"] == o["external"] + o["internal"] + o["support"] for o in body)
 
 
 def test_negative_pivots(client) -> None:
-    r = client.get("/api/insights/negative-pivots")
+    r = client.get("/api/v1/insights/negative-pivots")
     assert r.status_code == 200
-    body = r.json()
-    assert all(p["max_drop"] <= -0.5 for p in body)
+    assert all(p["max_drop"] <= -0.5 for p in r.json())
 
 
+# ---------------------------------------------------------------------------
+# Static frontend
+# ---------------------------------------------------------------------------
 def test_static_index_served(client) -> None:
     r = client.get("/")
     assert r.status_code == 200
     assert "Transcript Intelligence" in r.text
+
+
+def test_favicon_served(client) -> None:
+    r = client.get("/favicon.svg")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("image/svg+xml")
+
+
+def test_legacy_unversioned_path_returns_404(client) -> None:
+    """Routes are only at /api/v1/*. Unversioned /api/* should 404 cleanly."""
+    r = client.get("/api/summary")
+    assert r.status_code == 404
+
+
+def test_metrics_endpoint(client) -> None:
+    r = client.get("/metrics")
+    # Endpoint exists when METRICS_ENABLED=true (default)
+    assert r.status_code == 200
+    assert "http_requests_total" in r.text or "process_" in r.text

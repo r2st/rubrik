@@ -596,6 +596,37 @@ footer code {
 
 <p>Each check is a small function returning a <code>Check(name, status, detail)</code>. Adding a new audit is one new function and one line in <code>main()</code>.</p>
 <hr />
+<h2 id="api-request-lifecycle">API request lifecycle<a class="anchor" href="#api-request-lifecycle" title="Permanent link">¶</a></h2>
+<p>A request to a <code>/api/v1/*</code> endpoint flows through this middleware stack:</p>
+<div class="mermaid">flowchart TD
+    Req[Incoming request] --> RID["RequestIDMiddleware<br/>mint or honor X-Request-ID<br/>start latency timer"]
+    RID --> Sec["SecurityHeadersMiddleware<br/>CSP · HSTS · X-Frame-Options · …"]
+    Sec --> CORS["CORSMiddleware<br/>configurable origins"]
+    CORS --> RL["SlowAPI rate limiter<br/>X-RateLimit-* headers"]
+    RL --> OTel["OpenTelemetry<br/>(if OTEL_ENDPOINT set)"]
+    OTel --> Auth{X-API-Key check<br/>(if API_KEY set)}
+    Auth -->|invalid| Err401["401 + error envelope"]
+    Auth -->|ok / disabled| Route["Route handler<br/>reads PipelineState"]
+    Route --> Resp[Response]
+
+    style RID fill:#e3f2fd
+    style Sec fill:#e3f2fd
+    style RL fill:#fff3e0
+    style Auth fill:#ffebee
+    style Err401 fill:#ffcdd2</div>
+
+<p>All errors — <code>HTTPException</code>, <code>RequestValidationError</code>, unhandled — funnel through the same handler in <code>api/errors.py</code> and come back as:</p>
+<pre><code class="language-json">{
+  &quot;error&quot;: {
+    &quot;code&quot;: &quot;not_found&quot;,
+    &quot;message&quot;: &quot;meeting X not found&quot;,
+    &quot;request_id&quot;: &quot;9574…&quot;,
+    &quot;path&quot;: &quot;/api/v1/meetings/X&quot;
+  }
+}
+</code></pre>
+<p>The <code>/api/health</code> endpoint is registered on a separate <strong>public</strong> router that bypasses the auth dependency — load balancers and k8s probes need to hit it without credentials.</p>
+<hr />
 <h2 id="performance-caching">Performance &amp; caching<a class="anchor" href="#performance-caching" title="Permanent link">¶</a></h2>
 <table>
 <thead>
@@ -661,7 +692,7 @@ footer code {
   Generated from <code>docs/ARCHITECTURE.md</code>
 </footer>
 </main>
-<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#design-principles" class="h2">Design principles</a></li><li><a href="#system-overview" class="h2">System overview</a></li><li><a href="#module-dependencies" class="h2">Module dependencies</a></li><li><a href="#data-model" class="h2">Data model</a></li><li><a href="#pipeline-stages" class="h2">Pipeline stages</a></li><li><a href="#interface-layering" class="h2">Interface layering</a></li><li><a href="#validation-flow" class="h2">Validation flow</a></li><li><a href="#performance-caching" class="h2">Performance &amp; caching</a></li><li><a href="#extensibility" class="h2">Extensibility</a></li></ul></aside>
+<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#design-principles" class="h2">Design principles</a></li><li><a href="#system-overview" class="h2">System overview</a></li><li><a href="#module-dependencies" class="h2">Module dependencies</a></li><li><a href="#data-model" class="h2">Data model</a></li><li><a href="#pipeline-stages" class="h2">Pipeline stages</a></li><li><a href="#interface-layering" class="h2">Interface layering</a></li><li><a href="#validation-flow" class="h2">Validation flow</a></li><li><a href="#api-request-lifecycle" class="h2">API request lifecycle</a></li><li><a href="#performance-caching" class="h2">Performance &amp; caching</a></li><li><a href="#extensibility" class="h2">Extensibility</a></li></ul></aside>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <script>

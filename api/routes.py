@@ -1,4 +1,12 @@
-"""API routes — one endpoint per analytical surface."""
+"""API routes — one endpoint per analytical surface.
+
+All routes live under `/api/v1/...`. The unversioned `/api/...` paths are
+preserved as a deprecated alias (registered in `api/main.py`) so existing
+clients keep working through the v1 transition.
+
+Auth gates the whole router: every endpoint depends on `require_api_key`,
+which is a no-op when `Settings.api_key` is unset (dev convenience).
+"""
 from __future__ import annotations
 
 from collections import Counter
@@ -6,10 +14,11 @@ from datetime import date
 from typing import Optional
 
 import pandas as pd
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src import sentiment as sent_mod
 
+from .auth import require_api_key
 from .models import (
     ActionItemOwner,
     ClusterInfo,
@@ -28,7 +37,11 @@ from .models import (
 )
 from .state import get_state
 
-router = APIRouter(prefix="/api")
+# Public router (no auth) — for things load balancers / probes need to hit.
+public_router = APIRouter(prefix="/api")
+
+# Versioned router. Every route inherits the auth dependency.
+router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_api_key)])
 
 
 # ---------------------------------------------------------------------------
@@ -72,8 +85,10 @@ def _filter(df: pd.DataFrame,
 # ---------------------------------------------------------------------------
 # Health & summary
 # ---------------------------------------------------------------------------
-@router.get("/health", response_model=HealthResponse, tags=["meta"])
+@public_router.get("/health", response_model=HealthResponse, tags=["meta"])
+@public_router.get("/v1/health", response_model=HealthResponse, tags=["meta"])
 def health() -> HealthResponse:
+    """Liveness probe. No auth required."""
     return HealthResponse()
 
 

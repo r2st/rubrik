@@ -339,7 +339,7 @@ footer code {
 <p>A production-ready pipeline that processes B2B meeting transcripts and surfaces topic categorization, sentiment trends, and strategic insights — exposed as a REST API with a lightweight web dashboard.</p>
 </blockquote>
 <p><a href=".github/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-blue" /></a>
-<a href="https://github.com/"><img alt="Tests" src="https://img.shields.io/badge/tests-71%20passing-brightgreen" /></a>
+<a href="https://github.com/"><img alt="Tests" src="https://img.shields.io/badge/tests-86%20passing-brightgreen" /></a>
 <a href="pyproject.toml"><img alt="Coverage" src="https://img.shields.io/badge/coverage-94%25-brightgreen" /></a>
 <a href="https://github.com/"><img alt="Validation" src="https://img.shields.io/badge/validation-9%2F10%20pass-brightgreen" /></a>
 <a href="pyproject.toml"><img alt="Python" src="https://img.shields.io/badge/python-3.9%2B-blue" /></a>
@@ -676,6 +676,81 @@ make compose-down                # docker compose down
 docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 </code></pre>
 <h2 id="production-readiness">Production readiness<a class="anchor" href="#production-readiness" title="Permanent link">¶</a></h2>
+<h3 id="security">Security<a class="anchor" href="#security" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>How it's handled</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>API key auth</strong></td>
+<td><code>X-API-Key</code> header check on every <code>/api/v1/*</code> route. Disabled when <code>API_KEY</code> env unset (dev). Health probe stays public.</td>
+</tr>
+<tr>
+<td><strong>CORS</strong></td>
+<td>Configurable origins (<code>CORS_ORIGINS</code> env). Tighten in prod.</td>
+</tr>
+<tr>
+<td><strong>Rate limiting</strong></td>
+<td><code>slowapi</code> with default 120 req/min/IP, <code>X-RateLimit-*</code> headers.</td>
+</tr>
+<tr>
+<td><strong>Security headers</strong></td>
+<td>CSP, HSTS (prod only), X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy — all on every response.</td>
+</tr>
+<tr>
+<td><strong>Request IDs</strong></td>
+<td>Every request stamped with <code>X-Request-ID</code>. Honored if inbound (load balancer / mesh propagation).</td>
+</tr>
+<tr>
+<td><strong>Error envelope</strong></td>
+<td>All errors return <code>{"error": {code, message, request_id, path, details?}}</code> — no framework internals leak.</td>
+</tr>
+<tr>
+<td><strong>API versioning</strong></td>
+<td>All routes under <code>/api/v1/</code>. Future v2 ships side-by-side without breaking clients.</td>
+</tr>
+<tr>
+<td><strong>CI security scans</strong></td>
+<td><code>pip-audit</code> (dependencies), <code>trivy</code> (filesystem + image), <code>bandit</code> (Python SAST).</td>
+</tr>
+</tbody>
+</table>
+<h3 id="observability-opt-in">Observability (opt-in)<a class="anchor" href="#observability-opt-in" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>How it's handled</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Structured logs</strong></td>
+<td>Text or JSON via <code>LOG_FORMAT</code>. Each request gets a one-line access log with <code>request_id</code>, <code>method</code>, <code>path</code>, <code>status</code>, <code>elapsed_ms</code>.</td>
+</tr>
+<tr>
+<td><strong>Prometheus metrics</strong></td>
+<td><code>/metrics</code> endpoint with request rate, latency histograms, status codes per route.</td>
+</tr>
+<tr>
+<td><strong>OpenTelemetry tracing</strong></td>
+<td>FastAPI auto-instrumented. OTLP/HTTP export when <code>OTEL_ENDPOINT</code> is set. Backend-agnostic (Tempo / Jaeger / Datadog / Honeycomb).</td>
+</tr>
+<tr>
+<td><strong>Sentry</strong></td>
+<td>Errors auto-forwarded when <code>SENTRY_DSN</code> is set.</td>
+</tr>
+<tr>
+<td><strong>Health endpoint</strong></td>
+<td><code>/api/health</code> (no auth) for load balancers and k8s probes.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="engineering">Engineering<a class="anchor" href="#engineering" title="Permanent link">¶</a></h3>
 <table>
 <thead>
 <tr>
@@ -686,60 +761,114 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 <tbody>
 <tr>
 <td><strong>Packaging</strong></td>
-<td><code>pyproject.toml</code> (PEP 621); installable via <code>pip install -e ".[dev]"</code>; entry-point scripts</td>
-</tr>
-<tr>
-<td><strong>Linting</strong></td>
-<td><code>ruff</code> (lint + format) configured in pyproject</td>
-</tr>
-<tr>
-<td><strong>Type checking</strong></td>
-<td><code>mypy</code> configured for <code>src/</code> and <code>api/</code></td>
-</tr>
-<tr>
-<td><strong>Testing</strong></td>
-<td><code>pytest</code>, 71 tests, 94% coverage, FastAPI <code>TestClient</code></td>
-</tr>
-<tr>
-<td><strong>CI/CD</strong></td>
-<td>GitHub Actions: lint → type-check → test (3.9/3.11/3.12) → Docker build</td>
-</tr>
-<tr>
-<td><strong>Containerization</strong></td>
-<td>Multi-stage Dockerfile, non-root user, healthcheck, JSON logs</td>
-</tr>
-<tr>
-<td><strong>Observability</strong></td>
-<td>Structured logging (<code>LOG_FORMAT=json</code>), <code>/api/health</code> endpoint</td>
+<td><code>pyproject.toml</code> (PEP 621); installable via <code>pip install -e ".[dev]"</code>; entry-point scripts.</td>
 </tr>
 <tr>
 <td><strong>Configuration</strong></td>
-<td>Env vars (<code>LOG_LEVEL</code>, <code>LOG_FORMAT</code>, <code>PORT</code>); rules in <code>src/config.py</code></td>
+<td><code>pydantic-settings</code> reads <code>.env</code> + env vars; typed, validated, multi-environment (dev/staging/prod profiles). See <a href=".env.example"><code>.env.example</code></a>.</td>
 </tr>
 <tr>
-<td><strong>API contracts</strong></td>
-<td>Pydantic response models + OpenAPI auto-docs at <code>/docs</code></td>
+<td><strong>Linting / formatting</strong></td>
+<td><code>ruff</code> (lint + format) configured in pyproject.</td>
 </tr>
 <tr>
-<td><strong>Caching</strong></td>
-<td>Pipeline computed once at startup, cached in thread-safe singleton</td>
+<td><strong>Type checking</strong></td>
+<td><code>mypy</code> for <code>src/</code> and <code>api/</code>.</td>
+</tr>
+<tr>
+<td><strong>Testing</strong></td>
+<td><code>pytest</code>, <strong>86 tests, 94% coverage</strong>, FastAPI <code>TestClient</code>.</td>
+</tr>
+<tr>
+<td><strong>CI/CD</strong></td>
+<td>GitHub Actions: lint → type-check → test (3.9/3.11/3.12) → security scan → Docker build + image scan.</td>
+</tr>
+<tr>
+<td><strong>Containerization</strong></td>
+<td>Multi-stage Dockerfile, non-root user, healthcheck, JSON logs, Caddy reverse proxy via compose.</td>
+</tr>
+<tr>
+<td><strong>Pipeline lifecycle</strong></td>
+<td>State cached at startup; optional periodic refresh (<code>PIPELINE_REFRESH_MINUTES</code>) when the dataset can change underneath.</td>
 </tr>
 <tr>
 <td><strong>Pre-commit</strong></td>
-<td>ruff + mypy + standard hooks (<code>pre-commit install</code>)</td>
+<td>ruff + mypy + standard hooks (<code>pre-commit install</code>).</td>
+</tr>
+<tr>
+<td><strong>API contracts</strong></td>
+<td>Pydantic response models + OpenAPI auto-docs at <code>/docs</code>.</td>
 </tr>
 <tr>
 <td><strong>Documentation</strong></td>
-<td>README + ARCHITECTURE + APPROACH (with Mermaid) + standalone HTML build</td>
+<td>README + ARCHITECTURE + APPROACH (with Mermaid) + standalone HTML build.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="configuration">Configuration<a class="anchor" href="#configuration" title="Permanent link">¶</a></h3>
+<p>All operational knobs are env vars. Copy <code>.env.example</code> to <code>.env</code> and override.</p>
+<table>
+<thead>
+<tr>
+<th>Var</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ENV</code></td>
+<td><code>dev</code></td>
+<td><code>dev</code> / <code>staging</code> / <code>prod</code> — affects defaults like HSTS</td>
+</tr>
+<tr>
+<td><code>LOG_LEVEL</code> / <code>LOG_FORMAT</code></td>
+<td><code>INFO</code> / <code>text</code></td>
+<td>Use <code>json</code> in prod</td>
+</tr>
+<tr>
+<td><code>API_KEY</code></td>
+<td><em>(empty — auth off)</em></td>
+<td>Set to require <code>X-API-Key</code> on all <code>/api/*</code></td>
+</tr>
+<tr>
+<td><code>CORS_ORIGINS</code></td>
+<td><code>["*"]</code></td>
+<td>Tighten in prod to the dashboard domain</td>
+</tr>
+<tr>
+<td><code>RATE_LIMIT_DEFAULT</code></td>
+<td><code>120/minute</code></td>
+<td>slowapi syntax</td>
+</tr>
+<tr>
+<td><code>PIPELINE_REFRESH_MINUTES</code></td>
+<td><code>0</code> (off)</td>
+<td>Rebuild the analysis cache every N minutes</td>
+</tr>
+<tr>
+<td><code>SENTRY_DSN</code></td>
+<td><em>(empty)</em></td>
+<td>Forward unhandled errors to Sentry</td>
+</tr>
+<tr>
+<td><code>OTEL_ENDPOINT</code></td>
+<td><em>(empty)</em></td>
+<td>Export traces via OTLP/HTTP</td>
+</tr>
+<tr>
+<td><code>METRICS_ENABLED</code></td>
+<td><code>true</code></td>
+<td>Mount <code>/metrics</code></td>
 </tr>
 </tbody>
 </table>
 <h3 id="whats-deliberately-not-done">What's deliberately not done<a class="anchor" href="#whats-deliberately-not-done" title="Permanent link">¶</a></h3>
 <ul>
-<li><strong>Auth / multi-tenancy</strong> — out of scope; trivial to add via FastAPI dependencies</li>
+<li><strong>Multi-tenant auth</strong> — single API key today; JWT is a one-line dependency swap if needed</li>
 <li><strong>Database persistence</strong> — dataset is static JSON; pipeline runs in 10s</li>
-<li><strong>Async I/O refactor</strong> — not a bottleneck at this scale</li>
-<li><strong>Metrics / tracing</strong> — over-engineering for a single-instance demo; OpenTelemetry would slot in cleanly</li>
+<li><strong>Async I/O refactor</strong> — not a bottleneck at this scale; sync handlers are simpler</li>
+<li><strong>Distributed cache</strong> — single-instance singleton suffices; Redis is the next step at scale</li>
 </ul>
 <h2 id="documentation">Documentation<a class="anchor" href="#documentation" title="Permanent link">¶</a></h2>
 <ul>
@@ -753,7 +882,7 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
   Generated from <code>README.md</code>
 </footer>
 </main>
-<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#contents" class="h2">Contents</a></li><li><a href="#what-this-does" class="h2">What this does</a></li><li><a href="#headline-findings" class="h2">Headline findings</a></li><li><a href="#quick-start" class="h2">Quick start</a></li><li><a href="#architecture" class="h2">Architecture</a></li><li><a href="#project-layout" class="h2">Project layout</a></li><li><a href="#testing-validation" class="h2">Testing &amp; validation</a></li><li><a href="#api-web-dashboard" class="h2">API &amp; web dashboard</a></li><li><a href="#why-fastapi-instead-of-streamlit" class="h3">Why FastAPI instead of Streamlit</a></li><li><a href="#run-all-services" class="h2">Run all services</a></li><li><a href="#container-alternative-docker-compose" class="h3">Container alternative (docker compose)</a></li><li><a href="#production-readiness" class="h2">Production readiness</a></li><li><a href="#whats-deliberately-not-done" class="h3">What's deliberately not done</a></li><li><a href="#documentation" class="h2">Documentation</a></li><li><a href="#license" class="h2">License</a></li></ul></aside>
+<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#contents" class="h2">Contents</a></li><li><a href="#what-this-does" class="h2">What this does</a></li><li><a href="#headline-findings" class="h2">Headline findings</a></li><li><a href="#quick-start" class="h2">Quick start</a></li><li><a href="#architecture" class="h2">Architecture</a></li><li><a href="#project-layout" class="h2">Project layout</a></li><li><a href="#testing-validation" class="h2">Testing &amp; validation</a></li><li><a href="#api-web-dashboard" class="h2">API &amp; web dashboard</a></li><li><a href="#why-fastapi-instead-of-streamlit" class="h3">Why FastAPI instead of Streamlit</a></li><li><a href="#run-all-services" class="h2">Run all services</a></li><li><a href="#container-alternative-docker-compose" class="h3">Container alternative (docker compose)</a></li><li><a href="#production-readiness" class="h2">Production readiness</a></li><li><a href="#security" class="h3">Security</a></li><li><a href="#observability-opt-in" class="h3">Observability (opt-in)</a></li><li><a href="#engineering" class="h3">Engineering</a></li><li><a href="#configuration" class="h3">Configuration</a></li><li><a href="#whats-deliberately-not-done" class="h3">What's deliberately not done</a></li><li><a href="#documentation" class="h2">Documentation</a></li><li><a href="#license" class="h2">License</a></li></ul></aside>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <script>

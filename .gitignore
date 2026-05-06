@@ -42,6 +42,11 @@ coverage.xml
 build/
 dist/
 
+# Local env (never commit secrets — see .env.example)
+.env
+.env.local
+.env.*.local
+
 # Runtime logs from start-all.sh
 .run-logs/
 

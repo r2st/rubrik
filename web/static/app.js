@@ -14,9 +14,24 @@ const PLOTLY_BASE = {
 };
 const PLOTLY_CFG = { displayModeBar: false, responsive: true };
 
+// API base. Versioned so future breaking changes can ship under /api/v2.
+const API_BASE = "/api/v1";
+
 async function api(path) {
-  const r = await fetch(path);
-  if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
+  // Allow callers to pass either "/summary" or "/api/v1/summary" — normalize.
+  const url = path.startsWith("/api/") ? path : API_BASE + path;
+  const headers = {};
+  // X-API-Key is read from a global if the page sets one; harmless if absent.
+  if (window.API_KEY) headers["X-API-Key"] = window.API_KEY;
+  const r = await fetch(url, { headers });
+  if (!r.ok) {
+    let msg = `HTTP ${r.status}`;
+    try {
+      const body = await r.json();
+      if (body?.error?.message) msg = body.error.message;
+    } catch (_) { /* not json */ }
+    throw new Error(`${url}: ${msg}`);
+  }
   return r.json();
 }
 
@@ -32,7 +47,7 @@ $$(".tab").forEach((t) => t.addEventListener("click", () => {
 
 // -------- KPIs + meta --------
 async function loadSummary() {
-  const s = await api("/api/summary");
+  const s = await api("/summary");
   $("#meta").textContent = `${s.n_meetings} meetings · ${s.date_range[0]} → ${s.date_range[1]} · k=${s.n_clusters}`;
   const kpis = [
     { label: "Meetings", value: s.n_meetings },
@@ -50,7 +65,7 @@ async function loadSummary() {
 // -------- Overview --------
 async function loadOverview(summary) {
   // Boxplot of raw scores per call type
-  const scores = await api("/api/sentiment/scores");
+  const scores = await api("/sentiment/scores");
   const boxData = Object.entries(scores).map(([ct, vals]) => ({
     y: vals, name: ct, type: "box", boxpoints: "all", jitter: 0.4,
     marker: { color: COLORS[ct] || "#777", size: 5 },
@@ -64,7 +79,7 @@ async function loadOverview(summary) {
   }, PLOTLY_CFG);
 
   // Sentiment by purpose
-  const byPurpose = await api("/api/sentiment/by-purpose");
+  const byPurpose = await api("/sentiment/by-purpose");
   Plotly.newPlot("chart-sentiment-purpose", [{
     x: byPurpose.map(p => p.mean), y: byPurpose.map(p => p.group),
     type: "bar", orientation: "h",
@@ -81,7 +96,7 @@ async function loadOverview(summary) {
   }, PLOTLY_CFG);
 
   // Weekly trend
-  const weekly = await api("/api/sentiment/weekly");
+  const weekly = await api("/sentiment/weekly");
   const series = {};
   weekly.forEach(p => {
     series[p.call_type] ??= { x: [], y: [] };
@@ -119,7 +134,7 @@ async function loadOverview(summary) {
 
 // -------- Customers --------
 async function loadCustomers() {
-  const customers = await api("/api/insights/customer-health");
+  const customers = await api("/insights/customer-health");
   const tierClass = (t) => t.includes("high") ? "tier-high" : t.includes("medium") ? "tier-medium" : "tier-low";
   $("#table-customers").innerHTML = `
     <thead><tr><th>Customer</th><th>Tier</th><th>Risk</th><th>Avg sent.</th>
@@ -142,7 +157,7 @@ async function loadCustomers() {
   $("#customer-select").addEventListener("change", async (e) => {
     const name = e.target.value;
     if (!name) { $("#customer-detail").innerHTML = ""; return; }
-    const detail = await api(`/api/insights/customer/${encodeURIComponent(name)}`);
+    const detail = await api(`/insights/customer/${encodeURIComponent(name)}`);
     $("#customer-detail").innerHTML = `
       <div class="mini-kpis">
         <div class="mini-kpi"><div class="label">Tier</div><div class="value">${detail.risk_tier}</div></div>
@@ -162,7 +177,7 @@ async function loadCustomers() {
 
 // -------- Incident --------
 async function loadIncident() {
-  const inc = await api("/api/insights/incident-impact");
+  const inc = await api("/insights/incident-impact");
   $("#incident-kpis").innerHTML = `
     <div class="mini-kpi"><div class="label">Affected</div><div class="value">${inc.n_affected}/${inc.n_total}</div></div>
     <div class="mini-kpi"><div class="label">Affected %</div><div class="value">${fmt(inc.affected_pct, 1)}%</div></div>
@@ -170,7 +185,7 @@ async function loadIncident() {
     <div class="mini-kpi"><div class="label">Sentiment Δ</div><div class="value">${fmt(inc.sentiment_unaffected - inc.sentiment_affected)}</div></div>`;
 
   // Re-fetch all meetings + flag affected
-  const all = await api("/api/meetings?limit=1000");
+  const all = await api("/meetings?limit=1000");
   const directIds = new Set(inc.direct_meetings.map(m => m.meeting_id));
   const traces = ["external", "internal", "support"].map(ct => ({
     x: all.filter(m => m.call_type === ct).map(m => m.start_time),
@@ -207,7 +222,7 @@ async function loadIncident() {
 
 // -------- Meeting drill-down --------
 async function loadMeetingPicker() {
-  const meetings = await api("/api/meetings?limit=1000");
+  const meetings = await api("/meetings?limit=1000");
   $("#meeting-select").innerHTML =
     `<option value="">Pick a meeting…</option>` +
     meetings.map(m => `<option value="${m.meeting_id}">
@@ -216,7 +231,7 @@ async function loadMeetingPicker() {
   $("#meeting-select").addEventListener("change", async (e) => {
     const id = e.target.value;
     if (!id) { $("#meeting-detail").innerHTML = ""; return; }
-    const m = await api(`/api/meetings/${id}`);
+    const m = await api(`/meetings/${id}`);
     let trajChart = "";
     if (m.trajectory) {
       trajChart = `<div id="meeting-trajectory" class="chart" style="height:240px"></div>`;
@@ -255,7 +270,7 @@ async function loadMeetingPicker() {
 
 // -------- Clusters --------
 async function loadClusters() {
-  const c = await api("/api/clusters");
+  const c = await api("/clusters");
   $("#cluster-caption").textContent = `k = ${c.k} chosen via silhouette score (${c.silhouette}).`;
   $("#table-clusters").innerHTML = `
     <thead><tr><th>Cluster</th><th>Size</th><th>Top terms</th><th>Dominant purpose</th><th>Avg sentiment</th></tr></thead>

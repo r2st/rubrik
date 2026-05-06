@@ -273,6 +273,46 @@ Each check is a small function returning a `Check(name, status, detail)`. Adding
 
 ---
 
+## API request lifecycle
+
+A request to a `/api/v1/*` endpoint flows through this middleware stack:
+
+```mermaid
+flowchart TD
+    Req[Incoming request] --> RID["RequestIDMiddleware<br/>mint or honor X-Request-ID<br/>start latency timer"]
+    RID --> Sec["SecurityHeadersMiddleware<br/>CSP · HSTS · X-Frame-Options · …"]
+    Sec --> CORS["CORSMiddleware<br/>configurable origins"]
+    CORS --> RL["SlowAPI rate limiter<br/>X-RateLimit-* headers"]
+    RL --> OTel["OpenTelemetry<br/>(if OTEL_ENDPOINT set)"]
+    OTel --> Auth{X-API-Key check<br/>(if API_KEY set)}
+    Auth -->|invalid| Err401["401 + error envelope"]
+    Auth -->|ok / disabled| Route["Route handler<br/>reads PipelineState"]
+    Route --> Resp[Response]
+
+    style RID fill:#e3f2fd
+    style Sec fill:#e3f2fd
+    style RL fill:#fff3e0
+    style Auth fill:#ffebee
+    style Err401 fill:#ffcdd2
+```
+
+All errors — `HTTPException`, `RequestValidationError`, unhandled — funnel through the same handler in `api/errors.py` and come back as:
+
+```json
+{
+  "error": {
+    "code": "not_found",
+    "message": "meeting X not found",
+    "request_id": "9574…",
+    "path": "/api/v1/meetings/X"
+  }
+}
+```
+
+The `/api/health` endpoint is registered on a separate **public** router that bypasses the auth dependency — load balancers and k8s probes need to hit it without credentials.
+
+---
+
 ## Performance & caching
 
 | Layer | Cache | Reason |

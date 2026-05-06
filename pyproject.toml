@@ -19,6 +19,14 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
     "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "slowapi>=0.1.9",
+    "prometheus-fastapi-instrumentator>=7.0",
+    "opentelemetry-api>=1.20",
+    "opentelemetry-sdk>=1.20",
+    "opentelemetry-instrumentation-fastapi>=0.40b0",
+    "opentelemetry-exporter-otlp-proto-http>=1.20",
+    "sentry-sdk[fastapi]>=2.0",
     "markdown>=3.4",
     "pygments>=2.15",
 ]
@@ -27,6 +35,7 @@ dependencies = [
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
+    "pip-audit>=2.7",
     "ruff>=0.4",
     "mypy>=1.7",
     "pre-commit>=3.5",
@@ -69,16 +78,19 @@ ignore = [
     "PLR2004",  # magic numbers (config has many)
     "E501",     # line too long (formatter handles)
     "E702",     # multi-statement lines (visualization compactness)
-    "UP045",    # Optional[X] — kept for Python 3.9 compatibility
-    "B008",     # function-call in default arg (FastAPI Query idiom)
+    "UP006",    # non-pep585-annotation (List/Dict) — Python 3.9 compat
+    "UP035",    # deprecated-import (typing.List) — Python 3.9 compat
+    "UP045",    # Optional[X] — Python 3.9 + Pydantic compat
+    "B008",     # function-call in default arg (FastAPI Query / Depends idiom)
     "RET504",   # unnecessary-assign (style preference)
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["PLR2004", "B007"]
+"tests/*" = ["PLR2004", "B007", "PLC0415"]   # lazy imports for app reload
 "src/config.py" = ["E501"]
-"api/state.py" = ["PLW0603"]  # singleton pattern uses global
-"validate.py" = ["PLC0415", "B007"]  # local import for circular avoidance
+"api/state.py" = ["PLW0603"]                 # singleton pattern uses global
+"api/observability.py" = ["PLC0415"]         # lazy imports gated on settings
+"validate.py" = ["PLC0415", "B007"]          # local import avoids circularity
 
 [tool.ruff.format]
 quote-style = "double"

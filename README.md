@@ -3,7 +3,7 @@
 > A production-ready pipeline that processes B2B meeting transcripts and surfaces topic categorization, sentiment trends, and strategic insights — exposed as a REST API with a lightweight web dashboard.
 
 [![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue)](.github/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-71%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-86%20passing-brightgreen)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-94%25-brightgreen)](pyproject.toml)
 [![Validation](https://img.shields.io/badge/validation-9%2F10%20pass-brightgreen)](validate.py)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](pyproject.toml)
@@ -245,27 +245,64 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 
 ## Production readiness
 
+### Security
 | Concern | How it's handled |
 |---|---|
-| **Packaging** | `pyproject.toml` (PEP 621); installable via `pip install -e ".[dev]"`; entry-point scripts |
-| **Linting** | `ruff` (lint + format) configured in pyproject |
-| **Type checking** | `mypy` configured for `src/` and `api/` |
-| **Testing** | `pytest`, 71 tests, 94% coverage, FastAPI `TestClient` |
-| **CI/CD** | GitHub Actions: lint → type-check → test (3.9/3.11/3.12) → Docker build |
-| **Containerization** | Multi-stage Dockerfile, non-root user, healthcheck, JSON logs |
-| **Observability** | Structured logging (`LOG_FORMAT=json`), `/api/health` endpoint |
-| **Configuration** | Env vars (`LOG_LEVEL`, `LOG_FORMAT`, `PORT`); rules in `src/config.py` |
-| **API contracts** | Pydantic response models + OpenAPI auto-docs at `/docs` |
-| **Caching** | Pipeline computed once at startup, cached in thread-safe singleton |
-| **Pre-commit** | ruff + mypy + standard hooks (`pre-commit install`) |
-| **Documentation** | README + ARCHITECTURE + APPROACH (with Mermaid) + standalone HTML build |
+| **API key auth** | `X-API-Key` header check on every `/api/v1/*` route. Disabled when `API_KEY` env unset (dev). Health probe stays public. |
+| **CORS** | Configurable origins (`CORS_ORIGINS` env). Tighten in prod. |
+| **Rate limiting** | `slowapi` with default 120 req/min/IP, `X-RateLimit-*` headers. |
+| **Security headers** | CSP, HSTS (prod only), X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy — all on every response. |
+| **Request IDs** | Every request stamped with `X-Request-ID`. Honored if inbound (load balancer / mesh propagation). |
+| **Error envelope** | All errors return `{"error": {code, message, request_id, path, details?}}` — no framework internals leak. |
+| **API versioning** | All routes under `/api/v1/`. Future v2 ships side-by-side without breaking clients. |
+| **CI security scans** | `pip-audit` (dependencies), `trivy` (filesystem + image), `bandit` (Python SAST). |
+
+### Observability (opt-in)
+| Concern | How it's handled |
+|---|---|
+| **Structured logs** | Text or JSON via `LOG_FORMAT`. Each request gets a one-line access log with `request_id`, `method`, `path`, `status`, `elapsed_ms`. |
+| **Prometheus metrics** | `/metrics` endpoint with request rate, latency histograms, status codes per route. |
+| **OpenTelemetry tracing** | FastAPI auto-instrumented. OTLP/HTTP export when `OTEL_ENDPOINT` is set. Backend-agnostic (Tempo / Jaeger / Datadog / Honeycomb). |
+| **Sentry** | Errors auto-forwarded when `SENTRY_DSN` is set. |
+| **Health endpoint** | `/api/health` (no auth) for load balancers and k8s probes. |
+
+### Engineering
+| Concern | How it's handled |
+|---|---|
+| **Packaging** | `pyproject.toml` (PEP 621); installable via `pip install -e ".[dev]"`; entry-point scripts. |
+| **Configuration** | `pydantic-settings` reads `.env` + env vars; typed, validated, multi-environment (dev/staging/prod profiles). See [`.env.example`](.env.example). |
+| **Linting / formatting** | `ruff` (lint + format) configured in pyproject. |
+| **Type checking** | `mypy` for `src/` and `api/`. |
+| **Testing** | `pytest`, **86 tests, 94% coverage**, FastAPI `TestClient`. |
+| **CI/CD** | GitHub Actions: lint → type-check → test (3.9/3.11/3.12) → security scan → Docker build + image scan. |
+| **Containerization** | Multi-stage Dockerfile, non-root user, healthcheck, JSON logs, Caddy reverse proxy via compose. |
+| **Pipeline lifecycle** | State cached at startup; optional periodic refresh (`PIPELINE_REFRESH_MINUTES`) when the dataset can change underneath. |
+| **Pre-commit** | ruff + mypy + standard hooks (`pre-commit install`). |
+| **API contracts** | Pydantic response models + OpenAPI auto-docs at `/docs`. |
+| **Documentation** | README + ARCHITECTURE + APPROACH (with Mermaid) + standalone HTML build. |
+
+### Configuration
+
+All operational knobs are env vars. Copy `.env.example` to `.env` and override.
+
+| Var | Default | Purpose |
+|---|---|---|
+| `ENV` | `dev` | `dev` / `staging` / `prod` — affects defaults like HSTS |
+| `LOG_LEVEL` / `LOG_FORMAT` | `INFO` / `text` | Use `json` in prod |
+| `API_KEY` | _(empty — auth off)_ | Set to require `X-API-Key` on all `/api/*` |
+| `CORS_ORIGINS` | `["*"]` | Tighten in prod to the dashboard domain |
+| `RATE_LIMIT_DEFAULT` | `120/minute` | slowapi syntax |
+| `PIPELINE_REFRESH_MINUTES` | `0` (off) | Rebuild the analysis cache every N minutes |
+| `SENTRY_DSN` | _(empty)_ | Forward unhandled errors to Sentry |
+| `OTEL_ENDPOINT` | _(empty)_ | Export traces via OTLP/HTTP |
+| `METRICS_ENABLED` | `true` | Mount `/metrics` |
 
 ### What's deliberately not done
 
-- **Auth / multi-tenancy** — out of scope; trivial to add via FastAPI dependencies
+- **Multi-tenant auth** — single API key today; JWT is a one-line dependency swap if needed
 - **Database persistence** — dataset is static JSON; pipeline runs in 10s
-- **Async I/O refactor** — not a bottleneck at this scale
-- **Metrics / tracing** — over-engineering for a single-instance demo; OpenTelemetry would slot in cleanly
+- **Async I/O refactor** — not a bottleneck at this scale; sync handlers are simpler
+- **Distributed cache** — single-instance singleton suffices; Redis is the next step at scale
 
 ## Documentation
 

@@ -1,11 +1,17 @@
 """Pipeline state — runs the analysis once at startup, caches the result.
 
-The dataset is static, so we trade memory for response latency. On a real
+The dataset is largely static, so we trade memory for response latency. For
 multi-instance deployment, swap this for a shared cache (Redis) or run the
 pipeline as a batch job and serve from a persisted store.
+
+Optional periodic refresh: if `settings.pipeline_refresh_minutes > 0`, an
+asyncio task rebuilds the state on that cadence so the API picks up new
+meeting JSON files without a process restart.
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import threading
 from dataclasses import dataclass, field
 from typing import Any
@@ -35,6 +41,7 @@ class PipelineState:
 
 _state: PipelineState | None = None
 _lock = threading.Lock()
+_refresh_task: asyncio.Task | None = None
 
 
 def get_state() -> PipelineState:
@@ -48,11 +55,45 @@ def get_state() -> PipelineState:
 
 
 def reload() -> PipelineState:
-    """Force a reload — useful for tests or after data refresh."""
+    """Force a synchronous rebuild — useful for tests or manual refresh."""
     global _state
     with _lock:
         _state = _build()
     return _state
+
+
+async def start_refresh_task(interval_minutes: int) -> None:
+    """Start the background refresh loop. No-op if interval <= 0 or already running."""
+    global _refresh_task
+    if interval_minutes <= 0 or _refresh_task is not None:
+        return
+
+    async def _loop() -> None:
+        log.info("Pipeline refresh loop starting (every %d min)", interval_minutes)
+        try:
+            while True:
+                await asyncio.sleep(interval_minutes * 60)
+                try:
+                    await asyncio.to_thread(reload)
+                    log.info("Pipeline state refreshed")
+                except Exception:  # noqa: BLE001
+                    log.exception("Pipeline refresh failed; will retry next cycle")
+        except asyncio.CancelledError:
+            log.info("Pipeline refresh loop cancelled")
+            raise
+
+    _refresh_task = asyncio.create_task(_loop(), name="pipeline-refresh")
+
+
+async def stop_refresh_task() -> None:
+    """Cancel the refresh task on shutdown."""
+    global _refresh_task
+    if _refresh_task is None:
+        return
+    _refresh_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await _refresh_task
+    _refresh_task = None
 
 
 def _build() -> PipelineState:
