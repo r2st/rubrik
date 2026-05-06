@@ -1,0 +1,19 @@
+{
+  "user": "attendee-12-rubrik-v2",
+  "config": {
+    "model": "unsloth/gemma-4-E2B-it",
+    "rank": 16,
+    "alpha": 32,
+    "epochs": 5,
+    "samples": 95,
+    "lr": 0.0002
+  },
+  "train_loss": 1.1769647439320883,
+  "timings_s": {
+    "model_load_s": 46.89,
+    "baseline_s": 79.67,
+    "train_s": 264.91,
+    "tuned_s": 102.91
+  },
+  "verdict": "5/5"
+}

@@ -43,6 +43,8 @@ Five interfaces over the same `src/` analysis core:
 | `validate.py` | Semantic audits against the dataset |
 | `docs/html/` | Standalone HTML docs (no server needed) |
 
+Plus a separate experiment in [`gemma-finetune/`](gemma-finetune/README.md) that fine-tunes **Gemma 4 (E4B)** on the dataset's gold summaries — demonstrates a self-hosted alternative to vendor LLM APIs for the summarization layer ($1.40 training cost, ROUGE-L 0.39 vs 0.29 baseline). See [APPROACH §Summarization](docs/APPROACH.md#summarization--action-items-vendor-vs-self-hosted) for the full comparison.
+
 ## Quick start
 
 **Run everything with one command:**
@@ -175,6 +177,12 @@ transcript-intelligence/
 │   ├── ARCHITECTURE.md           # system design with Mermaid diagrams
 │   ├── APPROACH.md               # methodology decisions
 │   └── html/                     # built static site (make docs)
+├── gemma-finetune/               # Gemma 4 fine-tuning experiment (separate)
+│   ├── README.md                 # methodology + 4 training iterations
+│   ├── code/                     # finetune_v3.py, finetune_v4.py, judge.py, …
+│   ├── data/                     # 380 train rows + 5 held-out eval prompts
+│   ├── adapters/                 # LoRA adapters (weights gitignored, 477 MB)
+│   └── results/                  # train logs + per-meeting metric JSONs
 └── output/                       # generated artifacts (gitignored)
 ```
 

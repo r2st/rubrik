@@ -217,6 +217,7 @@ footer {
 </tr>
 </tbody>
 </table>
+<p>Plus a separate experiment in <a href="gemma-finetune/README.md"><code>gemma-finetune/</code></a> that fine-tunes <strong>Gemma 4 (E4B)</strong> on the dataset's gold summaries — demonstrates a self-hosted alternative to vendor LLM APIs for the summarization layer ($1.40 training cost, ROUGE-L 0.39 vs 0.29 baseline). See <a href="docs/APPROACH.md#summarization--action-items-vendor-vs-self-hosted">APPROACH §Summarization</a> for the full comparison.</p>
 <h2 id="quick-start">Quick start</h2>
 <p><strong>Run everything with one command:</strong></p>
 <pre><code class="language-bash">make install-dev    # install + dev tools + pre-commit hooks
@@ -344,6 +345,12 @@ docker compose --profile proxy up -d
 │   ├── ARCHITECTURE.md           # system design with Mermaid diagrams
 │   ├── APPROACH.md               # methodology decisions
 │   └── html/                     # built static site (make docs)
+├── gemma-finetune/               # Gemma 4 fine-tuning experiment (separate)
+│   ├── README.md                 # methodology + 4 training iterations
+│   ├── code/                     # finetune_v3.py, finetune_v4.py, judge.py, …
+│   ├── data/                     # 380 train rows + 5 held-out eval prompts
+│   ├── adapters/                 # LoRA adapters (weights gitignored, 477 MB)
+│   └── results/                  # train logs + per-meeting metric JSONs
 └── output/                       # generated artifacts (gitignored)
 </code></pre>
 <h2 id="key-findings">Key findings</h2>

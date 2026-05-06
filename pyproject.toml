@@ -47,7 +47,9 @@ include = ["src*", "api*"]
 [tool.ruff]
 line-length = 100
 target-version = "py39"
-extend-exclude = ["output", "docs/html"]
+# gemma-finetune/ is the standalone workshop fine-tuning project — has its own
+# conventions and runs in a different env (Linux + CUDA). See its README.
+extend-exclude = ["output", "docs/html", "gemma-finetune"]
 
 [tool.ruff.lint]
 select = [
@@ -92,6 +94,7 @@ warn_unused_configs = true
 disallow_untyped_defs = false  # gradual; tighten over time
 ignore_missing_imports = true
 files = ["src", "api", "tests"]
+exclude = ["gemma-finetune"]
 
 [[tool.mypy.overrides]]
 module = ["matplotlib.*", "seaborn.*", "sklearn.*", "plotly.*"]

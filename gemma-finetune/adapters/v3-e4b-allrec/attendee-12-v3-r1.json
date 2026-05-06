@@ -1,0 +1,56 @@
+{
+  "user": "attendee-12-v3",
+  "config": {
+    "user": "attendee-12-v3",
+    "model": "unsloth/gemma-4-E4B-it",
+    "dataset": "data/rubrik_meetings.jsonl",
+    "eval_prompts": "data/rubrik_eval_prompts.json",
+    "rank": 16,
+    "alpha": 32,
+    "epochs": 3,
+    "lr": 0.0001,
+    "batch_size": 1,
+    "grad_accum": 8,
+    "max_seq_length": 8192,
+    "max_eval_tokens": 400,
+    "val_frac": 0.1,
+    "out_dir": "runs/attendee-12-v3"
+  },
+  "train_loss": 0.373541650846023,
+  "timings_s": {
+    "model_load_s": 28.66,
+    "baseline_s": 92.13,
+    "train_s": 598.97,
+    "tuned_s": 114.39
+  },
+  "rouge_l_avg": {
+    "baseline": 0.28606,
+    "tuned": 0.39404
+  },
+  "rouge_l_per_prompt": {
+    "meeting-1": {
+      "baseline_rouge_l": 0.2526,
+      "tuned_rouge_l": 0.3362
+    },
+    "meeting-2": {
+      "baseline_rouge_l": 0.2266,
+      "tuned_rouge_l": 0.4776
+    },
+    "meeting-3": {
+      "baseline_rouge_l": 0.304,
+      "tuned_rouge_l": 0.3844
+    },
+    "meeting-4": {
+      "baseline_rouge_l": 0.3394,
+      "tuned_rouge_l": 0.4396
+    },
+    "meeting-5": {
+      "baseline_rouge_l": 0.3077,
+      "tuned_rouge_l": 0.3324
+    }
+  },
+  "val_loss_history": [
+    1.0079376924887153
+  ],
+  "verdict_shifted": "5/5"
+}

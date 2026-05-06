@@ -159,63 +159,187 @@ footer {
 <p>This document captures the <em>why</em> behind the design — the decisions made, the alternatives considered, and the tradeoffs accepted.</p>
 <h2 id="contents">Contents</h2>
 <ul>
-<li><a href="#categorization-why-hybrid">Categorization: why hybrid</a></li>
+<li><a href="#categorization-approaches-we-evaluated">Categorization: approaches we evaluated</a></li>
+<li><a href="#approach-1-rule-based-regex-shipped">Approach 1: rule-based regex (shipped)</a></li>
+<li><a href="#approach-2-tf-idf--kmeans-clustering-shipped">Approach 2: TF-IDF + KMeans clustering (shipped)</a></li>
+<li><a href="#approach-3-zero-shot-llm-evaluated-not-shipped">Approach 3: zero-shot LLM (evaluated, not shipped)</a></li>
 <li><a href="#categorization-how-the-rules-are-layered">Categorization: how the rules are layered</a></li>
 <li><a href="#clustering-why-silhouette">Clustering: why silhouette</a></li>
+<li><a href="#summarization--action-items-vendor-vs-self-hosted">Summarization &amp; action items: vendor vs self-hosted</a></li>
 <li><a href="#sentiment-two-granularities">Sentiment: two granularities</a></li>
 <li><a href="#customer-churn-risk-score">Customer churn risk score</a></li>
 <li><a href="#why-these-six-insights">Why these six insights</a></li>
 <li><a href="#what-we-deliberately-did-not-do">What we deliberately did not do</a></li>
 </ul>
 <hr />
-<h2 id="categorization-why-hybrid">Categorization: why hybrid</h2>
-<p>The dataset has two kinds of structure: <strong>explicit</strong> (title patterns, topic tags) and <strong>latent</strong> (themes that cut across the explicit categories). A single approach handles only one kind well.</p>
+<h2 id="categorization-approaches-we-evaluated">Categorization: approaches we evaluated</h2>
+<p>We evaluated three approaches before settling on a hybrid. The dataset has two kinds of structure — <strong>explicit</strong> (title patterns, topic tags) and <strong>latent</strong> (themes that cut across explicit categories) — and a single approach handles only one kind well.</p>
 <div class="mermaid">flowchart LR
-    Doc[Meeting] --> S1{Has structured signal?<br/>title, topics field}
+    Doc[Meeting] --> Cls{Categorization<br/>approach}
 
-    S1 -->|Yes| Rules[Regex rules<br/>fast · reproducible · auditable]
-    S1 -->|No / Latent| Cluster[TF-IDF + KMeans<br/>finds cross-category themes]
+    Cls --> Rules["1. Regex rules<br/>shipped"]
+    Cls --> Cluster["2. TF-IDF + KMeans<br/>shipped"]
+    Cls --> Zero["3. Zero-shot LLM<br/>evaluated, not shipped"]
 
-    Rules --> Out[call_type · purpose · product_areas · customer]
+    Rules --> Out[call_type · purpose · product · customer]
     Cluster --> Out2[content_cluster]</div>
 
+<h3 id="comparison-matrix">Comparison matrix</h3>
 <table>
 <thead>
 <tr>
-<th>Approach</th>
-<th>Pros</th>
-<th>Cons</th>
-<th>Used for</th>
+<th>Dimension</th>
+<th>Regex rules</th>
+<th>TF-IDF + KMeans</th>
+<th>Zero-shot LLM</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><strong>Pure rules</strong></td>
-<td>100% reproducible, fast, auditable, free</td>
-<td>Misses latent themes; brittle on new title formats</td>
-<td>Call type, purpose, product, customer</td>
+<td><strong>Setup cost</strong></td>
+<td>~hours (write rules)</td>
+<td>~hour (vectorize + tune k)</td>
+<td>~hour (prompt design)</td>
 </tr>
 <tr>
-<td><strong>Pure LLM</strong></td>
-<td>Handles ambiguity well, no engineering</td>
-<td>Slow, expensive, non-deterministic, opaque</td>
-<td>— (overkill at this scale)</td>
+<td><strong>Inference cost / 1k docs</strong></td>
+<td>~$0</td>
+<td>~$0</td>
+<td>$1–$10 (API)</td>
 </tr>
 <tr>
-<td><strong>Pure clustering</strong></td>
-<td>Finds latent themes</td>
-<td>Hard to label, no obvious mapping to business categories</td>
-<td>—</td>
+<td><strong>Latency / doc</strong></td>
+<td>&lt;1ms</td>
+<td>&lt;1ms</td>
+<td>500ms–3s</td>
 </tr>
 <tr>
-<td><strong>Hybrid (this)</strong></td>
-<td>Each layer doing what it's good at</td>
-<td>Two systems to maintain</td>
+<td><strong>Determinism</strong></td>
+<td>100%</td>
+<td>100% (fixed seed)</td>
+<td>Low (temperature, model drift)</td>
+</tr>
+<tr>
+<td><strong>Auditability</strong></td>
+<td>Inspect a regex</td>
+<td>Inspect cluster centers</td>
+<td>Black-box</td>
+</tr>
+<tr>
+<td><strong>Handles long-tail / catch-all</strong></td>
+<td>❌ Fixed vocabulary</td>
+<td>⚠️ Surfaces but doesn't label</td>
+<td>✅ Strong</td>
+</tr>
+<tr>
+<td><strong>Handles new categories</strong></td>
+<td>Edit config</td>
+<td>Re-cluster</td>
+<td>Edit prompt</td>
+</tr>
+<tr>
+<td><strong>Privacy / data residency</strong></td>
+<td>Trivial (local)</td>
+<td>Trivial (local)</td>
+<td>⚠️ Sends data to vendor</td>
+</tr>
+<tr>
+<td><strong>Maintenance burden</strong></td>
+<td>Low (rules age slowly)</td>
+<td>Low</td>
+<td>Medium (prompt drift, deprecations)</td>
+</tr>
+<tr>
+<td><strong>Reproducibility for audit</strong></td>
 <td>✅</td>
+<td>✅</td>
+<td>❌ Vendor model versioning</td>
+</tr>
+<tr>
+<td><strong>Accuracy vs dataset's <code>topics</code> tags</strong></td>
+<td>99%</td>
+<td>N/A</td>
+<td>~98–99% (no measurable lift)</td>
 </tr>
 </tbody>
 </table>
-<p><strong>At what scale would I switch?</strong> Pure-LLM becomes the right tool around 10k+ docs <em>or</em> when the title format becomes inconsistent (free-text titles, multilingual data, no structured fields). Below that, rules win on cost and reproducibility — and you can always layer an LLM on top of the catch-all bucket later.</p>
+<h3 id="what-ships-in-main">What ships in <code>main</code></h3>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Approach</th>
+<th>Why it won</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Call type</td>
+<td>Rules</td>
+<td>Title prefixes are 100% reliable. LLM is overkill.</td>
+</tr>
+<tr>
+<td>Meeting purpose</td>
+<td>Rules</td>
+<td>87% labeled by rules with high precision; the 13% catch-all is honest signal that some calls genuinely <em>are</em> general account management.</td>
+</tr>
+<tr>
+<td>Product area</td>
+<td>Rules (multi-label keyword match)</td>
+<td>Cross-references at 99% with the dataset's own <code>topics</code> field.</td>
+</tr>
+<tr>
+<td>Content theme</td>
+<td>TF-IDF + KMeans</td>
+<td>Surfaces latent themes the rules can't (e.g., billing conversations spanning support + external).</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Key insight:</strong> at this scale, with this much title structure, rules dominate. The 13% catch-all bucket is informative — it tells us how many meetings genuinely don't fit a specific purpose. Pushing it artificially lower with an LLM would introduce false specificity.</p>
+<hr />
+<h2 id="approach-1-rule-based-regex-shipped">Approach 1: rule-based regex (shipped)</h2>
+<p>See <code>src/categorizer.py</code> and <code>src/config.py</code>.</p>
+<p><strong>Pros</strong>
+- 100% reproducible. Same input → same output, forever.
+- Fast: &lt;1ms per meeting. No model, no inference, no GPU.
+- Auditable: every label decision is one regex match — explainable in a 10-second conversation.
+- Free at any scale.
+- No data leaves the box — works in air-gapped environments.</p>
+<p><strong>Cons</strong>
+- Brittle when title formats change. Three new title patterns means three new rules.
+- Catch-all bucket: ~13% of meetings end up in <code>Account Management</code> because no specific rule fires. Real signal in those calls is left on the table.
+- Doesn't handle ambiguity well — "Aegis / Frostbyte AI - Renewal &amp; Roadmap" needs ordered-by-specificity rules to land in the right bucket.
+- New categories require code + config changes; not a self-service workflow for non-engineers.</p>
+<p><strong>Verdict.</strong> The right primary tool for this dataset because of the title structure. But it leaves the long-tail problem unsolved.</p>
+<hr />
+<h2 id="approach-2-tf-idf-kmeans-clustering-shipped">Approach 2: TF-IDF + KMeans clustering (shipped)</h2>
+<p>See <code>src/clustering.py</code>.</p>
+<p><strong>Pros</strong>
+- Discovers latent themes the rules can't anticipate (e.g., billing/account conversations cut across support + external).
+- Reproducible (fixed seed) and fast.
+- No labels required — purely unsupervised.
+- Silhouette-based <code>k</code> selection is defensible without subjective elbow-eyeballing.</p>
+<p><strong>Cons</strong>
+- Cluster labels are top-terms only — humans still have to interpret what "comply, audit, evidence, control" <em>means</em> as a category.
+- Doesn't map cleanly to business taxonomy — clusters are descriptive, not prescriptive.
+- Sensitive to stop-word handling (default sklearn list isn't enough for transcripts; we add ~30 conversational fillers in <code>config</code>).
+- Silhouette scores on conversational text are inherently low (~0.08 here). Honest, but not impressive.</p>
+<p><strong>Verdict.</strong> Useful as a complementary exploratory layer, not a substitute for the rule-based labels. Validation flags two clusters as redundant with rule categories — that's a feature: it surfaces where each layer is pulling its weight.</p>
+<hr />
+<h2 id="approach-3-zero-shot-llm-evaluated-not-shipped">Approach 3: zero-shot LLM (evaluated, not shipped)</h2>
+<p>We considered prompting an off-the-shelf LLM (Gemini / GPT-4-class) to label each transcript by purpose, with a fixed list of categories in the prompt.</p>
+<p><strong>Pros</strong>
+- Zero training data required — works on day one.
+- Handles ambiguous titles and free-text well (the regression case for rules).
+- Easy to add a new category: edit the prompt.</p>
+<p><strong>Cons</strong>
+- <strong>Cost at scale.</strong> $1–$10 per 1k docs is fine until you're processing 10k+ daily — that's $10–$100/day per pipeline, before retries.
+- <strong>Latency.</strong> 500ms–3s per call kills any synchronous use case; you have to batch.
+- <strong>Non-deterministic.</strong> Same input can land in different categories on different days as the vendor updates the model. Audit nightmare.
+- <strong>Privacy.</strong> Sending customer transcripts to a third-party API has compliance implications that some enterprise customers flat-out reject.
+- <strong>Vendor lock-in.</strong> Pricing changes, model deprecations, and rate limits are all out of your control.
+- <strong>No measurable lift over rules.</strong> On the structured 87% of meetings where rules already work, zero-shot LLM matches but doesn't exceed.</p>
+<p><strong>Verdict.</strong> Not worth it for <em>this</em> task on <em>this</em> dataset — the rules are already at 99% agreement with the dataset's own topic tags. <strong>However</strong>, when an LLM IS the right choice (richer free-text tasks like summarization), the privacy / lock-in / cost argument pushes us toward self-hosting an open-weights model — which is exactly the work captured in <a href="#summarization--action-items-vendor-vs-self-hosted">Summarization &amp; action items</a> below.</p>
 <hr />
 <h2 id="categorization-how-the-rules-are-layered">Categorization: how the rules are layered</h2>
 <div class="mermaid">flowchart TD
@@ -260,6 +384,211 @@ footer {
 <p><strong>Why silhouette and not elbow?</strong> Elbow is eyeballed and reviewer-dependent. Silhouette is a single number that's easy to explain and easy to validate.</p>
 <p><strong>Why is silhouette so low (0.082)?</strong> Conversational text is genuinely overlapping — meetings about "Detect outage" share vocabulary with "Detect roadmap" and with "Reliability review". Low silhouette is honest about that. The clusters are still useful as an <em>exploratory</em> layer; we don't pretend they're hard categories.</p>
 <p><strong>Stop word handling matters.</strong> Default sklearn stop words drop "the/and/of"; that's not enough for transcripts. We add ~30 conversational fillers (<code>yeah</code>, <code>okay</code>, <code>like</code>, <code>just</code>, <code>actually</code> …) — this alone moved cluster top-terms from "yeah, want, just" garbage to "comply, audit, evidence, control". Stored in <code>config.CONVERSATIONAL_FILLERS</code> so it's tunable.</p>
+<hr />
+<h2 id="summarization-action-items-vendor-vs-self-hosted">Summarization &amp; action items: vendor vs self-hosted</h2>
+<p>The dataset ships with <code>summary.json</code> for each meeting — a one-paragraph summary, an <code>actionItems[]</code> list, topic tags, and key moments. Our pipeline consumes those directly. <strong>But where do those summaries come from in production?</strong> Two options:</p>
+<ol>
+<li><strong>Closed vendor model</strong> (GPT-4-class). Cheap to set up, but every transcript leaves your perimeter for inference.</li>
+<li><strong>Self-hosted open model.</strong> No data egress, no per-call cost, full control over the prompt and the output format — at the cost of running and maintaining the model yourself.</li>
+</ol>
+<p>We tested option 2 by <strong>fine-tuning Gemma 4 (E2B and E4B)</strong> on the same 100-meeting dataset, training the model to produce summaries + action items in the exact style of the gold reference. Full methodology, training scripts, adapters, and per-meeting comparisons are in <a href="../gemma-finetune/README.md"><code>gemma-finetune/</code></a>.</p>
+<h3 id="comparison-vendor-api-vs-fine-tuned-gemma-4">Comparison: vendor API vs fine-tuned Gemma 4</h3>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>Vendor API (GPT-4-class)</th>
+<th>Fine-tuned Gemma 4 (this work)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Setup cost</strong></td>
+<td>API key + a prompt</td>
+<td>Workshop session + 4 training iterations</td>
+</tr>
+<tr>
+<td><strong>Per-call cost</strong></td>
+<td>~$0.005–$0.02 / transcript</td>
+<td>~$0 after training (GPU amortization)</td>
+</tr>
+<tr>
+<td><strong>Total training cost</strong></td>
+<td>$0</td>
+<td><strong>$1.40 on Nebius H100, ~28 min wall-clock</strong></td>
+</tr>
+<tr>
+<td><strong>Inference latency</strong></td>
+<td>1–3s</td>
+<td>50–200ms (GPU)</td>
+</tr>
+<tr>
+<td><strong>Determinism</strong></td>
+<td>Vendor model versioning kills it</td>
+<td>Greedy decode + pinned checkpoint = bit-exact</td>
+</tr>
+<tr>
+<td><strong>Privacy</strong></td>
+<td>Customer transcripts leave perimeter</td>
+<td>Self-hosted, deployable in customer VPCs</td>
+</tr>
+<tr>
+<td><strong>Output format control</strong></td>
+<td>Prompt engineering / function calling</td>
+<td>Trained directly into the weights</td>
+</tr>
+<tr>
+<td><strong>Style match to existing reference summaries</strong></td>
+<td>Generic</td>
+<td>Trained to match the dataset's voice exactly</td>
+</tr>
+<tr>
+<td><strong>Adapt to new customer / domain</strong></td>
+<td>Re-prompt</td>
+<td>Re-train on new data</td>
+</tr>
+</tbody>
+</table>
+<h3 id="training-summary">Training summary</h3>
+<table>
+<thead>
+<tr>
+<th>Run</th>
+<th>Base model</th>
+<th>LoRA</th>
+<th>Epochs</th>
+<th>Train loss</th>
+<th>Val loss</th>
+<th>ROUGE-L (tuned)</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>v1</td>
+<td>gemma-4-E2B-it</td>
+<td>r4 / α8</td>
+<td>3</td>
+<td>1.73</td>
+<td>—</td>
+<td>—</td>
+<td>Pipeline validation</td>
+</tr>
+<tr>
+<td>v2</td>
+<td>gemma-4-E2B-it</td>
+<td>r16 / α32</td>
+<td>5</td>
+<td>1.18</td>
+<td>—</td>
+<td>—</td>
+<td>More capacity, better fit</td>
+</tr>
+<tr>
+<td><strong>v3 ★</strong></td>
+<td><strong>gemma-4-E4B-it</strong></td>
+<td><strong>r16 / α32</strong></td>
+<td><strong>3</strong></td>
+<td><strong>0.37</strong></td>
+<td><strong>1.01</strong></td>
+<td><strong>0.394</strong></td>
+<td><strong>Recommended adapter</strong></td>
+</tr>
+<tr>
+<td>v4</td>
+<td>gemma-4-E4B-it</td>
+<td>r16 / α32 + dropout</td>
+<td>2</td>
+<td>0.40</td>
+<td>1.52</td>
+<td>0.337</td>
+<td>Over-regularized; regression</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Baseline (untuned E4B):</strong> ROUGE-L 0.286.
+<strong>Best run (v3):</strong> ROUGE-L 0.394 (<strong>+38% relative</strong>), all 5 held-out outputs visibly shifted to match reference style.</p>
+<h3 id="why-gemma-4-specifically-over-llama-mistral-qwen-etc">Why Gemma 4 specifically (over Llama, Mistral, Qwen, etc.)</h3>
+<ul>
+<li><strong>Open weights + permissive license</strong> — self-hostable for commercial use.</li>
+<li><strong>Latest open-weights generation</strong> — competitive quality vs much larger predecessors in its size class.</li>
+<li><strong>Multimodal-ready</strong> (E4B accepts text + image) — future-proof for transcripts with embedded screenshots / slides.</li>
+<li><strong>Small enough for QLoRA on a single GPU</strong> — 4B params fit comfortably on a consumer 24GB card; we used an H100 80GB for speed.</li>
+<li><strong>Instruction-tuned baseline</strong> — needed less data than training from a base model.</li>
+</ul>
+<h3 id="key-implementation-lessons">Key implementation lessons</h3>
+<table>
+<thead>
+<tr>
+<th>Surprise</th>
+<th>Lesson</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Single-task training plateaued early (v1, v2)</td>
+<td><strong>Expand to multi-task data</strong> — each meeting → 4 training rows (full summary, summary-only, actions-only, attendees) → 380 rows. Bigger lift than going to a bigger model.</td>
+</tr>
+<tr>
+<td>Default <code>max_seq_length=4096</code> silently truncated long transcripts</td>
+<td>Always check token-length distributions before training; bump to 8192 for transcripts</td>
+</tr>
+<tr>
+<td>Per-epoch eval crashed on ragged <code>completion_mask</code> for multimodal Gemma</td>
+<td>Compute val loss manually after training, one example at a time</td>
+</tr>
+<tr>
+<td><code>assistant_only_loss=True</code> rejected by unsloth's VLM wrapper</td>
+<td>Use <code>completion_only_loss=True</code> with a <code>{prompt, completion}</code> dataset shape</td>
+</tr>
+<tr>
+<td><code>peft.load_adapter()</code> fails because unsloth replaces <code>nn.Linear</code> with <code>Gemma4ClippableLinear</code></td>
+<td>Use <code>FastModel.from_pretrained(adapter_path, ...)</code> — it resolves base + reconstructs LoRA in one call</td>
+</tr>
+<tr>
+<td>v4 changed dropout + weight decay + epochs + new task simultaneously, regressed</td>
+<td><strong>Vary one variable at a time</strong> — couldn't isolate the cause</td>
+</tr>
+</tbody>
+</table>
+<h3 id="pros-of-the-fine-tuned-gemma-4-path">Pros (of the fine-tuned-Gemma-4 path)</h3>
+<ul>
+<li><strong>Self-hostable.</strong> No vendor API keys, no data egress, deployable in customer VPCs.</li>
+<li><strong>Style match.</strong> Outputs follow the dataset's exact format — paragraph + <code>Owner: task</code> bullets — because the model was trained on that exact format.</li>
+<li><strong>Cheap inference forever after.</strong> ~$0 per call after the $1.40 training spend.</li>
+<li><strong>Determinism.</strong> Greedy decode + pinned checkpoint gives bit-exact reproducibility — auditable in regulated environments where vendor model versioning is unacceptable.</li>
+<li><strong>Workshop-grade economics.</strong> $1.40 and 28 minutes for a working specialized model. Beating vendor APIs on a <em>cost</em> axis at this small a budget reframes the build-vs-buy conversation.</li>
+</ul>
+<h3 id="cons-honest-limitations">Cons / honest limitations</h3>
+<ul>
+<li><strong>Small dataset</strong> — 95 train meetings is below the comfortable floor. Training data synthesis (Claude / GPT-4 generating more transcripts in the dataset's voice) is the recommended next step.</li>
+<li><strong>5-meeting eval is directional, not statistically rigorous.</strong> ±0.02–0.05 ROUGE-L noise expected from re-running with a different seed.</li>
+<li><strong>ROUGE-L is lexical and penalizes paraphrase.</strong> v3's meeting-1 output captured every fact in the reference but scored 0.34 because it used different words. The right next metric is an LLM-as-judge pipeline (Claude grading faithfulness / completeness / format / hallucination) — code is in <code>gemma-finetune/code/judge_compare.py</code>.</li>
+<li><strong>MLOps overhead.</strong> Versioned models, evaluation harness, retraining cadence, drift monitoring — all infrastructure a vendor API doesn't need.</li>
+<li><strong>Narrow fine-tune.</strong> The model is now specialized for meeting summaries; we did not measure regression on general instruction-following.</li>
+<li><strong>Single seed.</strong> All numbers from one training run per config.</li>
+</ul>
+<h3 id="when-gemma-4-wins-over-a-vendor-api">When Gemma 4 wins over a vendor API</h3>
+<ul>
+<li>Customer in a regulated industry (healthcare, finance, government) demands data residency.</li>
+<li>Volume is high enough that per-call API cost &gt; GPU amortization (~$10/day breakeven against a $0.005 vendor call is ~2k transcripts/day).</li>
+<li>Output format / style needs to be tightly controlled (paragraph + <code>Owner: task</code> bullets, exactly).</li>
+<li>You need versioned, reproducible outputs for audit (insurance, compliance reports).</li>
+<li>You need to run in an air-gapped environment.</li>
+</ul>
+<h3 id="where-it-slots-into-the-broader-pipeline">Where it slots into the broader pipeline</h3>
+<p>Today, our pipeline reads <code>summary.json</code> from the dataset. Tomorrow, the same data could be produced by the v3 Gemma 4 adapter:</p>
+<div class="mermaid">flowchart LR
+    Trans[Transcript] --> Pipe{Summary source}
+    Pipe -->|Today| Gold["summary.json<br/>(dataset-provided)"]
+    Pipe -->|Production option A| Vendor["Vendor API<br/>$ per call · data egress"]
+    Pipe -->|Production option B| Gemma["Self-hosted Gemma 4 v3<br/>$0 per call · in-VPC"]
+
+    Gold --> Insights[Pipeline insights]
+    Vendor --> Insights
+    Gemma --> Insights</div>
+
+<p>Same downstream insights, three different upstream sources. The Gemma 4 work removes the lock-in.</p>
 <hr />
 <h2 id="sentiment-two-granularities">Sentiment: two granularities</h2>
 <p>The dataset gives us <strong>meeting-level</strong> scores (1–5 from the summary) and <strong>per-sentence</strong> labels (positive/neutral/negative from the transcript). Most analyses use only the first. We use both.</p>

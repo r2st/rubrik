@@ -44,3 +44,11 @@ dist/
 
 # Runtime logs from start-all.sh
 .run-logs/
+
+# Gemma 4 LoRA adapter weights (too big for git — see gemma-finetune/README.md
+# for reproduction instructions)
+gemma-finetune/adapters/**/*.safetensors
+gemma-finetune/adapters/**/*.bin
+gemma-finetune/adapters/**/*.pt
+gemma-finetune/adapters/**/optimizer.pt
+gemma-finetune/adapters/**/*-trainer/
