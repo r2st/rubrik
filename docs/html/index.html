@@ -218,17 +218,64 @@ footer {
 </tbody>
 </table>
 <h2 id="quick-start">Quick start</h2>
-<pre><code class="language-bash">make install-dev   # install + dev tools + pre-commit hooks
-make test          # 71 tests across rules, sentiment, clusters, insights, API
-make validate      # 10 semantic audits against the dataset
-make dev           # FastAPI server with hot reload → http://127.0.0.1:8000
-make docker-build  # containerized
-make docs          # static HTML site at docs/html/
+<p><strong>Run everything with one command:</strong></p>
+<pre><code class="language-bash">make install-dev    # install + dev tools + pre-commit hooks
+make start-all      # ./bin/start-all.sh — see &quot;Run all services&quot; below
 </code></pre>
-<p>Without Make:</p>
+<p><strong>Or run pieces individually:</strong></p>
+<pre><code class="language-bash">make test           # 71 tests across rules, sentiment, clusters, insights, API
+make validate       # 10 semantic audits against the dataset
+make dev            # FastAPI server with hot reload → http://127.0.0.1:8000
+make docker-build   # containerized
+make docs           # static HTML site at docs/html/
+</code></pre>
+<p><strong>Without Make:</strong></p>
 <pre><code class="language-bash">pip install -e &quot;.[dev]&quot;
 pytest &amp;&amp; python validate.py &amp;&amp; python run_analysis.py
 uvicorn api.main:app --reload
+</code></pre>
+<h2 id="run-all-services">Run all services</h2>
+<p>A single command brings up the whole dev environment:</p>
+<pre><code class="language-bash">./bin/start-all.sh         # pre-flight + start everything
+./bin/stop-all.sh          # kill anything left running
+</code></pre>
+<p>What it does:
+1. <strong>Pre-flight</strong>: runs the test suite and the semantic validation; aborts on any FAIL
+2. <strong>Refreshes</strong> <code>output/</code> (batch pipeline) and <code>docs/html/</code> (HTML docs) in parallel
+3. <strong>Starts</strong> three services in the background, waits for each to be ready, prints the URLs:</p>
+<table>
+<thead>
+<tr>
+<th>Service</th>
+<th>URL</th>
+<th>What it serves</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>FastAPI + dashboard</td>
+<td><code>http://127.0.0.1:8000</code></td>
+<td>API + web UI + OpenAPI docs at <code>/docs</code></td>
+</tr>
+<tr>
+<td>Jupyter Lab</td>
+<td><code>http://127.0.0.1:8888</code></td>
+<td>The narrative notebook</td>
+</tr>
+<tr>
+<td>HTML docs</td>
+<td><code>http://127.0.0.1:8765</code></td>
+<td>Standalone documentation site</td>
+</tr>
+</tbody>
+</table>
+<p><code>Ctrl+C</code> traps cleanly and stops everything. Logs accumulate under <code>.run-logs/</code> — handy for debugging a failed launch. Override ports via env vars (<code>API_PORT=9000 ./bin/start-all.sh</code>); skip pre-flight with <code>SKIP_PREFLIGHT=1</code>.</p>
+<h3 id="container-based-alternative-docker-compose">Container-based alternative (docker compose)</h3>
+<pre><code class="language-bash">make compose-up              # docker compose up --build -d
+make compose-down            # docker compose down
+
+# With Caddy reverse proxy on :80:
+docker compose --profile proxy up -d
 </code></pre>
 <h2 id="architecture">Architecture</h2>
 <div class="mermaid">flowchart LR

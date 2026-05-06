@@ -1,0 +1,66 @@
+# docker-compose.yml — production-style stack for Transcript Intelligence.
+#
+# Brings up:
+#   - api       :8000   FastAPI service (gunicorn-style, 2 workers)
+#   - caddy     :80     reverse proxy with HTTPS-ready config
+#
+# Usage:
+#   docker compose up --build      # foreground
+#   docker compose up -d --build   # detached
+#   docker compose down            # stop + remove
+#   docker compose logs -f api     # tail logs
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: transcript-intelligence:latest
+    container_name: ti-api
+    restart: unless-stopped
+    environment:
+      LOG_LEVEL: INFO
+      LOG_FORMAT: json
+      PORT: "8000"
+    expose:
+      - "8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount the dataset read-only — the loader expects a sibling directory
+      - ../interview-assignment:/interview-assignment:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health').status == 200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: ti-caddy
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    profiles:
+      - proxy   # opt-in: docker compose --profile proxy up
+
+volumes:
+  caddy_data:
+  caddy_config:

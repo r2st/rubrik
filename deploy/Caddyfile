@@ -1,0 +1,35 @@
+# Caddyfile — reverse proxy for the Transcript Intelligence API.
+#
+# Caddy auto-provisions HTTPS certs from Let's Encrypt when a real domain
+# is configured. For local dev, swap `:80` for `localhost:80`.
+#
+# Set your domain via DOMAIN env var or replace `:80` below before deploy.
+
+:80 {
+    encode gzip
+
+    # Health probe pass-through (no logging spam)
+    @health path /api/health
+    handle @health {
+        reverse_proxy api:8000
+    }
+
+    # Static assets get longer cache
+    @static path /static/*
+    handle @static {
+        header Cache-Control "public, max-age=86400"
+        reverse_proxy api:8000
+    }
+
+    # Everything else
+    reverse_proxy api:8000 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+
+    log {
+        output stdout
+        format json
+        level INFO
+    }
+}

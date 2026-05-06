@@ -45,21 +45,61 @@ Five interfaces over the same `src/` analysis core:
 
 ## Quick start
 
+**Run everything with one command:**
+
 ```bash
-make install-dev   # install + dev tools + pre-commit hooks
-make test          # 71 tests across rules, sentiment, clusters, insights, API
-make validate      # 10 semantic audits against the dataset
-make dev           # FastAPI server with hot reload → http://127.0.0.1:8000
-make docker-build  # containerized
-make docs          # static HTML site at docs/html/
+make install-dev    # install + dev tools + pre-commit hooks
+make start-all      # ./bin/start-all.sh — see "Run all services" below
 ```
 
-Without Make:
+**Or run pieces individually:**
+
+```bash
+make test           # 71 tests across rules, sentiment, clusters, insights, API
+make validate       # 10 semantic audits against the dataset
+make dev            # FastAPI server with hot reload → http://127.0.0.1:8000
+make docker-build   # containerized
+make docs           # static HTML site at docs/html/
+```
+
+**Without Make:**
 
 ```bash
 pip install -e ".[dev]"
 pytest && python validate.py && python run_analysis.py
 uvicorn api.main:app --reload
+```
+
+## Run all services
+
+A single command brings up the whole dev environment:
+
+```bash
+./bin/start-all.sh         # pre-flight + start everything
+./bin/stop-all.sh          # kill anything left running
+```
+
+What it does:
+1. **Pre-flight**: runs the test suite and the semantic validation; aborts on any FAIL
+2. **Refreshes** `output/` (batch pipeline) and `docs/html/` (HTML docs) in parallel
+3. **Starts** three services in the background, waits for each to be ready, prints the URLs:
+
+| Service | URL | What it serves |
+|---|---|---|
+| FastAPI + dashboard | `http://127.0.0.1:8000` | API + web UI + OpenAPI docs at `/docs` |
+| Jupyter Lab | `http://127.0.0.1:8888` | The narrative notebook |
+| HTML docs | `http://127.0.0.1:8765` | Standalone documentation site |
+
+`Ctrl+C` traps cleanly and stops everything. Logs accumulate under `.run-logs/` — handy for debugging a failed launch. Override ports via env vars (`API_PORT=9000 ./bin/start-all.sh`); skip pre-flight with `SKIP_PREFLIGHT=1`.
+
+### Container-based alternative (docker compose)
+
+```bash
+make compose-up              # docker compose up --build -d
+make compose-down            # docker compose down
+
+# With Caddy reverse proxy on :80:
+docker compose --profile proxy up -d
 ```
 
 ## Architecture

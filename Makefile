@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test cov lint format type-check validate run api dev notebook docs docker-build docker-run clean all
+.PHONY: help install install-dev test cov lint format type-check validate run api dev notebook docs docker-build docker-run start-all stop-all compose-up compose-down clean all
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -49,8 +49,20 @@ docs:  ## Build the static HTML documentation site
 docker-build:  ## Build the Docker image
 	docker build -t transcript-intelligence:latest .
 
-docker-run:  ## Run the API in Docker
+docker-run:  ## Run the API in a single Docker container
 	docker run --rm -p 8000:8000 -v $(PWD)/../interview-assignment:/interview-assignment:ro transcript-intelligence:latest
+
+start-all:  ## Run pre-flight checks + start ALL services (API + Jupyter + docs)
+	./bin/start-all.sh
+
+stop-all:  ## Stop any lingering services started outside the start-all trap
+	./bin/stop-all.sh
+
+compose-up:  ## Bring up the docker-compose stack (API container)
+	docker compose up --build -d
+
+compose-down:  ## Tear down the docker-compose stack
+	docker compose down
 
 clean:  ## Remove generated outputs and caches
 	rm -rf output/* htmlcov coverage.xml .coverage
