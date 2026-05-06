@@ -339,7 +339,7 @@ footer code {
 <p>A production-ready pipeline that processes B2B meeting transcripts and surfaces topic categorization, sentiment trends, and strategic insights — exposed as a REST API with a lightweight web dashboard.</p>
 </blockquote>
 <p><a href=".github/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-blue" /></a>
-<a href="https://github.com/"><img alt="Tests" src="https://img.shields.io/badge/tests-86%20passing-brightgreen" /></a>
+<a href="https://github.com/"><img alt="Tests" src="https://img.shields.io/badge/tests-95%20passing-brightgreen" /></a>
 <a href="pyproject.toml"><img alt="Coverage" src="https://img.shields.io/badge/coverage-94%25-brightgreen" /></a>
 <a href="https://github.com/"><img alt="Validation" src="https://img.shields.io/badge/validation-9%2F10%20pass-brightgreen" /></a>
 <a href="pyproject.toml"><img alt="Python" src="https://img.shields.io/badge/python-3.9%2B-blue" /></a>
@@ -719,6 +719,33 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 </tr>
 </tbody>
 </table>
+<h3 id="performance-caching">Performance &amp; caching<a class="anchor" href="#performance-caching" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Concern</th>
+<th>How it's handled</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Response compression</strong></td>
+<td><code>GZipMiddleware</code> (min 500 bytes, level 6). Typical <code>/api/v1/meetings</code> payload: 20 KB → 3.6 KB on the wire (5.5×).</td>
+</tr>
+<tr>
+<td><strong>HTTP cache (ETag)</strong></td>
+<td>Read endpoints return <code>ETag</code> + <code>Cache-Control: max-age=60</code>; clients revalidate cheaply via <code>If-None-Match</code> → 304 Not Modified (no body).</td>
+</tr>
+<tr>
+<td><strong>Pinned dependencies</strong></td>
+<td>Frontend CDN scripts (Plotly, Mermaid) pinned to specific versions with <strong>Subresource Integrity (SRI)</strong> — browsers refuse tampered bytes.</td>
+</tr>
+<tr>
+<td><strong>Load-tested baseline</strong></td>
+<td><code>make load-test</code> — 11 endpoints, weighted traffic mix. Local reference: ~395 RPS, p95 ≤ 35ms.</td>
+</tr>
+</tbody>
+</table>
 <h3 id="observability-opt-in">Observability (opt-in)<a class="anchor" href="#observability-opt-in" title="Permanent link">¶</a></h3>
 <table>
 <thead>
@@ -874,17 +901,27 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 <ul>
 <li><a href="approach.html"><code>docs/APPROACH.md</code></a> — methodology, comparisons, and verdicts (start here)</li>
 <li><a href="architecture.html"><code>docs/ARCHITECTURE.md</code></a> — system design with Mermaid diagrams</li>
+<li><a href="docs/adr/"><code>docs/adr/</code></a> — Architecture Decision Records (immutable, dated, per-decision)</li>
 <li><strong><code>docs/html/</code></strong> — same content as standalone HTML files. <code>make docs</code> to build, <code>open docs/html/index.html</code> to view</li>
 </ul>
+<h3 id="load-testing">Load testing<a class="anchor" href="#load-testing" title="Permanent link">¶</a></h3>
+<pre><code class="language-bash">make dev               # start the API on :8000
+make load-test         # 30s, 20 VUs, all endpoints — exits non-zero if error rate &gt;1%
+</code></pre>
+<p>Reference numbers from a local Mac (single uvicorn worker): <strong>~395 RPS, p95 ≤ 35ms, 0% errors</strong> across the 11-endpoint mix. The script lives in <a href="tests/load/run_load_test.py"><code>tests/load/run_load_test.py</code></a> — vanilla Python (httpx + asyncio), no external tool dependency.</p>
 <h2 id="license">License<a class="anchor" href="#license" title="Permanent link">¶</a></h2>
 <p><a href="https://github.com/">MIT</a></p>
 <footer>
   Generated from <code>README.md</code>
 </footer>
 </main>
-<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#contents" class="h2">Contents</a></li><li><a href="#what-this-does" class="h2">What this does</a></li><li><a href="#headline-findings" class="h2">Headline findings</a></li><li><a href="#quick-start" class="h2">Quick start</a></li><li><a href="#architecture" class="h2">Architecture</a></li><li><a href="#project-layout" class="h2">Project layout</a></li><li><a href="#testing-validation" class="h2">Testing &amp; validation</a></li><li><a href="#api-web-dashboard" class="h2">API &amp; web dashboard</a></li><li><a href="#why-fastapi-instead-of-streamlit" class="h3">Why FastAPI instead of Streamlit</a></li><li><a href="#run-all-services" class="h2">Run all services</a></li><li><a href="#container-alternative-docker-compose" class="h3">Container alternative (docker compose)</a></li><li><a href="#production-readiness" class="h2">Production readiness</a></li><li><a href="#security" class="h3">Security</a></li><li><a href="#observability-opt-in" class="h3">Observability (opt-in)</a></li><li><a href="#engineering" class="h3">Engineering</a></li><li><a href="#configuration" class="h3">Configuration</a></li><li><a href="#whats-deliberately-not-done" class="h3">What's deliberately not done</a></li><li><a href="#documentation" class="h2">Documentation</a></li><li><a href="#license" class="h2">License</a></li></ul></aside>
+<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#contents" class="h2">Contents</a></li><li><a href="#what-this-does" class="h2">What this does</a></li><li><a href="#headline-findings" class="h2">Headline findings</a></li><li><a href="#quick-start" class="h2">Quick start</a></li><li><a href="#architecture" class="h2">Architecture</a></li><li><a href="#project-layout" class="h2">Project layout</a></li><li><a href="#testing-validation" class="h2">Testing &amp; validation</a></li><li><a href="#api-web-dashboard" class="h2">API &amp; web dashboard</a></li><li><a href="#why-fastapi-instead-of-streamlit" class="h3">Why FastAPI instead of Streamlit</a></li><li><a href="#run-all-services" class="h2">Run all services</a></li><li><a href="#container-alternative-docker-compose" class="h3">Container alternative (docker compose)</a></li><li><a href="#production-readiness" class="h2">Production readiness</a></li><li><a href="#security" class="h3">Security</a></li><li><a href="#performance-caching" class="h3">Performance &amp; caching</a></li><li><a href="#observability-opt-in" class="h3">Observability (opt-in)</a></li><li><a href="#engineering" class="h3">Engineering</a></li><li><a href="#configuration" class="h3">Configuration</a></li><li><a href="#whats-deliberately-not-done" class="h3">What's deliberately not done</a></li><li><a href="#documentation" class="h2">Documentation</a></li><li><a href="#load-testing" class="h3">Load testing</a></li><li><a href="#license" class="h2">License</a></li></ul></aside>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script
+  src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"
+  integrity="sha384-WmdflGW9aGfoBdHc4rRyWzYuAjEmDwMdGdiPNacbwfGKxBW/SO6guzuQ76qjnSlr"
+  crossorigin="anonymous"
+  referrerpolicy="no-referrer"></script>
 <script>
   mermaid.initialize({
     startOnLoad: true,

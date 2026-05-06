@@ -376,7 +376,11 @@ TEMPLATE = """<!DOCTYPE html>
 </main>
 {toc_html}
 </div>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script
+  src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"
+  integrity="sha384-WmdflGW9aGfoBdHc4rRyWzYuAjEmDwMdGdiPNacbwfGKxBW/SO6guzuQ76qjnSlr"
+  crossorigin="anonymous"
+  referrerpolicy="no-referrer"></script>
 <script>
   mermaid.initialize({{
     startOnLoad: true,

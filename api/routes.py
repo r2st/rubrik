@@ -14,11 +14,12 @@ from datetime import date
 from typing import Optional
 
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from src import sentiment as sent_mod
 
 from .auth import require_api_key
+from .caching import cached
 from .models import (
     ActionItemOwner,
     ClusterInfo,
@@ -93,14 +94,14 @@ def health() -> HealthResponse:
 
 
 @router.get("/summary", response_model=SummaryResponse, tags=["meta"])
-def summary() -> SummaryResponse:
+def summary(request: Request, response: Response) -> SummaryResponse:
     s = get_state()
     df = s.df
     products: Counter[str] = Counter()
     for areas in df["product_areas"]:
         for p in areas:
             products[p] += 1
-    return SummaryResponse(
+    body = SummaryResponse(
         n_meetings=len(df),
         date_range=s.metadata["date_range"],
         call_types=df["call_type"].value_counts().to_dict(),
@@ -114,6 +115,7 @@ def summary() -> SummaryResponse:
         n_clusters=s.metadata["n_clusters"],
         silhouette=s.metadata["silhouette"],
     )
+    return cached(request, response, body)
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +205,7 @@ def sentiment_scores() -> dict[str, list[float]]:
 # Clustering
 # ---------------------------------------------------------------------------
 @router.get("/clusters", response_model=ClustersResponse, tags=["clusters"])
-def clusters() -> ClustersResponse:
+def clusters(request: Request, response: Response) -> ClustersResponse:
     s = get_state()
     cr = s.cluster_result
     items = []
@@ -218,8 +220,9 @@ def clusters() -> ClustersResponse:
             avg_sentiment=round(float(members["sentiment_score"].mean()), 2)
                 if len(members) else 0,
         ))
-    return ClustersResponse(k=cr.n_clusters, silhouette=round(cr.silhouette, 3),
+    body = ClustersResponse(k=cr.n_clusters, silhouette=round(cr.silhouette, 3),
                             clusters=items)
+    return cached(request, response, body)
 
 
 # ---------------------------------------------------------------------------

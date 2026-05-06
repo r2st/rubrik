@@ -282,18 +282,24 @@ flowchart TD
     Req[Incoming request] --> RID["RequestIDMiddleware<br/>mint or honor X-Request-ID<br/>start latency timer"]
     RID --> Sec["SecurityHeadersMiddleware<br/>CSP · HSTS · X-Frame-Options · …"]
     Sec --> CORS["CORSMiddleware<br/>configurable origins"]
-    CORS --> RL["SlowAPI rate limiter<br/>X-RateLimit-* headers"]
+    CORS --> GZ["GZipMiddleware<br/>compresses payloads >500B"]
+    GZ --> RL["SlowAPI rate limiter<br/>X-RateLimit-* headers"]
     RL --> OTel["OpenTelemetry<br/>(if OTEL_ENDPOINT set)"]
     OTel --> Auth{X-API-Key check<br/>(if API_KEY set)}
     Auth -->|invalid| Err401["401 + error envelope"]
-    Auth -->|ok / disabled| Route["Route handler<br/>reads PipelineState"]
+    Auth -->|ok / disabled| ETag{If-None-Match<br/>matches ETag?}
+    ETag -->|yes| NotMod["304 Not Modified<br/>no body, ETag preserved"]
+    ETag -->|no| Route["Route handler<br/>reads PipelineState<br/>stamps ETag + Cache-Control"]
     Route --> Resp[Response]
 
     style RID fill:#e3f2fd
     style Sec fill:#e3f2fd
+    style GZ fill:#e8f5e9
     style RL fill:#fff3e0
     style Auth fill:#ffebee
     style Err401 fill:#ffcdd2
+    style ETag fill:#e8f5e9
+    style NotMod fill:#e8f5e9
 ```
 
 All errors — `HTTPException`, `RequestValidationError`, unhandled — funnel through the same handler in `api/errors.py` and come back as:

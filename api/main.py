@@ -21,6 +21,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter
@@ -107,8 +108,12 @@ app.add_middleware(
     allow_origins=settings.cors_origins,
     allow_methods=["GET"],
     allow_headers=["*", "X-API-Key", "X-Request-ID"],
-    expose_headers=["X-Request-ID"],
+    expose_headers=["X-Request-ID", "ETag"],
 )
+
+# Compress JSON payloads >500 bytes — typical /api/v1/meetings response goes
+# from ~30 KB to ~5 KB.
+app.add_middleware(GZipMiddleware, minimum_size=500, compresslevel=6)
 
 
 # ---------------------------------------------------------------------------
