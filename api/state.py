@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -37,11 +38,16 @@ class PipelineState:
     dominance: pd.DataFrame
     pivots: pd.DataFrame
     metadata: dict[str, Any] = field(default_factory=dict)
+    # When this build completed (monotonic seconds since process start).
+    # Used to compute the X-State-Age-Seconds response header.
+    built_at_monotonic: float = 0.0
 
 
 _state: PipelineState | None = None
 _lock = threading.Lock()
 _refresh_task: asyncio.Task | None = None
+_consecutive_refresh_failures: int = 0
+_refresh_interval_minutes: int = 0
 
 
 def get_state() -> PipelineState:
@@ -64,20 +70,28 @@ def reload() -> PipelineState:
 
 async def start_refresh_task(interval_minutes: int) -> None:
     """Start the background refresh loop. No-op if interval <= 0 or already running."""
-    global _refresh_task
+    global _refresh_task, _refresh_interval_minutes
     if interval_minutes <= 0 or _refresh_task is not None:
         return
+    _refresh_interval_minutes = interval_minutes
 
     async def _loop() -> None:
+        global _consecutive_refresh_failures
         log.info("Pipeline refresh loop starting (every %d min)", interval_minutes)
         try:
             while True:
                 await asyncio.sleep(interval_minutes * 60)
                 try:
                     await asyncio.to_thread(reload)
+                    _consecutive_refresh_failures = 0
                     log.info("Pipeline state refreshed")
                 except Exception:  # noqa: BLE001
-                    log.exception("Pipeline refresh failed; will retry next cycle")
+                    _consecutive_refresh_failures += 1
+                    log.exception(
+                        "Pipeline refresh failed (consecutive=%d); "
+                        "will retry next cycle. Serving last-good state.",
+                        _consecutive_refresh_failures,
+                    )
         except asyncio.CancelledError:
             log.info("Pipeline refresh loop cancelled")
             raise
@@ -141,4 +155,23 @@ def _build() -> PipelineState:
             "n_clusters": cluster_result.n_clusters,
             "silhouette": round(cluster_result.silhouette, 3),
         },
+        built_at_monotonic=time.monotonic(),
     )
+
+
+def state_age_seconds() -> int:
+    """Seconds since the current state was built. 0 if no state yet."""
+    if _state is None or _state.built_at_monotonic == 0:
+        return 0
+    return int(time.monotonic() - _state.built_at_monotonic)
+
+
+def is_stale() -> bool:
+    """True if pipeline refresh has been failing for >2× the refresh interval.
+
+    No-op (always False) if the refresh loop isn't enabled.
+    """
+    if _refresh_interval_minutes <= 0:
+        return False
+    threshold_s = _refresh_interval_minutes * 60 * 2
+    return state_age_seconds() > threshold_s and _consecutive_refresh_failures > 0

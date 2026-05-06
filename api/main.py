@@ -34,7 +34,7 @@ from src.settings import get_settings
 
 from . import errors as errors_mod
 from . import observability, state
-from .middleware import RequestIDMiddleware, SecurityHeadersMiddleware
+from .middleware import RequestIDMiddleware, SecurityHeadersMiddleware, StateAgeMiddleware
 from .routes import public_router, router
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -103,12 +103,13 @@ app.add_middleware(
     SecurityHeadersMiddleware,
     hsts=settings.is_prod,  # only assert HSTS when actually behind TLS
 )
+app.add_middleware(StateAgeMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_methods=["GET"],
     allow_headers=["*", "X-API-Key", "X-Request-ID"],
-    expose_headers=["X-Request-ID", "ETag"],
+    expose_headers=["X-Request-ID", "ETag", "X-State-Age-Seconds", "X-Stale-Response"],
 )
 
 # Compress JSON payloads >500 bytes — typical /api/v1/meetings response goes

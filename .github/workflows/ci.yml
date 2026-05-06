@@ -84,6 +84,37 @@ jobs:
           pip install bandit[toml]
           bandit -r src api -ll -ii
 
+  sbom-and-licenses:
+    name: SBOM + license compliance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: License compliance (pip-licenses)
+        run: |
+          pip install pip-licenses
+          # Fail the build if any dep ships under a copyleft license that
+          # would conflict with our MIT distribution.
+          pip-licenses --format=markdown \
+            --fail-on="GPL;LGPL;AGPL;SSPL;CDDL;EPL;OSL;EUPL" \
+            --output-file=licenses.md
+      - name: Generate CycloneDX SBOM (syft)
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          artifact-name: sbom.cdx.json
+      - name: Upload license report
+        uses: actions/upload-artifact@v4
+        with:
+          name: license-report
+          path: licenses.md
+          retention-days: 90
+
   docker:
     name: Build Docker image
     runs-on: ubuntu-latest

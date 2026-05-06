@@ -290,7 +290,8 @@ flowchart TD
     Auth -->|ok / disabled| ETag{If-None-Match<br/>matches ETag?}
     ETag -->|yes| NotMod["304 Not Modified<br/>no body, ETag preserved"]
     ETag -->|no| Route["Route handler<br/>reads PipelineState<br/>stamps ETag + Cache-Control"]
-    Route --> Resp[Response]
+    Route --> Stale["StateAgeMiddleware<br/>X-State-Age-Seconds<br/>X-Stale-Response (if applicable)"]
+    Stale --> Resp[Response]
 
     style RID fill:#e3f2fd
     style Sec fill:#e3f2fd

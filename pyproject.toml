@@ -90,6 +90,7 @@ ignore = [
 "src/config.py" = ["E501"]
 "api/state.py" = ["PLW0603"]                 # singleton pattern uses global
 "api/observability.py" = ["PLC0415"]         # lazy imports gated on settings
+"api/middleware.py" = ["PLC0415"]            # local state import avoids circular
 "validate.py" = ["PLC0415", "B007"]          # local import avoids circularity
 
 [tool.ruff.format]

@@ -1,4 +1,4 @@
-"""Cross-cutting middleware: request IDs and security headers."""
+"""Cross-cutting middleware: request IDs, security headers, state-age tracking."""
 from __future__ import annotations
 
 import time
@@ -113,4 +113,30 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "Strict-Transport-Security",
                 "max-age=31536000; includeSubDomains",
             )
+        return response
+
+
+# ---------------------------------------------------------------------------
+# State-age / graceful degradation
+# ---------------------------------------------------------------------------
+class StateAgeMiddleware(BaseHTTPMiddleware):
+    """Stamps every /api/* response with how old the cached pipeline state is.
+
+    - X-State-Age-Seconds: integer seconds since the last successful build.
+    - X-Stale-Response: "true" iff pipeline refresh has been failing long enough
+      that the data is older than 2× the configured refresh interval.
+
+    Refresh failures don't translate to 5xx — clients get the last-good data
+    plus an honest staleness signal. They can choose what to do with it
+    (warn the user, retry, fail closed for sensitive operations).
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        response: Response = await call_next(request)
+        # Only annotate API responses; static assets don't need this.
+        if request.url.path.startswith("/api/"):
+            from . import state  # local import to avoid circular at module load
+            response.headers["X-State-Age-Seconds"] = str(state.state_age_seconds())
+            if state.is_stale():
+                response.headers["X-Stale-Response"] = "true"
         return response
