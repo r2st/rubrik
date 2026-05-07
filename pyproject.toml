@@ -88,9 +88,16 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["PLR2004", "B007", "PLC0415"]   # lazy imports for app reload
 "src/config.py" = ["E501"]
+"src/settings.py" = ["PLC0415"]              # lazy runtime_settings import (circular)
+"src/runtime_settings.py" = ["PLW0603", "PLC0415", "PLR0911"]  # singletons + lazy imports + type-coerce branches
+"src/insights.py" = ["PLC0415"]              # lazy runtime_settings import (notebook safety)
+"src/db.py" = ["PLW0603", "PLC0415"]         # singleton + lazy model registration
 "api/state.py" = ["PLW0603"]                 # singleton pattern uses global
 "api/observability.py" = ["PLC0415"]         # lazy imports gated on settings
 "api/middleware.py" = ["PLC0415"]            # local state import avoids circular
+"api/admin/auth.py" = ["PLC0415", "PLR0911"] # lazy imports + multi-branch verify_password
+"api/admin/routes.py" = ["PLC0415"]          # lazy auth import
+"api/main.py" = ["PLC0415"]                  # lazy router import
 "validate.py" = ["PLC0415", "B007"]          # local import avoids circularity
 
 [tool.ruff.format]

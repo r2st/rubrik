@@ -634,6 +634,74 @@ footer code {
 </code></pre>
 <p>The <code>/api/health</code> endpoint is registered on a separate <strong>public</strong> router that bypasses the auth dependency — load balancers and k8s probes need to hit it without credentials.</p>
 <hr />
+<h2 id="scaling-to-100m-records">Scaling to 100M+ records<a class="anchor" href="#scaling-to-100m-records" title="Permanent link">¶</a></h2>
+<p>The current single-instance, in-memory pipeline is correct for the dataset size today (~100 meetings, ~4k sentences). At <strong>100M+ records</strong> the substrate changes — the analytical layers run against a real data platform — but the <em>application code shape</em> stays mostly the same.</p>
+<div class="mermaid">flowchart LR
+    Src[Transcript sources] --> Stream[Kafka / Kinesis<br/>append-only log]
+    Stream --> Raw[(S3 + Iceberg<br/>raw + audit)]
+    Stream --> Workers[Worker pool<br/>cascaded categorization]
+
+    Workers --> OPDB[(Postgres<br/>operational, 90d)]
+    OPDB --> Analytical[(ClickHouse / DuckDB<br/>full history)]
+    OPDB --> Search[(OpenSearch<br/>full-text)]
+    OPDB --> Cache[(Redis<br/>hot insights)]
+
+    Cache --> API[FastAPI · multi-instance]
+    Analytical --> API
+    Search --> API
+    OPDB --> API</div>
+
+<p><strong>What changes:</strong>
+- Pandas in-memory → Postgres canonical + columnar warehouse for analytics
+- All-meetings-at-startup → streaming ingestion via Kafka, materialized views
+- Single instance → multi-replica behind a load balancer with shared Redis cache</p>
+<p><strong>What doesn't change:</strong>
+- Categorization cascade (rules → classifier → LLM) — see ADR 0002
+- Sentiment trajectory math — see ADR 0007
+- The 6 insight functions — they run against repository interfaces, swappable backend
+- The admin panel + runtime settings store — operates on the same Postgres at any scale</p>
+<p>Migration is incremental: each step in <a href="adr/0008-data-layer-for-scale.md#migration-path-concrete-sequential">ADR 0008</a> is independently shippable, none requires a wholesale rewrite. The current SQLite + SQLAlchemy code is the foundation — change <code>bootstrap.toml</code>'s database URL to Postgres and step #2 is done.</p>
+<hr />
+<h2 id="admin-panel-runtime-configuration-without-env-vars">Admin panel — runtime configuration without env vars<a class="anchor" href="#admin-panel-runtime-configuration-without-env-vars" title="Permanent link">¶</a></h2>
+<p>Operationally-tunable knobs (rate limits, churn-risk weights, feature flags, the auth API key) live in a database-backed settings store. Operators change them through <code>/admin</code> — every change is audited.</p>
+<div class="mermaid">flowchart LR
+    Boot["bootstrap.toml<br/>(env, log, DB url, admin secret)"] --> App[FastAPI app]
+    App --> RuntimeStore[(settings table<br/>admin DB)]
+    Browser[Browser] --> Login["POST /api/v1/admin/login"]
+    Login -->|signed cookie| Browser
+    Browser --> Admin["/admin · settings UI"]
+    Admin -->|GET PUT POST| AdminAPI[/api/v1/admin/*]
+    AdminAPI --> RuntimeStore
+    AdminAPI --> Audit[(audit_log)]
+    RuntimeStore -->|5s TTL cache| App</div>
+
+<p>What lives where:</p>
+<table>
+<thead>
+<tr>
+<th>Type of config</th>
+<th>Lives in</th>
+<th>Examples</th>
+<th>Mutable at runtime?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Bootstrap</strong></td>
+<td><code>bootstrap.toml</code></td>
+<td>env label, log level, DB URL, admin session secret</td>
+<td>No (restart required)</td>
+</tr>
+<tr>
+<td><strong>Runtime</strong></td>
+<td>DB <code>settings</code> table</td>
+<td>API key, rate limits, churn weights, feature flags</td>
+<td>Yes — change in <code>/admin</code>, takes effect within 5s</td>
+</tr>
+</tbody>
+</table>
+<p><strong>No env vars</strong> are read for application configuration. The runtime substrate (uvicorn, k8s) may still use them for infrastructure. See <a href="adr/0009-admin-panel-for-runtime-config.md">ADR 0009</a> for the full rationale.</p>
+<hr />
 <h2 id="performance-caching">Performance &amp; caching<a class="anchor" href="#performance-caching" title="Permanent link">¶</a></h2>
 <table>
 <thead>
@@ -699,7 +767,7 @@ footer code {
   Generated from <code>docs/ARCHITECTURE.md</code>
 </footer>
 </main>
-<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#design-principles" class="h2">Design principles</a></li><li><a href="#system-overview" class="h2">System overview</a></li><li><a href="#module-dependencies" class="h2">Module dependencies</a></li><li><a href="#data-model" class="h2">Data model</a></li><li><a href="#pipeline-stages" class="h2">Pipeline stages</a></li><li><a href="#interface-layering" class="h2">Interface layering</a></li><li><a href="#validation-flow" class="h2">Validation flow</a></li><li><a href="#api-request-lifecycle" class="h2">API request lifecycle</a></li><li><a href="#performance-caching" class="h2">Performance &amp; caching</a></li><li><a href="#extensibility" class="h2">Extensibility</a></li></ul></aside>
+<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#design-principles" class="h2">Design principles</a></li><li><a href="#system-overview" class="h2">System overview</a></li><li><a href="#module-dependencies" class="h2">Module dependencies</a></li><li><a href="#data-model" class="h2">Data model</a></li><li><a href="#pipeline-stages" class="h2">Pipeline stages</a></li><li><a href="#interface-layering" class="h2">Interface layering</a></li><li><a href="#validation-flow" class="h2">Validation flow</a></li><li><a href="#api-request-lifecycle" class="h2">API request lifecycle</a></li><li><a href="#scaling-to-100m-records" class="h2">Scaling to 100M+ records</a></li><li><a href="#admin-panel-runtime-configuration-without-env-vars" class="h2">Admin panel — runtime configuration without env vars</a></li><li><a href="#performance-caching" class="h2">Performance &amp; caching</a></li><li><a href="#extensibility" class="h2">Extensibility</a></li></ul></aside>
 </div>
 <script
   src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"

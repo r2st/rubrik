@@ -320,6 +320,70 @@ The `/api/health` endpoint is registered on a separate **public** router that by
 
 ---
 
+## Scaling to 100M+ records
+
+The current single-instance, in-memory pipeline is correct for the dataset size today (~100 meetings, ~4k sentences). At **100M+ records** the substrate changes — the analytical layers run against a real data platform — but the *application code shape* stays mostly the same.
+
+```mermaid
+flowchart LR
+    Src[Transcript sources] --> Stream[Kafka / Kinesis<br/>append-only log]
+    Stream --> Raw[(S3 + Iceberg<br/>raw + audit)]
+    Stream --> Workers[Worker pool<br/>cascaded categorization]
+
+    Workers --> OPDB[(Postgres<br/>operational, 90d)]
+    OPDB --> Analytical[(ClickHouse / DuckDB<br/>full history)]
+    OPDB --> Search[(OpenSearch<br/>full-text)]
+    OPDB --> Cache[(Redis<br/>hot insights)]
+
+    Cache --> API[FastAPI · multi-instance]
+    Analytical --> API
+    Search --> API
+    OPDB --> API
+```
+
+**What changes:**
+- Pandas in-memory → Postgres canonical + columnar warehouse for analytics
+- All-meetings-at-startup → streaming ingestion via Kafka, materialized views
+- Single instance → multi-replica behind a load balancer with shared Redis cache
+
+**What doesn't change:**
+- Categorization cascade (rules → classifier → LLM) — see ADR 0002
+- Sentiment trajectory math — see ADR 0007
+- The 6 insight functions — they run against repository interfaces, swappable backend
+- The admin panel + runtime settings store — operates on the same Postgres at any scale
+
+Migration is incremental: each step in [ADR 0008](adr/0008-data-layer-for-scale.md#migration-path-concrete-sequential) is independently shippable, none requires a wholesale rewrite. The current SQLite + SQLAlchemy code is the foundation — change `bootstrap.toml`'s database URL to Postgres and step #2 is done.
+
+---
+
+## Admin panel — runtime configuration without env vars
+
+Operationally-tunable knobs (rate limits, churn-risk weights, feature flags, the auth API key) live in a database-backed settings store. Operators change them through `/admin` — every change is audited.
+
+```mermaid
+flowchart LR
+    Boot["bootstrap.toml<br/>(env, log, DB url, admin secret)"] --> App[FastAPI app]
+    App --> RuntimeStore[(settings table<br/>admin DB)]
+    Browser[Browser] --> Login["POST /api/v1/admin/login"]
+    Login -->|signed cookie| Browser
+    Browser --> Admin["/admin · settings UI"]
+    Admin -->|GET PUT POST| AdminAPI[/api/v1/admin/*]
+    AdminAPI --> RuntimeStore
+    AdminAPI --> Audit[(audit_log)]
+    RuntimeStore -->|5s TTL cache| App
+```
+
+What lives where:
+
+| Type of config | Lives in | Examples | Mutable at runtime? |
+|---|---|---|---|
+| **Bootstrap** | `bootstrap.toml` | env label, log level, DB URL, admin session secret | No (restart required) |
+| **Runtime** | DB `settings` table | API key, rate limits, churn weights, feature flags | Yes — change in `/admin`, takes effect within 5s |
+
+**No env vars** are read for application configuration. The runtime substrate (uvicorn, k8s) may still use them for infrastructure. See [ADR 0009](adr/0009-admin-panel-for-runtime-config.md) for the full rationale.
+
+---
+
 ## Performance & caching
 
 | Layer | Cache | Reason |

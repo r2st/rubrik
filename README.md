@@ -3,7 +3,7 @@
 > A production-ready pipeline that processes B2B meeting transcripts and surfaces topic categorization, sentiment trends, and strategic insights — exposed as a REST API with a lightweight web dashboard.
 
 [![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue)](.github/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-107%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-123%20passing-brightgreen)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-94%25-brightgreen)](pyproject.toml)
 [![Validation](https://img.shields.io/badge/validation-9%2F10%20pass-brightgreen)](validate.py)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](pyproject.toml)
@@ -298,19 +298,51 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 
 ### Configuration
 
-All operational knobs are env vars. Copy `.env.example` to `.env` and override.
+**No environment variables for application config** — see [ADR 0009](docs/adr/0009-admin-panel-for-runtime-config.md). Two layers instead:
 
-| Var | Default | Purpose |
-|---|---|---|
-| `ENV` | `dev` | `dev` / `staging` / `prod` — affects defaults like HSTS |
-| `LOG_LEVEL` / `LOG_FORMAT` | `INFO` / `text` | Use `json` in prod |
-| `API_KEY` | _(empty — auth off)_ | Set to require `X-API-Key` on all `/api/*` |
-| `CORS_ORIGINS` | `["*"]` | Tighten in prod to the dashboard domain |
-| `RATE_LIMIT_DEFAULT` | `120/minute` | slowapi syntax |
-| `PIPELINE_REFRESH_MINUTES` | `0` (off) | Rebuild the analysis cache every N minutes |
-| `SENTRY_DSN` | _(empty)_ | Forward unhandled errors to Sentry |
-| `OTEL_ENDPOINT` | _(empty)_ | Export traces via OTLP/HTTP |
-| `METRICS_ENABLED` | `true` | Mount `/metrics` |
+**Bootstrap config** — minimum to start the service. Copy `bootstrap.toml.example` to `bootstrap.toml`, edit:
+
+```toml
+[app]
+env = "prod"                 # affects defaults like HSTS
+log_level = "INFO"
+log_format = "json"
+
+[database]
+url = "postgresql+psycopg://user:pass@host/dbname"   # or SQLite for dev
+
+[admin]
+initial_password = "..."     # used only on first login; rotate via /admin
+session_secret = "..."
+
+[observability]
+sentry_dsn = "https://..."
+otel_endpoint = "http://otel:4318/v1/traces"
+```
+
+**Runtime config** — everything else lives in the DB and is managed through the admin panel at **`/admin`**. Includes:
+
+- Auth (API key, CORS origins)
+- Rate limits (default + strict)
+- Pipeline refresh interval
+- Risk-scoring weights + thresholds
+- Sentiment friction threshold
+- Feature flags
+
+Changes propagate within 5 seconds. Every change is recorded in an audit log.
+
+### Admin panel
+
+```bash
+make dev                    # bring up the API
+open http://127.0.0.1:8000/admin
+# Initial password: from [admin].initial_password in bootstrap.toml
+```
+
+Three tabs:
+- **Settings** — categorized rows with inline edit; saves on blur, "Reset to default" per row
+- **Audit log** — append-only history of every change (who, when, old value, new value, notes)
+- **Account** — password rotation
 
 ### What's deliberately not done
 

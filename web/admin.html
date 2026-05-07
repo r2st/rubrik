@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin · Transcript Intelligence</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+
+  <!-- Login overlay -->
+  <div id="login-screen" class="login-screen" hidden>
+    <form id="login-form" class="login-card">
+      <div class="login-brand">
+        <img src="/static/favicon.svg" alt="" class="brand-icon">
+        Transcript Intelligence · Admin
+      </div>
+      <p class="login-help">Sign in to manage runtime configuration. Initial password is set in <code>bootstrap.toml</code>.</p>
+      <input type="password" id="password" autocomplete="current-password" placeholder="Admin password" required autofocus>
+      <button type="submit">Sign in</button>
+      <div id="login-error" class="login-error" hidden></div>
+    </form>
+  </div>
+
+  <!-- Main admin shell -->
+  <div id="admin-shell" hidden>
+    <header class="topbar">
+      <div class="brand">⚙️ Transcript Intelligence · Admin</div>
+      <nav class="tabs">
+        <button class="tab active" data-tab="settings">Settings</button>
+        <button class="tab" data-tab="audit">Audit log</button>
+        <button class="tab" data-tab="account">Account</button>
+      </nav>
+      <div class="meta">
+        <a href="/" class="meta-link">← back to dashboard</a>
+        <button id="logout-btn" class="meta-link" type="button">sign out</button>
+      </div>
+    </header>
+
+    <main class="admin-main">
+      <!-- Settings tab -->
+      <section class="panel active" id="panel-settings">
+        <p class="caption">
+          Changes take effect on the next request (cache TTL ≈ 5s). Every change is recorded in the audit log.
+        </p>
+        <div id="settings-tree"></div>
+      </section>
+
+      <!-- Audit tab -->
+      <section class="panel" id="panel-audit">
+        <p class="caption">Append-only history of every settings change. Most recent first.</p>
+        <table class="data" id="audit-table"></table>
+      </section>
+
+      <!-- Account tab -->
+      <section class="panel" id="panel-account">
+        <div class="card">
+          <h3>Rotate admin password</h3>
+          <form id="password-form">
+            <label>Current password
+              <input type="password" id="current-password" required>
+            </label>
+            <label>New password
+              <input type="password" id="new-password" required minlength="8">
+            </label>
+            <button type="submit">Update password</button>
+            <div id="password-msg"></div>
+          </form>
+        </div>
+      </section>
+
+      <div id="toast" class="toast" hidden></div>
+    </main>
+  </div>
+
+  <script src="/static/admin.js"></script>
+</body>
+</html>

@@ -25,9 +25,16 @@ log = get_logger(__name__)
 
 
 def install_metrics(app: FastAPI, settings: Settings) -> None:
-    """Mount /metrics if metrics are enabled."""
-    if not settings.metrics_enabled:
-        log.info("Prometheus metrics disabled by config")
+    """Mount /metrics if metrics are enabled.
+
+    The toggle is a *runtime* setting (admin-tunable). On import we just
+    consult the runtime store; if it's disabled, the endpoint isn't mounted
+    until next process start. (Metrics need to be wired up before requests
+    flow, so true hot-toggling would require a restart.)
+    """
+    from src.settings import get_runtime_view
+    if not get_runtime_view().metrics_enabled:
+        log.info("Prometheus metrics disabled by runtime config")
         return
     try:
         from prometheus_fastapi_instrumentator import Instrumentator
@@ -84,10 +91,11 @@ def install_sentry(settings: Settings) -> None:
         log.warning("sentry-sdk not installed — error tracking disabled")
         return
 
+    from src.settings import get_runtime_view
     sentry_sdk.init(
         dsn=settings.sentry_dsn,
         environment=settings.env,
-        traces_sample_rate=settings.sentry_traces_sample_rate,
+        traces_sample_rate=get_runtime_view().sentry_traces_sample_rate,
         integrations=[StarletteIntegration()],
         send_default_pii=False,
     )

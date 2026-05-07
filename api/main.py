@@ -30,10 +30,13 @@ from slowapi.middleware import SlowAPIASGIMiddleware
 from slowapi.util import get_remote_address
 
 from src.logging_config import configure_logging, get_logger
-from src.settings import get_settings
+from src.runtime_settings import initialize_db_and_seed
+from src.settings import get_runtime_view, get_settings
 
 from . import errors as errors_mod
 from . import observability, state
+from .admin.auth import ensure_admin_password_seeded
+from .admin.routes import router as admin_router
 from .middleware import RequestIDMiddleware, SecurityHeadersMiddleware, StateAgeMiddleware
 from .routes import public_router, router
 
@@ -49,13 +52,20 @@ log = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     configure_logging(level=settings.log_level, fmt=settings.log_format)
+
+    # Seed the application DB (admin settings + audit log) and admin password.
+    # Idempotent — safe on every start.
+    initialize_db_and_seed()
+    ensure_admin_password_seeded()
+
+    runtime = get_runtime_view()
     log.info("Starting up (env=%s, auth=%s, refresh=%dmin)",
              settings.env,
-             "on" if settings.auth_required else "off",
-             settings.pipeline_refresh_minutes)
+             "on" if runtime.auth_required else "off",
+             runtime.pipeline_refresh_minutes)
 
-    state.get_state()  # warm cache
-    await state.start_refresh_task(settings.pipeline_refresh_minutes)
+    state.get_state()  # warm pipeline cache
+    await state.start_refresh_task(runtime.pipeline_refresh_minutes)
     log.info("Ready to serve")
     yield
     await state.stop_refresh_task()
@@ -63,8 +73,13 @@ async def lifespan(_: FastAPI):
 
 
 # ---------------------------------------------------------------------------
-# App + observability (Sentry must init before app construction)
+# App + observability
 # ---------------------------------------------------------------------------
+# DB needs to be ready BEFORE observability/middleware that read runtime settings.
+# Lifespan also calls this — initialize_db_and_seed is idempotent.
+initialize_db_and_seed()
+ensure_admin_password_seeded()
+
 observability.install_sentry(settings)
 
 app = FastAPI(
@@ -73,8 +88,8 @@ app = FastAPI(
     description=(
         "Topic categorization, sentiment analysis, and strategic insights "
         "for B2B meeting transcripts.\n\n"
-        f"**Environment:** `{settings.env}` · "
-        f"**Auth:** {'X-API-Key required' if settings.auth_required else 'open (dev)'}"
+        f"**Environment:** `{settings.env}`. "
+        "Auth is configured at runtime via the admin panel at `/admin`."
     ),
     lifespan=lifespan,
 )
@@ -83,11 +98,15 @@ errors_mod.register(app)
 
 
 # ---------------------------------------------------------------------------
-# Rate limiting
+# Rate limiting — limits read from the runtime settings store (admin-tunable)
 # ---------------------------------------------------------------------------
+def _default_rate_limits() -> list[str]:
+    return [get_runtime_view().rate_limit_default]
+
+
 limiter = Limiter(
     key_func=get_remote_address,
-    default_limits=[settings.rate_limit_default],
+    default_limits=_default_rate_limits(),
     headers_enabled=True,
 )
 app.state.limiter = limiter
@@ -106,9 +125,10 @@ app.add_middleware(
 app.add_middleware(StateAgeMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_methods=["GET"],
+    allow_origins=get_runtime_view().cors_origins,
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*", "X-API-Key", "X-Request-ID"],
+    allow_credentials=True,  # admin session cookie needs this
     expose_headers=["X-Request-ID", "ETag", "X-State-Age-Seconds", "X-Stale-Response"],
 )
 
@@ -125,10 +145,11 @@ observability.install_tracing(app, settings)
 
 
 # ---------------------------------------------------------------------------
-# Routers — public (no auth) + v1 (auth-gated)
+# Routers — public (no auth) + v1 (auth-gated) + admin (session-gated)
 # ---------------------------------------------------------------------------
 app.include_router(public_router)
 app.include_router(router)
+app.include_router(admin_router)
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +162,11 @@ if (WEB_DIR / "static").exists():
 @app.get("/", include_in_schema=False)
 def index() -> FileResponse:
     return FileResponse(WEB_DIR / "index.html")
+
+
+@app.get("/admin", include_in_schema=False)
+def admin_page() -> FileResponse:
+    return FileResponse(WEB_DIR / "admin.html")
 
 
 @app.get("/favicon.ico", include_in_schema=False)

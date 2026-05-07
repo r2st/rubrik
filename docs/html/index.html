@@ -339,7 +339,7 @@ footer code {
 <p>A production-ready pipeline that processes B2B meeting transcripts and surfaces topic categorization, sentiment trends, and strategic insights — exposed as a REST API with a lightweight web dashboard.</p>
 </blockquote>
 <p><a href=".github/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-blue" /></a>
-<a href="https://github.com/"><img alt="Tests" src="https://img.shields.io/badge/tests-107%20passing-brightgreen" /></a>
+<a href="https://github.com/"><img alt="Tests" src="https://img.shields.io/badge/tests-123%20passing-brightgreen" /></a>
 <a href="pyproject.toml"><img alt="Coverage" src="https://img.shields.io/badge/coverage-94%25-brightgreen" /></a>
 <a href="https://github.com/"><img alt="Validation" src="https://img.shields.io/badge/validation-9%2F10%20pass-brightgreen" /></a>
 <a href="pyproject.toml"><img alt="Python" src="https://img.shields.io/badge/python-3.9%2B-blue" /></a>
@@ -856,63 +856,43 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 </tbody>
 </table>
 <h3 id="configuration">Configuration<a class="anchor" href="#configuration" title="Permanent link">¶</a></h3>
-<p>All operational knobs are env vars. Copy <code>.env.example</code> to <code>.env</code> and override.</p>
-<table>
-<thead>
-<tr>
-<th>Var</th>
-<th>Default</th>
-<th>Purpose</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>ENV</code></td>
-<td><code>dev</code></td>
-<td><code>dev</code> / <code>staging</code> / <code>prod</code> — affects defaults like HSTS</td>
-</tr>
-<tr>
-<td><code>LOG_LEVEL</code> / <code>LOG_FORMAT</code></td>
-<td><code>INFO</code> / <code>text</code></td>
-<td>Use <code>json</code> in prod</td>
-</tr>
-<tr>
-<td><code>API_KEY</code></td>
-<td><em>(empty — auth off)</em></td>
-<td>Set to require <code>X-API-Key</code> on all <code>/api/*</code></td>
-</tr>
-<tr>
-<td><code>CORS_ORIGINS</code></td>
-<td><code>["*"]</code></td>
-<td>Tighten in prod to the dashboard domain</td>
-</tr>
-<tr>
-<td><code>RATE_LIMIT_DEFAULT</code></td>
-<td><code>120/minute</code></td>
-<td>slowapi syntax</td>
-</tr>
-<tr>
-<td><code>PIPELINE_REFRESH_MINUTES</code></td>
-<td><code>0</code> (off)</td>
-<td>Rebuild the analysis cache every N minutes</td>
-</tr>
-<tr>
-<td><code>SENTRY_DSN</code></td>
-<td><em>(empty)</em></td>
-<td>Forward unhandled errors to Sentry</td>
-</tr>
-<tr>
-<td><code>OTEL_ENDPOINT</code></td>
-<td><em>(empty)</em></td>
-<td>Export traces via OTLP/HTTP</td>
-</tr>
-<tr>
-<td><code>METRICS_ENABLED</code></td>
-<td><code>true</code></td>
-<td>Mount <code>/metrics</code></td>
-</tr>
-</tbody>
-</table>
+<p><strong>No environment variables for application config</strong> — see <a href="docs/adr/0009-admin-panel-for-runtime-config.md">ADR 0009</a>. Two layers instead:</p>
+<p><strong>Bootstrap config</strong> — minimum to start the service. Copy <code>bootstrap.toml.example</code> to <code>bootstrap.toml</code>, edit:</p>
+<pre><code class="language-toml">[app]
+env = &quot;prod&quot;                 # affects defaults like HSTS
+log_level = &quot;INFO&quot;
+log_format = &quot;json&quot;
+
+[database]
+url = &quot;postgresql+psycopg://user:pass@host/dbname&quot;   # or SQLite for dev
+
+[admin]
+initial_password = &quot;...&quot;     # used only on first login; rotate via /admin
+session_secret = &quot;...&quot;
+
+[observability]
+sentry_dsn = &quot;https://...&quot;
+otel_endpoint = &quot;http://otel:4318/v1/traces&quot;
+</code></pre>
+<p><strong>Runtime config</strong> — everything else lives in the DB and is managed through the admin panel at <strong><code>/admin</code></strong>. Includes:</p>
+<ul>
+<li>Auth (API key, CORS origins)</li>
+<li>Rate limits (default + strict)</li>
+<li>Pipeline refresh interval</li>
+<li>Risk-scoring weights + thresholds</li>
+<li>Sentiment friction threshold</li>
+<li>Feature flags</li>
+</ul>
+<p>Changes propagate within 5 seconds. Every change is recorded in an audit log.</p>
+<h3 id="admin-panel">Admin panel<a class="anchor" href="#admin-panel" title="Permanent link">¶</a></h3>
+<pre><code class="language-bash">make dev                    # bring up the API
+open http://127.0.0.1:8000/admin
+# Initial password: from [admin].initial_password in bootstrap.toml
+</code></pre>
+<p>Three tabs:
+- <strong>Settings</strong> — categorized rows with inline edit; saves on blur, "Reset to default" per row
+- <strong>Audit log</strong> — append-only history of every change (who, when, old value, new value, notes)
+- <strong>Account</strong> — password rotation</p>
 <h3 id="whats-deliberately-not-done">What's deliberately not done<a class="anchor" href="#whats-deliberately-not-done" title="Permanent link">¶</a></h3>
 <ul>
 <li><strong>Multi-tenant auth</strong> — single API key today; JWT is a one-line dependency swap if needed</li>
@@ -938,7 +918,7 @@ make load-test         # 30s, 20 VUs, all endpoints — exits non-zero if error 
   Generated from <code>README.md</code>
 </footer>
 </main>
-<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#contents" class="h2">Contents</a></li><li><a href="#what-this-does" class="h2">What this does</a></li><li><a href="#headline-findings" class="h2">Headline findings</a></li><li><a href="#quick-start" class="h2">Quick start</a></li><li><a href="#architecture" class="h2">Architecture</a></li><li><a href="#project-layout" class="h2">Project layout</a></li><li><a href="#testing-validation" class="h2">Testing &amp; validation</a></li><li><a href="#api-web-dashboard" class="h2">API &amp; web dashboard</a></li><li><a href="#why-fastapi-instead-of-streamlit" class="h3">Why FastAPI instead of Streamlit</a></li><li><a href="#run-all-services" class="h2">Run all services</a></li><li><a href="#container-alternative-docker-compose" class="h3">Container alternative (docker compose)</a></li><li><a href="#production-readiness" class="h2">Production readiness</a></li><li><a href="#security" class="h3">Security</a></li><li><a href="#performance-caching" class="h3">Performance &amp; caching</a></li><li><a href="#resilience" class="h3">Resilience</a></li><li><a href="#observability-opt-in" class="h3">Observability (opt-in)</a></li><li><a href="#engineering" class="h3">Engineering</a></li><li><a href="#configuration" class="h3">Configuration</a></li><li><a href="#whats-deliberately-not-done" class="h3">What's deliberately not done</a></li><li><a href="#documentation" class="h2">Documentation</a></li><li><a href="#load-testing" class="h3">Load testing</a></li><li><a href="#license" class="h2">License</a></li></ul></aside>
+<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#contents" class="h2">Contents</a></li><li><a href="#what-this-does" class="h2">What this does</a></li><li><a href="#headline-findings" class="h2">Headline findings</a></li><li><a href="#quick-start" class="h2">Quick start</a></li><li><a href="#architecture" class="h2">Architecture</a></li><li><a href="#project-layout" class="h2">Project layout</a></li><li><a href="#testing-validation" class="h2">Testing &amp; validation</a></li><li><a href="#api-web-dashboard" class="h2">API &amp; web dashboard</a></li><li><a href="#why-fastapi-instead-of-streamlit" class="h3">Why FastAPI instead of Streamlit</a></li><li><a href="#run-all-services" class="h2">Run all services</a></li><li><a href="#container-alternative-docker-compose" class="h3">Container alternative (docker compose)</a></li><li><a href="#production-readiness" class="h2">Production readiness</a></li><li><a href="#security" class="h3">Security</a></li><li><a href="#performance-caching" class="h3">Performance &amp; caching</a></li><li><a href="#resilience" class="h3">Resilience</a></li><li><a href="#observability-opt-in" class="h3">Observability (opt-in)</a></li><li><a href="#engineering" class="h3">Engineering</a></li><li><a href="#configuration" class="h3">Configuration</a></li><li><a href="#admin-panel" class="h3">Admin panel</a></li><li><a href="#whats-deliberately-not-done" class="h3">What's deliberately not done</a></li><li><a href="#documentation" class="h2">Documentation</a></li><li><a href="#load-testing" class="h3">Load testing</a></li><li><a href="#license" class="h2">License</a></li></ul></aside>
 </div>
 <script
   src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"

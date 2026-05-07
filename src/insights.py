@@ -13,6 +13,29 @@ import pandas as pd
 from . import config
 
 
+def _runtime_risk_params() -> tuple[dict[str, float], dict[str, float]]:
+    """Read risk weights + thresholds from the DB-backed runtime store.
+
+    Tolerates absent DB (notebook / batch use) by falling back to the static
+    config values.
+    """
+    try:
+        from .runtime_settings import get_runtime
+        rs = get_runtime()
+        weights = {
+            "low_sentiment": float(rs.get("risk.weight_low_sentiment", config.RISK_WEIGHTS["low_sentiment"])),
+            "churn_signals": float(rs.get("risk.weight_churn_signals", config.RISK_WEIGHTS["churn_signals"])),
+            "negative_pivots": float(rs.get("risk.weight_negative_pivots", config.RISK_WEIGHTS["negative_pivots"])),
+        }
+        thresholds = {
+            "high": float(rs.get("risk.threshold_high", config.CHURN_RISK_THRESHOLDS["high"])),
+            "medium": float(rs.get("risk.threshold_medium", config.CHURN_RISK_THRESHOLDS["medium"])),
+        }
+        return weights, thresholds
+    except Exception:  # noqa: BLE001
+        return dict(config.RISK_WEIGHTS), dict(config.CHURN_RISK_THRESHOLDS)
+
+
 # ---------------------------------------------------------------------------
 # Insight 1: Customer churn risk scoring
 # ---------------------------------------------------------------------------
@@ -48,17 +71,20 @@ def customer_health(meetings: pd.DataFrame) -> pd.DataFrame:
     pivot_norm = (-grouped["avg_max_drop"].fillna(0)).clip(lower=0)  # already in [0, 2]
     pivot_norm = (pivot_norm / 2.0).clip(0, 1)
 
-    w = config.RISK_WEIGHTS
+    # Weights + thresholds are admin-tunable at runtime (see /admin).
+    # Falls back to the static config if the runtime store isn't initialized
+    # (e.g., when called from the notebook or batch pipeline).
+    weights, thresholds = _runtime_risk_params()
     grouped["risk_score"] = (
-        w["low_sentiment"] * sentiment_gap
-        + w["churn_signals"] * churn_norm
-        + w["negative_pivots"] * pivot_norm
+        weights["low_sentiment"] * sentiment_gap
+        + weights["churn_signals"] * churn_norm
+        + weights["negative_pivots"] * pivot_norm
     ).round(3)
 
     def tier(score: float) -> str:
-        if score >= config.CHURN_RISK_THRESHOLDS["high"]:
+        if score >= thresholds["high"]:
             return "🔴 high"
-        if score >= config.CHURN_RISK_THRESHOLDS["medium"]:
+        if score >= thresholds["medium"]:
             return "🟡 medium"
         return "🟢 low"
 

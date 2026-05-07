@@ -1,0 +1,37 @@
+# ============================================================================
+# Transcript Intelligence — bootstrap configuration
+#
+# This file holds the *minimum* settings needed to start the service.
+# Everything else (rate limits, risk weights, feature flags, …) lives in the
+# database and is managed through the admin panel at /admin.
+#
+# Copy this file to `bootstrap.toml` and adjust. `bootstrap.toml` is gitignored.
+# ============================================================================
+
+[app]
+env = "dev"                   # dev | staging | prod
+log_level = "INFO"            # DEBUG | INFO | WARNING | ERROR
+log_format = "text"           # text | json (use 'json' in prod)
+
+[database]
+# SQLAlchemy URL. SQLite for single-instance / dev:
+url = "sqlite:///./data/admin.db"
+# For production:  postgresql+psycopg://user:pass@host:5432/transcript_intel
+
+[admin]
+# Initial admin password — used only for first login.
+# Hash is generated on first start and stored in the DB; this plaintext field
+# is then ignored. Rotate via the admin panel.
+initial_password = "changeme-on-first-login"
+# Cookie session secret. Replace with a long random string in prod.
+session_secret = "replace-with-a-long-random-string-in-production"
+
+[paths]
+# Override the default dataset location (leave empty for the repo default)
+dataset_path = ""
+
+[observability]
+# These remain in bootstrap because changing them requires reinit
+sentry_dsn = ""
+otel_endpoint = ""
+otel_service_name = "transcript-intelligence"
