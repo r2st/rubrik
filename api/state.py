@@ -21,6 +21,7 @@ import pandas as pd
 
 from src import categorizer, clustering, data_loader, insights, sentiment
 from src.logging_config import get_logger
+from src.repository import TranscriptRepository, default_repository
 
 log = get_logger(__name__)
 
@@ -48,6 +49,16 @@ _lock = threading.Lock()
 _refresh_task: asyncio.Task | None = None
 _consecutive_refresh_failures: int = 0
 _refresh_interval_minutes: int = 0
+# Active repository — resolved lazily so tests can override before first use.
+_repository: TranscriptRepository | None = None
+
+
+def set_repository(repo: TranscriptRepository | None) -> None:
+    """Override the data source. Tests use this to inject fixtures; production
+    code leaves it `None` so `_build()` falls back to `default_repository()`."""
+    global _repository, _state
+    _repository = repo
+    _state = None  # force rebuild on next get_state()
 
 
 def get_state() -> PipelineState:
@@ -112,7 +123,8 @@ async def stop_refresh_task() -> None:
 
 def _build() -> PipelineState:
     log.info("Building pipeline state…")
-    raw = data_loader.load_all_meetings()
+    repo = _repository if _repository is not None else default_repository()
+    raw = repo.all()
     df = data_loader.meetings_to_dataframe(raw)
     sentences_df = data_loader.sentences_dataframe(raw)
     speakers_df = data_loader.speakers_dataframe(raw)

@@ -182,3 +182,46 @@ def test_rate_limit_headers_present():
     with TestClient(app) as c:
         r = c.get("/api/health")
     assert any(h.lower().startswith("x-ratelimit") for h in r.headers)
+
+
+# ---------------------------------------------------------------------------
+# Body size limit middleware
+# ---------------------------------------------------------------------------
+def test_body_size_limit_rejects_oversized_content_length():
+    """Content-Length above the cap -> 413 with error envelope, no handler ran."""
+    from api.middleware import DEFAULT_MAX_BODY_BYTES
+    with TestClient(app) as c:
+        # POST /api/v1/admin/login is a real route — it would normally 401
+        # on bad creds, but the body cap should reject it before that.
+        oversize = DEFAULT_MAX_BODY_BYTES + 1
+        r = c.post(
+            "/api/v1/admin/login",
+            content=b"x" * 16,  # tiny body, but lie about Content-Length
+            headers={"Content-Length": str(oversize),
+                     "Content-Type": "application/json"},
+        )
+    assert r.status_code == 413
+    body = r.json()
+    assert body["error"]["code"] == "request_too_large"
+
+
+def test_body_size_limit_allows_normal_payloads():
+    """Sanity check — a normal-sized JSON login still goes through to auth."""
+    with TestClient(app) as c:
+        r = c.post("/api/v1/admin/login", json={"password": "wrong"})
+    # Should NOT be 413 — should be 401 (bad creds) or 429 (rate-limited).
+    assert r.status_code != 413
+
+
+# ---------------------------------------------------------------------------
+# Strict rate limit on admin login (brute-force prevention)
+# ---------------------------------------------------------------------------
+def test_admin_login_rate_limited():
+    """6th login attempt within a minute from the same IP -> 429."""
+    with TestClient(app) as c:
+        statuses = []
+        for _ in range(7):
+            r = c.post("/api/v1/admin/login", json={"password": "wrong-pw"})
+            statuses.append(r.status_code)
+    # First 5 should be 401 (bad creds); somewhere in 6-7 we should see 429.
+    assert 429 in statuses, f"expected 429 in statuses, got {statuses}"

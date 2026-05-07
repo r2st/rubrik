@@ -37,7 +37,12 @@ from . import errors as errors_mod
 from . import observability, state
 from .admin.auth import ensure_admin_password_seeded
 from .admin.routes import router as admin_router
-from .middleware import RequestIDMiddleware, SecurityHeadersMiddleware, StateAgeMiddleware
+from .middleware import (
+    BodySizeLimitMiddleware,
+    RequestIDMiddleware,
+    SecurityHeadersMiddleware,
+    StateAgeMiddleware,
+)
 from .routes import public_router, router
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -117,6 +122,9 @@ app.add_middleware(SlowAPIASGIMiddleware)
 # ---------------------------------------------------------------------------
 # Cross-cutting middleware (order matters; outer-most listed first)
 # ---------------------------------------------------------------------------
+# Body-size cap runs first so oversized payloads are rejected before any
+# downstream middleware or handler allocates buffers for them.
+app.add_middleware(BodySizeLimitMiddleware)
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(
     SecurityHeadersMiddleware,

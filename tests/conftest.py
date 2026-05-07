@@ -32,3 +32,17 @@ def sentences_df(raw_meetings) -> pd.DataFrame:
 @pytest.fixture(scope="session")
 def speakers_df(raw_meetings) -> pd.DataFrame:
     return data_loader.speakers_dataframe(raw_meetings)
+
+
+@pytest.fixture(autouse=True)
+def _reset_admin_strict_rate_limit():
+    """Clear the per-process strict rate-limit bucket between tests.
+
+    Production behavior is per-IP/minute; tests issue many requests from the
+    same loopback address in rapid succession, which would otherwise trip the
+    limiter and turn unrelated assertions into 429s.
+    """
+    from api.admin.routes import _strict_window
+    _strict_window.clear()
+    yield
+    _strict_window.clear()

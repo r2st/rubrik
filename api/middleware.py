@@ -5,12 +5,86 @@ import time
 import uuid
 
 from fastapi import Request, Response
+from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from src.logging_config import get_logger
 
 log = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Body size limit — DoS prevention
+# ---------------------------------------------------------------------------
+DEFAULT_MAX_BODY_BYTES = 1 * 1024 * 1024  # 1 MiB — generous for JSON, blocks abuse
+
+
+class BodySizeLimitMiddleware(BaseHTTPMiddleware):
+    """Reject requests whose body exceeds `max_bytes`.
+
+    FastAPI / Starlette default is unbounded — that's a real DoS vector
+    (megabyte-then-gigabyte upload would happily fill the request buffer).
+    Enforce a hard cap before any handler runs. The limit is generous (1 MiB)
+    for typical JSON payloads but cheaply rejects abuse.
+
+    `Content-Length` is checked first (rejects fast on the prelude). If the
+    header is absent, we read the body in a streaming fashion and abort if
+    we cross the threshold.
+    """
+
+    def __init__(self, app: ASGIApp, max_bytes: int = DEFAULT_MAX_BODY_BYTES) -> None:
+        super().__init__(app)
+        self.max_bytes = max_bytes
+
+    async def dispatch(self, request: Request, call_next):
+        cl = request.headers.get("content-length")
+        if cl is not None:
+            try:
+                if int(cl) > self.max_bytes:
+                    return self._too_large(request)
+            except ValueError:
+                # Malformed header — let the framework reject it
+                pass
+
+        # Some clients omit Content-Length (chunked transfer). Wrap receive()
+        # to enforce the cap incrementally.
+        original_receive = request.receive
+        bytes_seen = 0
+
+        async def capped_receive():
+            nonlocal bytes_seen
+            message = await original_receive()
+            if message.get("type") == "http.request":
+                body = message.get("body") or b""
+                bytes_seen += len(body)
+                if bytes_seen > self.max_bytes:
+                    raise _BodyTooLarge()
+            return message
+
+        request._receive = capped_receive  # noqa: SLF001
+        try:
+            return await call_next(request)
+        except _BodyTooLarge:
+            return self._too_large(request)
+
+    def _too_large(self, request: Request) -> JSONResponse:
+        return JSONResponse(
+            status_code=413,
+            content={
+                "error": {
+                    "code": "request_too_large",
+                    "message": f"Request body exceeds {self.max_bytes} bytes",
+                    "request_id": getattr(request.state, "request_id", None),
+                    "path": str(request.url.path),
+                }
+            },
+        )
+
+
+class _BodyTooLarge(Exception):
+    """Raised internally by BodySizeLimitMiddleware when streaming the body
+    crosses the configured cap."""
 
 
 # ---------------------------------------------------------------------------

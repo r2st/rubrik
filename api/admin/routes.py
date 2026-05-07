@@ -2,10 +2,18 @@
 
 Mounted at `/api/v1/admin/*`. Every route requires a valid admin session
 (except `POST /login`).
+
+`/login` and `/password` are rate-limited more aggressively than the rest of
+the API to discourage brute-force attempts (5/minute/IP via the
+`strict_rate_limit` dependency). The app-wide slowapi middleware applies
+its global limit on top, so an attacker hits the strict bound first.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+import time
+from collections import defaultdict, deque
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from src.runtime_settings import get_runtime
 from src.settings import Settings, get_settings
@@ -30,13 +38,44 @@ from .schemas import (
     UpdateSettingRequest,
 )
 
+# Strict rate limit for credential-handling endpoints (login + password
+# rotation): 5 attempts / minute / IP. Implemented as a tiny in-memory
+# sliding window so it's a plain FastAPI dependency — slowapi's decorator
+# wrapping interferes with FastAPI body-model introspection on newer
+# pydantic, so we keep the route signatures clean and cap requests here.
+#
+# In multi-replica deployments this is per-process, which is fine: an
+# attacker is still bounded to (replicas × 5)/minute, and the global
+# slowapi middleware applies on top. For a stricter cluster-wide bound,
+# move the counter to Redis.
+_STRICT_LIMIT_PER_MINUTE = 5
+_strict_window: dict[str, deque[float]] = defaultdict(deque)
+
+
+def strict_rate_limit(request: Request) -> None:
+    """Enforce 5 req/min/IP on login + password-rotation."""
+    now = time.monotonic()
+    cutoff = now - 60.0
+    ip = (request.client.host if request.client else "unknown") or "unknown"
+    bucket = _strict_window[ip]
+    while bucket and bucket[0] < cutoff:
+        bucket.popleft()
+    if len(bucket) >= _STRICT_LIMIT_PER_MINUTE:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many attempts; please wait a minute before retrying.",
+        )
+    bucket.append(now)
+
+
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
 
 # ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
-@router.post("/login", response_model=LoginResponse)
+@router.post("/login", response_model=LoginResponse,
+             dependencies=[Depends(strict_rate_limit)])
 def login(req: LoginRequest, response: Response,
           settings: Settings = Depends(get_settings)) -> LoginResponse:
     if not login_attempt(req.password):
@@ -70,7 +109,7 @@ def me(actor: str = Depends(require_admin)) -> dict:
     return {"actor": actor}
 
 
-@router.post("/password")
+@router.post("/password", dependencies=[Depends(strict_rate_limit)])
 def change_password(
     req: PasswordChangeRequest,
     actor: str = Depends(require_admin),
