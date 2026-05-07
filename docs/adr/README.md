@@ -19,6 +19,7 @@ Format: lightly adapted [Nygard ADR](https://cognitect.com/blog/2011/11/15/docum
 | 0009 | [Admin panel + runtime config — no env vars for app config](0009-admin-panel-for-runtime-config.md) | Accepted | 2026-05-06 |
 | 0010 | [Auto-scaling ML pipeline — data, training, serving](0010-auto-scaling-ml-pipeline.md) | Accepted | 2026-05-06 |
 | 0011 | [Repository pattern + streaming pipeline](0011-repository-pattern-and-streaming.md) | Accepted | 2026-05-06 |
+| 0012 | [LLM cascade — fine-tune for bulk, frontier API for edge cases](0012-llm-cascade-frontier-fallback.md) | Proposed | 2026-05-07 |
 
 ## When to write a new ADR
 

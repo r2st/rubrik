@@ -116,7 +116,7 @@ flowchart TB
         Rules["categorizer<br/>📏 regex rules · config-driven"]
         SentS["sentiment<br/>📈 per-sentence labels<br/>+ numpy trajectory math"]
         ML["clustering<br/>🎯 TF-IDF + KMeans<br/>silhouette-picked k"]
-        LLM["LLM tier<br/>🤖 Gemma 4 fine-tune (QLoRA)<br/>summaries + action items"]
+        LLM["LLM cascade<br/>🤖 Tier 1: Gemma 4 fine-tune (bulk)<br/>🌐 Tier 2: frontier API (edge cases)"]
         InsightsB["insights<br/>💡 pandas analytics<br/>(health · incidents · pivots · …)"]
         VizB["visualizations<br/>📊 matplotlib · plotly"]
         Rules --> InsightsB
@@ -340,6 +340,51 @@ flowchart LR
 **No LLM in the categorization path.** ADR 0002 documents the deliberate choice: zero-shot LLM matched the rules' accuracy at the sample's structure but added $1–$10/1k-doc cost, 0.5–3s latency, non-determinism, and a data-egress surface — none of which were worth paying for a problem rules already solve. The LLM earns its cost on the *generative* tasks (summaries + action items), not the classification ones.
 
 The training pipeline for the LLM tier (Ray Data dataset prep → multi-node FSDP fine-tune → adapter registry → vLLM serving with autoscaled GPU pools → active-learning feedback loop) is a separate auto-scaling architecture; see ADR 0010 and the "Auto-scaling ML pipeline" section below.
+
+#### LLM cascade — fine-tuned for bulk, frontier model for edge cases
+
+The fine-tuned Gemma 4 adapter is the right tool for the **bulk** of generative work — in-distribution summaries and action items where it's cheap, fast, and self-hosted. It's the wrong tool for **edge cases**: out-of-distribution meetings (new product domains, languages), long-context reasoning across an account's history, world-knowledge-dependent comparisons, and high-stakes outputs that warrant a second opinion. For those, we route to a frontier model (Claude / GPT-4 / Gemini Pro) as Tier 2.
+
+```mermaid
+flowchart LR
+    In["meeting input"] --> Rules["📏 Rules<br/>categorization · extraction"]
+    Rules --> T1{"Tier 1<br/>fine-tuned Gemma 4<br/>vLLM + LoRA hot-swap"}
+    T1 --> Conf{"confidence<br/>signals OK?"}
+    Conf -->|yes (~95% of traffic)| Out1["🚀 ship<br/>~150 ms · $0 marginal"]
+    Conf -->|no| Guard{"PII redaction +<br/>per-tenant policy<br/>+ daily $ budget"}
+    Guard -->|allow| T2["🌐 Tier 2 frontier model<br/>(Claude/GPT-4/Gemini)<br/>via gateway"]
+    Guard -->|deny| Fallback["return Tier-1 result<br/>flagged 'low confidence'"]
+    T2 --> Cache[("response cache<br/>(input hash → output)")]
+    Cache --> Out2["✅ ship<br/>~1–3 s · $0.005–0.05 / call"]
+    T2 --> Train[("active-learning queue<br/>→ next Gemma fine-tune")]
+
+    classDef fast fill:#e8f5e9,stroke:#2e7d32,color:#0d2235
+    classDef slow fill:#f3e5f5,stroke:#6a1b9a,color:#1a0628
+    classDef guard fill:#fffbe6,stroke:#a06b00,color:#3d2a00
+    class Rules,T1,Out1 fast
+    class T2,Out2 slow
+    class Guard,Fallback guard
+```
+
+**Escalation triggers** (any one fires → Tier 2):
+- Generation perplexity above a tuned threshold (Gemma is uncertain).
+- LLM-as-judge score below threshold on the Tier-1 output (we already use this signal for active-learning).
+- Out-of-distribution flag — input embedding far from the training distribution centroid.
+- Operator-flagged or product-flagged categories (e.g., legal, executive briefs) configured in `runtime_settings`.
+- Long-context jobs (>8k tokens of input or multi-meeting joint analysis) — Gemma's context is too short, route directly.
+
+**Guardrails before any external call** — every escalation goes through a gateway that enforces:
+- **PII redaction** (regex + spaCy NER) before the payload leaves the perimeter.
+- **Per-tenant policy** — customers requiring data residency or no-third-party-LLM are blocked at this hop and get the Tier-1 result flagged "low confidence."
+- **Daily $ budget cap** per tenant; over budget → Tier-1 result + alert.
+- **Response cache** keyed on `(input hash, prompt version)` — identical inputs don't re-pay.
+- **Audit log** entry per call (which model, latency, $ cost, redaction summary).
+
+**Closing the loop with active learning.** Every Tier-2 escalation is a high-signal training example: the production data point Gemma struggled on plus a frontier-model reference output. Those flow into the active-learning queue (ADR 0010) and become the next Gemma fine-tune. Tier-2 traffic share is the headline metric for this loop — when it trends down for a category, Gemma has learned that pattern and the cost decays.
+
+**Why not "frontier-only"?** At the volume envelope this system targets (millions to 100M+ meetings), running every meeting through a frontier API is cost-prohibitive ($1k–$1M/day) and creates a hard third-party dependency on the latency-critical path. The cascade gives ~95% of the cost economics of self-hosting *and* the quality ceiling of frontier models on the 5% that needs it.
+
+> The frontier-LLM gateway is a **planned** addition (the diagram and rationale belong in this doc so the architecture target is unambiguous). It is not yet implemented — see ADR 0012 for the decision record and rollout plan.
 
 ---
 
