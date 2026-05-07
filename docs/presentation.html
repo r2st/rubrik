@@ -57,15 +57,19 @@
     position: absolute;
     inset: 0;
     padding: 56px 64px 80px;
-    display: none;
+    display: flex;
     flex-direction: column;
     overflow: auto;
-    animation: fadein 220ms ease-out;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 200ms ease-out;
   }
-  .slide.active { display: flex; }
-  @keyframes fadein {
-    from { opacity: 0; transform: translateY(8px); }
-    to   { opacity: 1; transform: none; }
+  /* All slides stay in the layout so Mermaid can measure them on init.
+     Visibility is toggled via opacity + pointer-events instead of display. */
+  .slide.active {
+    opacity: 1;
+    pointer-events: auto;
+    z-index: 1;
   }
 
   /* ---------- slide content ---------- */
@@ -160,6 +164,21 @@
     text-align: center;
   }
   .diagram svg { max-width: 100%; height: auto; }
+  .mermaid {
+    /* Reset — defaults from prose styling above must not bleed in. */
+    background: transparent;
+    color: var(--ink);
+    border: 0;
+    padding: 0;
+    margin: 0;
+    overflow: visible;
+    line-height: 1.4;
+    font-family: inherit;
+  }
+  /* Hide the source DSL text until Mermaid replaces it with SVG. Once
+     Mermaid runs it injects a <svg> element; the CSS below keeps that
+     visible while the raw text node stays hidden via JS-set display. */
+  .mermaid:not([data-processed="true"]) { visibility: hidden; }
 
   /* ---------- chrome ---------- */
   .chrome {
@@ -246,7 +265,15 @@
   /* print mode — every slide visible top to bottom */
   @media print {
     html, body { overflow: visible; height: auto; }
-    .slide { display: flex !important; position: relative; height: auto; min-height: 100vh; page-break-after: always; }
+    .slide {
+      display: flex !important;
+      position: relative;
+      height: auto;
+      min-height: 100vh;
+      opacity: 1 !important;          /* override the opacity-based hiding */
+      pointer-events: auto !important;
+      page-break-after: always;
+    }
     .chrome, .toc { display: none !important; }
   }
 </style>
@@ -340,7 +367,7 @@
       <div class="body">
         <h2>System overview</h2>
         <p class="lead">Five tiers, two cross-cutting concerns. Each tier depends only on the tiers below.</p>
-        <div class="diagram"><pre class="mermaid">
+        <div class="diagram"><div class="mermaid">
 flowchart TB
     UI["🧑‍💻 Presentation<br/>web dashboard · /admin · Jupyter"]
     API["🌐 API · /api/v1/*<br/>routers + middleware stack + state cache"]
@@ -367,7 +394,7 @@ flowchart TB
     class UI,API,Core,Ingest,Persist tier
     class Cfg,Obs cross
     class Sources src
-        </pre></div>
+        </div></div>
       </div>
     </section>
 
@@ -376,7 +403,7 @@ flowchart TB
       <div class="body">
         <h2>What happens to a meeting</h2>
         <p class="lead">Three parallel enrichment passes converge into the insight functions, get cached, and serve through HTTP with ETag.</p>
-        <div class="diagram"><pre class="mermaid">
+        <div class="diagram"><div class="mermaid">
 flowchart LR
     JSON[("meeting/<br/>6 JSON files")]
     Repo["repository.get(id)<br/>→ Meeting"]
@@ -400,7 +427,7 @@ flowchart LR
     class JSON,Repo,DF raw
     class Cat,Sent,Clu,Ins enrich
     class Cache,HTTP serve
-        </pre></div>
+        </div></div>
         <p class="small">After warm-up, identical reads hit the in-memory cache + the HTTP <code>If-None-Match</code> path → 304 Not Modified, no recomputation.</p>
       </div>
     </section>
@@ -483,7 +510,7 @@ flowchart LR
       <div class="body">
         <h2>Auto-scaling the ML pipeline</h2>
         <p class="lead">ADR 0010. Each layer scales independently — same trainer logic.</p>
-        <div class="diagram"><pre class="mermaid">
+        <div class="diagram"><div class="mermaid">
 flowchart LR
     Kafka[("Kafka stream")]
     Iceberg[("Iceberg<br/>versioned datasets")]
@@ -502,7 +529,7 @@ flowchart LR
     class Kafka,Iceberg,RayData data
     class Train,Adapter train
     class vLLM,Active serve
-        </pre></div>
+        </div></div>
         <p class="small">v3 fine-tune (E4B + LoRA r16/α32, 3 epochs): train loss 0.37, val 1.01, ROUGE-L 0.394, $1.40 / 28 min on a single H100.</p>
       </div>
     </section>
@@ -655,22 +682,51 @@ gemma-finetune/     — QLoRA recipes</code></pre>
 
   <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js"></script>
   <script>
+    // Use `base` theme when overriding themeVariables — pairing with
+    // `dark` causes the variables to be ignored. `securityLevel: loose`
+    // is needed for the htmlLabels flag (we use <br/> in node text).
     mermaid.initialize({
-      startOnLoad: true,
-      theme: 'dark',
+      startOnLoad: false,
+      theme: 'base',
+      securityLevel: 'loose',
       themeVariables: {
-        primaryColor: '#161b22',
-        primaryTextColor: '#e6edf3',
+        primaryColor:       '#1f242c',
+        primaryTextColor:   '#e6edf3',
         primaryBorderColor: '#58a6ff',
-        lineColor: '#8b949e',
-        textColor: '#e6edf3',
-        background: '#0d1117',
-        mainBkg: '#1f242c',
-        secondaryColor: '#1f242c',
-        tertiaryColor: '#1f242c'
+        secondaryColor:     '#1f242c',
+        secondaryTextColor: '#e6edf3',
+        secondaryBorderColor:'#8b949e',
+        tertiaryColor:      '#161b22',
+        tertiaryTextColor:  '#e6edf3',
+        tertiaryBorderColor:'#30363d',
+        lineColor:          '#8b949e',
+        textColor:          '#e6edf3',
+        background:         '#0d1117',
+        mainBkg:            '#1f242c',
+        nodeBkg:            '#1f242c',
+        nodeBorder:         '#58a6ff',
+        clusterBkg:         '#161b22',
+        clusterBorder:      '#30363d',
+        edgeLabelBackground:'#161b22'
       },
-      flowchart: { htmlLabels: true, curve: 'basis' }
+      flowchart: { htmlLabels: true, curve: 'basis', useMaxWidth: true }
     });
+
+    // Render explicitly once the DOM is ready. With `startOnLoad: false`
+    // we drive the run ourselves, which works regardless of whether
+    // individual slides are currently the active one.
+    async function renderDiagrams() {
+      try {
+        await mermaid.run({ querySelector: '.mermaid' });
+      } catch (e) {
+        console.error('Mermaid render failed:', e);
+      }
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', renderDiagrams);
+    } else {
+      renderDiagrams();
+    }
 
     const slides = Array.from(document.querySelectorAll('.slide'));
     const total = slides.length;
