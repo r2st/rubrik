@@ -17,6 +17,7 @@ Format: lightly adapted [Nygard ADR](https://cognitect.com/blog/2011/11/15/docum
 | 0007 | [Use sentence-level sentiment trajectories](0007-sentence-level-sentiment-trajectories.md) | Accepted | 2026-04-22 |
 | 0008 | [Data layer for 100M+ records — tiered storage](0008-data-layer-for-scale.md) | Accepted | 2026-05-06 |
 | 0009 | [Admin panel + runtime config — no env vars for app config](0009-admin-panel-for-runtime-config.md) | Accepted | 2026-05-06 |
+| 0010 | [Auto-scaling ML pipeline — data, training, serving](0010-auto-scaling-ml-pipeline.md) | Accepted | 2026-05-06 |
 
 ## When to write a new ADR
 

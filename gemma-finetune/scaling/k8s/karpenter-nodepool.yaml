@@ -1,0 +1,93 @@
+# Karpenter NodePools for cost-optimized GPU autoscaling.
+#
+# Three pools, one per workload class:
+#   - gpu-h100-spot : training workloads, spot-tolerant via Ray checkpoint resume
+#   - gpu-l4        : online inference, on-demand for stability
+#   - cpu-on-demand : Ray heads, data-prep workers, active-learning workers
+
+---
+# ---------------------------------------------------------------------------
+# H100 spot — training only. Karpenter consolidates these aggressively;
+# RayJobs are spot-tolerant, so interruptions cost at most one epoch.
+# ---------------------------------------------------------------------------
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata: {name: gpu-h100-spot}
+spec:
+  template:
+    metadata:
+      labels: {workload: ml-training}
+    spec:
+      requirements:
+      - {key: karpenter.k8s.aws/instance-family,    operator: In,    values: [p5]}
+      - {key: karpenter.k8s.aws/instance-gpu-name,  operator: In,    values: [h100]}
+      - {key: karpenter.sh/capacity-type,           operator: In,    values: [spot]}
+      - {key: kubernetes.io/arch,                   operator: In,    values: [amd64]}
+      taints:
+      - {key: nvidia.com/gpu, value: "true", effect: NoSchedule}
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: gpu-h100
+  limits:
+    cpu: "1024"
+    nvidia.com/gpu: 64           # cap blast radius during runaway scale
+  disruption:
+    consolidationPolicy: WhenEmpty             # drop nodes when no pods
+    consolidateAfter: 60s
+    expireAfter: 168h                          # weekly node refresh
+
+---
+# ---------------------------------------------------------------------------
+# L4 on-demand — inference. Cheaper per-hour than H100 (~10×), plenty for
+# 4B model serving with vLLM. On-demand for SLA stability — we don't want
+# user-facing requests evicted mid-flight.
+# ---------------------------------------------------------------------------
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata: {name: gpu-l4}
+spec:
+  template:
+    metadata:
+      labels: {workload: ml-serving}
+    spec:
+      requirements:
+      - {key: karpenter.k8s.aws/instance-family,    operator: In,    values: [g6]}
+      - {key: karpenter.k8s.aws/instance-gpu-name,  operator: In,    values: [l4]}
+      - {key: karpenter.sh/capacity-type,           operator: In,    values: [on-demand]}
+      taints:
+      - {key: nvidia.com/gpu, value: "true", effect: NoSchedule}
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: gpu-l4
+  limits:
+    nvidia.com/gpu: 24
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 30s
+    expireAfter: 720h                          # monthly refresh; serving runs hot
+
+---
+# ---------------------------------------------------------------------------
+# CPU on-demand — Ray heads, data-prep, active-learning workers, control
+# plane. Cheap, fast scale, no GPU.
+# ---------------------------------------------------------------------------
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata: {name: cpu-on-demand}
+spec:
+  template:
+    metadata: {labels: {workload: control}}
+    spec:
+      requirements:
+      - {key: karpenter.k8s.aws/instance-family,  operator: In,    values: [m7i, c7i]}
+      - {key: karpenter.sh/capacity-type,         operator: In,    values: [on-demand]}
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: cpu-default
+  limits: {cpu: "256"}
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 30s

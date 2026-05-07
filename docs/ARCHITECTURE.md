@@ -351,8 +351,51 @@ flowchart LR
 - Sentiment trajectory math — see ADR 0007
 - The 6 insight functions — they run against repository interfaces, swappable backend
 - The admin panel + runtime settings store — operates on the same Postgres at any scale
+- The Gemma 4 fine-tuning **recipe** — only the orchestration layer changes (single H100 → multi-node FSDP via Ray Train; see ADR 0010)
 
 Migration is incremental: each step in [ADR 0008](adr/0008-data-layer-for-scale.md#migration-path-concrete-sequential) is independently shippable, none requires a wholesale rewrite. The current SQLite + SQLAlchemy code is the foundation — change `bootstrap.toml`'s database URL to Postgres and step #2 is done.
+
+---
+
+## Auto-scaling ML pipeline (training + serving)
+
+The Gemma 4 fine-tune in [ADR 0003](adr/0003-self-host-summarization-with-gemma-4.md) was deliberately small — 95 meetings on a single H100, $1.40 wall-clock cost. That's the workshop recipe. **Production scales every layer independently** without changing the trainer logic:
+
+```mermaid
+flowchart LR
+    subgraph Data["DATA — Ray Data on KubeRay (autoscale 0..N CPU)"]
+        Kafka[Kafka stream] --> Prep[Streaming dedup,<br/>quality, multi-task]
+        Prep --> Iceberg[(Iceberg<br/>versioned datasets)]
+    end
+    subgraph Train["TRAINING — KubeRay + FSDP (autoscale 0..N H100, spot OK)"]
+        Iceberg --> Job[Ray Train · 8× H100<br/>FSDP shards 9B+ models]
+        Job --> Adapter[(LoRA adapter<br/>~30 MB to S3)]
+    end
+    subgraph Serve["SERVING — vLLM (autoscale 0..N L4, on-demand)"]
+        Adapter --> vLLM[vLLM pod · multi-LoRA hot-swap]
+        vLLM --> HPA{HPA on<br/>queue depth +<br/>KV-cache %}
+        HPA --> NodePool[Karpenter GPU<br/>NodePool]
+    end
+    subgraph Loop["ACTIVE LEARNING (autoscale on Kafka lag)"]
+        Live[Production inferences] -->|low confidence| Judge[Claude / GPT-4-class<br/>LLM-as-judge]
+        Judge -->|labels| Queue[(Training queue)]
+        Queue --> Iceberg
+    end
+    Serve --> Live
+```
+
+Each layer scales on the **right signal** and stops at zero when idle:
+
+| Layer | Scales on | Floor | Ceiling |
+|---|---|---|---|
+| Data prep | Kafka lag | 0 workers | Kafka-bound |
+| Training | Job submission | 0 H100 nodes (spot OK) | Per-job request |
+| Serving | `vllm_pending_requests` + `vllm_gpu_cache_usage_perc` | 1 always-warm L4 pod | Queue-bound |
+| Active learning | Pending labels | 0 workers | Daily LLM-judge budget |
+
+Code skeletons + production K8s manifests live in [`gemma-finetune/scaling/`](../gemma-finetune/scaling/README.md). The single-H100 recipe stays as the local-development entry point; the same trainer logic runs on a 32-GPU cluster via Ray Train. **The recipe doesn't change. The substrate does.**
+
+See [ADR 0010](adr/0010-auto-scaling-ml-pipeline.md) for the full architecture, cost math, and decision rationale.
 
 ---
 

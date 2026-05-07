@@ -659,8 +659,72 @@ footer code {
 - Categorization cascade (rules → classifier → LLM) — see ADR 0002
 - Sentiment trajectory math — see ADR 0007
 - The 6 insight functions — they run against repository interfaces, swappable backend
-- The admin panel + runtime settings store — operates on the same Postgres at any scale</p>
+- The admin panel + runtime settings store — operates on the same Postgres at any scale
+- The Gemma 4 fine-tuning <strong>recipe</strong> — only the orchestration layer changes (single H100 → multi-node FSDP via Ray Train; see ADR 0010)</p>
 <p>Migration is incremental: each step in <a href="adr/0008-data-layer-for-scale.md#migration-path-concrete-sequential">ADR 0008</a> is independently shippable, none requires a wholesale rewrite. The current SQLite + SQLAlchemy code is the foundation — change <code>bootstrap.toml</code>'s database URL to Postgres and step #2 is done.</p>
+<hr />
+<h2 id="auto-scaling-ml-pipeline-training-serving">Auto-scaling ML pipeline (training + serving)<a class="anchor" href="#auto-scaling-ml-pipeline-training-serving" title="Permanent link">¶</a></h2>
+<p>The Gemma 4 fine-tune in <a href="adr/0003-self-host-summarization-with-gemma-4.md">ADR 0003</a> was deliberately small — 95 meetings on a single H100, $1.40 wall-clock cost. That's the workshop recipe. <strong>Production scales every layer independently</strong> without changing the trainer logic:</p>
+<div class="mermaid">flowchart LR
+    subgraph Data["DATA — Ray Data on KubeRay (autoscale 0..N CPU)"]
+        Kafka[Kafka stream] --> Prep[Streaming dedup,<br/>quality, multi-task]
+        Prep --> Iceberg[(Iceberg<br/>versioned datasets)]
+    end
+    subgraph Train["TRAINING — KubeRay + FSDP (autoscale 0..N H100, spot OK)"]
+        Iceberg --> Job[Ray Train · 8× H100<br/>FSDP shards 9B+ models]
+        Job --> Adapter[(LoRA adapter<br/>~30 MB to S3)]
+    end
+    subgraph Serve["SERVING — vLLM (autoscale 0..N L4, on-demand)"]
+        Adapter --> vLLM[vLLM pod · multi-LoRA hot-swap]
+        vLLM --> HPA{HPA on<br/>queue depth +<br/>KV-cache %}
+        HPA --> NodePool[Karpenter GPU<br/>NodePool]
+    end
+    subgraph Loop["ACTIVE LEARNING (autoscale on Kafka lag)"]
+        Live[Production inferences] -->|low confidence| Judge[Claude / GPT-4-class<br/>LLM-as-judge]
+        Judge -->|labels| Queue[(Training queue)]
+        Queue --> Iceberg
+    end
+    Serve --> Live</div>
+
+<p>Each layer scales on the <strong>right signal</strong> and stops at zero when idle:</p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Scales on</th>
+<th>Floor</th>
+<th>Ceiling</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Data prep</td>
+<td>Kafka lag</td>
+<td>0 workers</td>
+<td>Kafka-bound</td>
+</tr>
+<tr>
+<td>Training</td>
+<td>Job submission</td>
+<td>0 H100 nodes (spot OK)</td>
+<td>Per-job request</td>
+</tr>
+<tr>
+<td>Serving</td>
+<td><code>vllm_pending_requests</code> + <code>vllm_gpu_cache_usage_perc</code></td>
+<td>1 always-warm L4 pod</td>
+<td>Queue-bound</td>
+</tr>
+<tr>
+<td>Active learning</td>
+<td>Pending labels</td>
+<td>0 workers</td>
+<td>Daily LLM-judge budget</td>
+</tr>
+</tbody>
+</table>
+<p>Code skeletons + production K8s manifests live in <a href="../gemma-finetune/scaling/README.md"><code>gemma-finetune/scaling/</code></a>. The single-H100 recipe stays as the local-development entry point; the same trainer logic runs on a 32-GPU cluster via Ray Train. <strong>The recipe doesn't change. The substrate does.</strong></p>
+<p>See <a href="adr/0010-auto-scaling-ml-pipeline.md">ADR 0010</a> for the full architecture, cost math, and decision rationale.</p>
 <hr />
 <h2 id="admin-panel-runtime-configuration-without-env-vars">Admin panel — runtime configuration without env vars<a class="anchor" href="#admin-panel-runtime-configuration-without-env-vars" title="Permanent link">¶</a></h2>
 <p>Operationally-tunable knobs (rate limits, churn-risk weights, feature flags, the auth API key) live in a database-backed settings store. Operators change them through <code>/admin</code> — every change is audited.</p>
@@ -767,7 +831,7 @@ footer code {
   Generated from <code>docs/ARCHITECTURE.md</code>
 </footer>
 </main>
-<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#design-principles" class="h2">Design principles</a></li><li><a href="#system-overview" class="h2">System overview</a></li><li><a href="#module-dependencies" class="h2">Module dependencies</a></li><li><a href="#data-model" class="h2">Data model</a></li><li><a href="#pipeline-stages" class="h2">Pipeline stages</a></li><li><a href="#interface-layering" class="h2">Interface layering</a></li><li><a href="#validation-flow" class="h2">Validation flow</a></li><li><a href="#api-request-lifecycle" class="h2">API request lifecycle</a></li><li><a href="#scaling-to-100m-records" class="h2">Scaling to 100M+ records</a></li><li><a href="#admin-panel-runtime-configuration-without-env-vars" class="h2">Admin panel — runtime configuration without env vars</a></li><li><a href="#performance-caching" class="h2">Performance &amp; caching</a></li><li><a href="#extensibility" class="h2">Extensibility</a></li></ul></aside>
+<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#design-principles" class="h2">Design principles</a></li><li><a href="#system-overview" class="h2">System overview</a></li><li><a href="#module-dependencies" class="h2">Module dependencies</a></li><li><a href="#data-model" class="h2">Data model</a></li><li><a href="#pipeline-stages" class="h2">Pipeline stages</a></li><li><a href="#interface-layering" class="h2">Interface layering</a></li><li><a href="#validation-flow" class="h2">Validation flow</a></li><li><a href="#api-request-lifecycle" class="h2">API request lifecycle</a></li><li><a href="#scaling-to-100m-records" class="h2">Scaling to 100M+ records</a></li><li><a href="#auto-scaling-ml-pipeline-training-serving" class="h2">Auto-scaling ML pipeline (training + serving)</a></li><li><a href="#admin-panel-runtime-configuration-without-env-vars" class="h2">Admin panel — runtime configuration without env vars</a></li><li><a href="#performance-caching" class="h2">Performance &amp; caching</a></li><li><a href="#extensibility" class="h2">Extensibility</a></li></ul></aside>
 </div>
 <script
   src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"

@@ -1,0 +1,100 @@
+# vLLM serving for Gemma 4 with multi-tenant LoRA hot-swap.
+#
+# A single base model (gemma-4-E4B-it) loaded once per pod; multiple LoRA
+# adapters loaded simultaneously via vLLM's --enable-lora. Per-tenant fine-
+# tunes serve from the same pod by routing to the right adapter name.
+#
+# Auto-scales on `vllm_pending_requests` and `vllm_gpu_cache_usage_perc` —
+# see hpa.yaml.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: gemma-serving
+  namespace: ml-serving
+spec:
+  selector: {app: gemma-serving}
+  ports:
+  - {name: http, port: 80, targetPort: 8000}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gemma-serving
+  namespace: ml-serving
+  labels: {app: gemma-serving}
+spec:
+  replicas: 1                      # HPA overrides; minReplicas: 1 always-warm
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  selector:
+    matchLabels: {app: gemma-serving}
+  template:
+    metadata:
+      labels: {app: gemma-serving}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Inference uses cheaper L4 GPUs; H100s reserved for training only.
+      nodeSelector:
+        karpenter.sh/nodepool: gpu-l4
+      tolerations:
+      - {key: nvidia.com/gpu, operator: Exists, effect: NoSchedule}
+      terminationGracePeriodSeconds: 90    # let in-flight requests drain
+      containers:
+      - name: vllm
+        image: vllm/vllm-openai:0.5.4
+        args:
+        - --model=unsloth/gemma-4-E4B-it
+        - --enable-lora
+        # Adapters loaded per LoRA pull from S3; production list comes from
+        # a configmap synced by the model-registry sidecar.
+        - --lora-modules
+        - v3-prod=s3://ti-models/lora/v3-e4b-allrec
+        - tenant-acme=s3://ti-models/lora/tenant-acme
+        - tenant-globex=s3://ti-models/lora/tenant-globex
+        - --max-num-batched-tokens=8192
+        - --max-num-seqs=64
+        - --gpu-memory-utilization=0.85
+        - --quantization=fp8                  # if base model + GPU support it
+        - --enforce-eager=false               # CUDA graphs on
+        - --disable-log-requests              # high-volume; logs go via OTel
+        ports:
+        - {name: http,    containerPort: 8000}
+        - {name: metrics, containerPort: 8000}    # vLLM exposes /metrics on http port
+        resources:
+          requests: {cpu: "8", memory: "32Gi", nvidia.com/gpu: 1}
+          limits:   {cpu: "16", memory: "64Gi", nvidia.com/gpu: 1}
+        readinessProbe:
+          httpGet: {path: /health, port: http}
+          initialDelaySeconds: 30           # base-model load takes ~25s
+          periodSeconds: 5
+        livenessProbe:
+          httpGet: {path: /health, port: http}
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          failureThreshold: 6
+        volumeMounts:
+        - {name: model-cache, mountPath: /root/.cache/huggingface}
+        - {name: shm,         mountPath: /dev/shm}
+      volumes:
+      # Persistent EBS holds the base model; a fresh pod reuses it →
+      # cold start drops from ~30s to ~5s. Falls back to S3 if cache miss.
+      - name: model-cache
+        persistentVolumeClaim: {claimName: gemma-base-cache}
+      - name: shm
+        emptyDir: {medium: Memory, sizeLimit: 4Gi}
+
+---
+# Pod disruption budget — never let HPA / node-rebalancing cull all pods
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: gemma-serving-pdb, namespace: ml-serving}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: gemma-serving}

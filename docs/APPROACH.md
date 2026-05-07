@@ -96,6 +96,10 @@ Four iterations, recommended adapter is **v3-e4b-allrec**. Full methodology in [
 
 **Adopt the v3 Gemma 4 adapter for production summarization.** The economics are compelling — $1.40 to train, $0 per inference, fully self-hosted, output style locked in. Vendor APIs are reasonable as a stopgap during early onboarding when speed-to-market beats lock-in concerns, but the long-term answer is the self-hosted model.
 
+### Scaling the recipe
+
+The single-H100 workshop run scales to multi-node training (Ray Train + FSDP) and an autoscaled vLLM serving fleet without changing the trainer logic — only the orchestration wrapper. Active learning closes the loop: production traffic generates the next training set automatically. Full architecture in [ADR 0010](adr/0010-auto-scaling-ml-pipeline.md); code + K8s manifests in [`gemma-finetune/scaling/`](../gemma-finetune/scaling/README.md).
+
 ```mermaid
 flowchart LR
     Trans[Transcript] --> Pipe{Summary source}

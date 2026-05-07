@@ -4,6 +4,8 @@ QLoRA fine-tunes of Gemma 4 (E2B and E4B) on the Rubrik meeting-transcripts data
 
 Trained on a Nebius H100 (80 GB). Four iterations — recommended adapter is `v3-e4b-allrec`.
 
+> **Production scaling:** the workshop recipe in `code/finetune_v3.py` is single-host. The production-scale path (Ray Data streaming pipeline, multi-node FSDP training, autoscaled vLLM serving with multi-tenant LoRA hot-swap, active-learning loop) lives in [`scaling/`](scaling/README.md) and is documented in [ADR 0010](../docs/adr/0010-auto-scaling-ml-pipeline.md).
+
 ---
 
 ## TL;DR

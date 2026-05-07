@@ -397,7 +397,7 @@ footer code {
 </tr>
 </tbody>
 </table>
-<p>Plus a separate experiment in <a href="gemma-finetune/README.md"><code>gemma-finetune/</code></a>: fine-tunes <strong>Gemma 4 (E4B)</strong> on the dataset's gold summaries to demonstrate a self-hosted alternative to vendor LLM APIs ($1.40 training cost, ROUGE-L 0.39 vs 0.29 baseline). See <a href="docs/APPROACH.md#2-summarization--action-items">APPROACH §Summarization</a> for the verdict.</p>
+<p>Plus a separate experiment in <a href="gemma-finetune/README.md"><code>gemma-finetune/</code></a>: fine-tunes <strong>Gemma 4 (E4B)</strong> on the dataset's gold summaries to demonstrate a self-hosted alternative to vendor LLM APIs ($1.40 training cost, ROUGE-L 0.39 vs 0.29 baseline). See <a href="docs/APPROACH.md#2-summarization--action-items">APPROACH §Summarization</a> for the verdict, and <a href="gemma-finetune/scaling/README.md"><code>gemma-finetune/scaling/</code></a> + <a href="docs/adr/0010-auto-scaling-ml-pipeline.md">ADR 0010</a> for the production auto-scaling architecture (Ray Train + FSDP for training, vLLM + HPA for serving, active learning for continuous improvement).</p>
 <h2 id="headline-findings">Headline findings<a class="anchor" href="#headline-findings" title="Permanent link">¶</a></h2>
 <table>
 <thead>

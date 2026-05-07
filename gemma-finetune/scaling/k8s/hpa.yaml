@@ -1,0 +1,66 @@
+# Horizontal Pod Autoscaler for the Gemma vLLM serving deployment.
+#
+# Scales on TWO real signals from vLLM's Prometheus endpoint, exposed via the
+# prometheus-adapter as External metrics:
+#
+#   - vllm_pending_requests        : direct saturation signal (requests queued)
+#   - vllm_gpu_cache_usage_perc    : KV-cache pressure — catches the case
+#                                    where GPU utilization is high but the pod
+#                                    is cache-thrashing (not actually serving)
+#
+# CPU/RAM targets are useless for GPU inference. Don't add them.
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gemma-serving
+  namespace: ml-serving
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gemma-serving
+
+  minReplicas: 1            # always-warm baseline; first request never hits cold pod
+  maxReplicas: 24           # ceiling — beyond this, scale the node pool too
+
+  metrics:
+  # 1. Direct saturation — if requests are queueing, we need capacity now
+  - type: External
+    external:
+      metric:
+        name: vllm_pending_requests
+        selector:
+          matchLabels: {app: gemma-serving}
+      target:
+        type: AverageValue
+        averageValue: "5"     # avg 5 queued per pod → scale up
+
+  # 2. KV-cache pressure — independent signal, catches a different failure mode
+  - type: External
+    external:
+      metric:
+        name: vllm_gpu_cache_usage_perc
+        selector:
+          matchLabels: {app: gemma-serving}
+      target:
+        type: AverageValue
+        averageValue: "70"    # avg 70% cache util → scale up
+
+  behavior:
+    scaleUp:
+      # React fast to bursts — typical use is bursty (working hours) so we
+      # accept some over-provisioning during ramp.
+      stabilizationWindowSeconds: 0
+      policies:
+      - {type: Pods, value: 4, periodSeconds: 30}        # +4 pods every 30s
+      - {type: Percent, value: 100, periodSeconds: 60}   # or double, whichever wins
+      selectPolicy: Max
+
+    scaleDown:
+      # Slow scale-down — avoid thrashing during traffic dips
+      stabilizationWindowSeconds: 300                    # 5min stabilization window
+      policies:
+      - {type: Percent, value: 25, periodSeconds: 60}    # drop 25% per minute, max
+      - {type: Pods, value: 2, periodSeconds: 60}        # or 2 pods, whichever's less
+      selectPolicy: Min

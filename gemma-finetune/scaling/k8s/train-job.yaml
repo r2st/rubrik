@@ -1,0 +1,81 @@
+# KubeRay job for distributed Gemma 4 fine-tuning.
+#
+# 8× H100 across 8 nodes, FSDP-sharded base model, LoRA adapters checkpointed
+# to S3. Spot-tolerant via Ray's auto-resume; auto-cleans up GPU nodes on
+# completion via Karpenter (see karpenter-nodepool.yaml).
+#
+# Submit:
+#   kubectl apply -f train-job.yaml
+#   ray job submit --address=$(kubectl get rayjob gemma4-train -o jsonpath='{.status.dashboardURL}') \
+#       --working-dir=. -- python -m gemma_finetune.scaling.train_distributed \
+#       --num-workers 8 --gpus-per-worker 4 \
+#       --dataset s3://ti-iceberg/training_sets/v=2026-05-06 \
+#       --output s3://ti-models/gemma4/v5
+
+apiVersion: ray.io/v1
+kind: RayJob
+metadata:
+  name: gemma4-train
+  namespace: ml-training
+spec:
+  shutdownAfterJobFinishes: true       # KubeRay tears down the cluster on success
+  ttlSecondsAfterFinished: 600
+  rayClusterSpec:
+    rayVersion: "2.20.0"
+
+    headGroupSpec:
+      rayStartParams:
+        dashboard-host: "0.0.0.0"
+      template:
+        spec:
+          serviceAccountName: ray-job-runner
+          nodeSelector:
+            karpenter.sh/nodepool: cpu-on-demand   # head pod on cheap CPU
+          containers:
+          - name: ray-head
+            image: ti/gemma-train:0.5.0       # custom image — Ray + unsloth + transformers
+            resources:
+              requests: {cpu: "2", memory: "8Gi"}
+              limits:   {cpu: "4", memory: "16Gi"}
+            env:
+            - {name: AWS_REGION, value: "us-west-2"}
+            - {name: MLFLOW_TRACKING_URI, value: "http://mlflow.platform.svc:5000"}
+
+    workerGroupSpecs:
+    - replicas: 8                              # 8 GPU nodes
+      minReplicas: 0
+      maxReplicas: 16
+      groupName: gpu-workers
+      rayStartParams:
+        num-gpus: "4"
+      template:
+        spec:
+          # Karpenter provisions H100 instances on demand for this nodepool;
+          # spot is acceptable because Ray restarts from the last checkpoint.
+          nodeSelector:
+            karpenter.sh/nodepool: gpu-h100-spot
+          tolerations:
+          - {key: nvidia.com/gpu,        operator: Exists,            effect: NoSchedule}
+          - {key: karpenter.sh/disrupted, operator: Exists,            effect: NoSchedule}
+          containers:
+          - name: ray-worker
+            image: ti/gemma-train:0.5.0
+            resources:
+              requests: {cpu: "16", memory: "200Gi", nvidia.com/gpu: 4}
+              limits:   {cpu: "32", memory: "400Gi", nvidia.com/gpu: 4}
+            env:
+            - {name: NCCL_IB_HCA,     value: "mlx5"}
+            - {name: NCCL_SOCKET_IFNAME, value: "eth0"}
+            - {name: NCCL_DEBUG,      value: "INFO"}
+            volumeMounts:
+            - {name: shm,             mountPath: /dev/shm}
+          volumes:
+          - name: shm
+            emptyDir: {medium: Memory, sizeLimit: 32Gi}
+
+  # The actual training command — submitted as a Ray job, not run on head pod
+  entrypoint: |
+    python -m gemma_finetune.scaling.train_distributed \
+      --num-workers 8 --gpus-per-worker 4 \
+      --dataset s3://ti-iceberg/training_sets/latest \
+      --output s3://ti-models/gemma4/$(date +%Y%m%d-%H%M%S)
