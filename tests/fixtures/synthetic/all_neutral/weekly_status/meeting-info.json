@@ -1,0 +1,25 @@
+{
+  "meetingId": "weekly_status",
+  "title": "Weekly Engineering Standup",
+  "organizerEmail": "lead@aegiscloud.com",
+  "host": "lead@aegiscloud.com",
+  "startTime": "2026-04-15T10:00:00.000Z",
+  "endTime": "2026-04-15T10:10:00.000Z",
+  "duration": 45.0,
+  "allEmails": [
+    "lead@aegiscloud.com",
+    "enga@aegiscloud.com",
+    "engb@aegiscloud.com",
+    "engc@aegiscloud.com",
+    "engd@aegiscloud.com",
+    "pm@aegiscloud.com"
+  ],
+  "invitees": [
+    "lead@aegiscloud.com",
+    "enga@aegiscloud.com",
+    "engb@aegiscloud.com",
+    "engc@aegiscloud.com",
+    "engd@aegiscloud.com",
+    "pm@aegiscloud.com"
+  ]
+}

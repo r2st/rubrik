@@ -1,0 +1,44 @@
+{
+  "data": [
+    {
+      "sentence": "Looking back at Q1, the March outage was the only major event.",
+      "speaker_name": "Rep",
+      "sentimentType": "neutral",
+      "speaker_id": 0,
+      "time": 0.0,
+      "endTime": 4.0,
+      "averageConfidence": 0.92,
+      "index": 0
+    },
+    {
+      "sentence": "We've been stable since then, six clean months.",
+      "speaker_name": "Customer",
+      "sentimentType": "positive",
+      "speaker_id": 1,
+      "time": 4.5,
+      "endTime": 7.17,
+      "averageConfidence": 0.92,
+      "index": 1
+    },
+    {
+      "sentence": "Right \u2014 and the redundant infrastructure work prevented the May aftershock.",
+      "speaker_name": "Rep",
+      "sentimentType": "positive",
+      "speaker_id": 0,
+      "time": 7.67,
+      "endTime": 11.33,
+      "averageConfidence": 0.92,
+      "index": 2
+    },
+    {
+      "sentence": "Service has been excellent through Q2.",
+      "speaker_name": "Customer",
+      "sentimentType": "positive",
+      "speaker_id": 1,
+      "time": 11.83,
+      "endTime": 13.83,
+      "averageConfidence": 0.92,
+      "index": 3
+    }
+  ]
+}

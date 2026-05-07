@@ -1,0 +1,17 @@
+[
+  {
+    "speakerName": "Rep",
+    "timestamp": 0.0,
+    "endTimeTs": 2.33
+  },
+  {
+    "speakerName": "Customer",
+    "timestamp": 2.83,
+    "endTimeTs": 6.17
+  },
+  {
+    "speakerName": "Rep",
+    "timestamp": 6.67,
+    "endTimeTs": 9.0
+  }
+]

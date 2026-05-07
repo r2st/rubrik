@@ -1,0 +1,34 @@
+{
+  "data": [
+    {
+      "sentence": "Welcome, glad to have folks from L'Oreal on the call.",
+      "speaker_name": "Rep",
+      "sentimentType": "neutral",
+      "speaker_id": 0,
+      "time": 0.0,
+      "endTime": 3.33,
+      "averageConfidence": 0.92,
+      "index": 0
+    },
+    {
+      "sentence": "Thanks. Let's get into the renewal numbers.",
+      "speaker_name": "Customer",
+      "sentimentType": "neutral",
+      "speaker_id": 1,
+      "time": 3.83,
+      "endTime": 6.17,
+      "averageConfidence": 0.92,
+      "index": 1
+    },
+    {
+      "sentence": "Of course. Pulling up the contract now.",
+      "speaker_name": "Rep",
+      "sentimentType": "neutral",
+      "speaker_id": 0,
+      "time": 6.67,
+      "endTime": 9.0,
+      "averageConfidence": 0.92,
+      "index": 2
+    }
+  ]
+}

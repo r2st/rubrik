@@ -20,7 +20,10 @@ OUTPUT_DIR = PROJECT_ROOT / "output"
 # ---------------------------------------------------------------------------
 CALL_TYPE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("support", re.compile(r"^support case", re.I)),
-    ("external", re.compile(r"\baegis\s*/|^urgent:|^escalation:", re.I)),
+    # `^(urgent|escalation)\b.*?:` handles compound prefixes like
+    # "ESCALATION URGENT:" or "URGENT - ESCALATION:" — anything starting
+    # with the keyword that has a colon somewhere in the prefix.
+    ("external", re.compile(r"\baegis\s*/|^(urgent|escalation)\b.*?:", re.I)),
     # internal is the fallback
 ]
 
@@ -55,10 +58,14 @@ DEFAULT_PURPOSE = "Account Management"
 # ---------------------------------------------------------------------------
 # Customer name extraction (for external meetings)
 # Matches "Aegis / <Customer> - ..." and "URGENT: <Customer> - ..."
+#
+# The separator must be a *space-padded* dash (` - ` or ` — `) so customer
+# names containing hyphens ("Foo-Bar Industries", "L'Oréal-Paris") aren't
+# truncated at the internal hyphen.
 # ---------------------------------------------------------------------------
 CUSTOMER_REGEXES: list[re.Pattern[str]] = [
-    re.compile(r"aegis\s*/\s*([^-—]+?)\s*[-—]", re.I),
-    re.compile(r"^(?:urgent|escalation)\s*:\s*([^-—]+?)\s*[-—]", re.I),
+    re.compile(r"aegis\s*/\s*(.+?)\s+[-—]\s+", re.I),
+    re.compile(r"^(?:urgent|escalation)\s*:\s*(.+?)\s+[-—]\s+", re.I),
 ]
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test cov lint format type-check validate run api dev notebook docs rehearsal-html docker-build docker-run start-all stop-all compose-up compose-down clean all
+.PHONY: help install install-dev test cov lint format type-check validate validate-edge gen-synthetic run api dev notebook docs rehearsal-html docker-build docker-run start-all stop-all compose-up compose-down clean all
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -28,8 +28,14 @@ format:  ## Auto-format with ruff
 type-check:  ## mypy type check
 	mypy src api
 
-validate:  ## Semantic validation against the dataset
+validate:  ## Semantic validation against the client sample
 	python validate.py
+
+validate-edge:  ## Semantic validation against client sample + synthetic edge cases
+	python validate.py --extra-dataset tests/fixtures/synthetic
+
+gen-synthetic:  ## (Re)generate the synthetic edge-case fixtures
+	python tests/fixtures/synthetic/gen_synthetic.py
 
 run:  ## Run the full batch pipeline → output/
 	python run_analysis.py

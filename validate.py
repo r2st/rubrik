@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 
 import pandas as pd
 
@@ -217,13 +218,40 @@ def _render(checks: list[Check]) -> int:
     return fails
 
 
+def _load_extra(path: Path) -> list:
+    """Load every meeting subdirectory under `path`.
+
+    Recurses one level so synthetic fixtures organized by category
+    (e.g., tests/fixtures/synthetic/title_variants/<slug>/) get picked up.
+    """
+    meetings = []
+    for meeting_info in path.rglob("meeting-info.json"):
+        meetings.append(data_loader.load_meeting(meeting_info.parent))
+    return meetings
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main() -> int:
+    import argparse
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "--extra-dataset", type=Path, default=None,
+        help="Additional meeting fixtures to merge into the audit (e.g., "
+             "tests/fixtures/synthetic to include the edge-case set).",
+    )
+    args = p.parse_args()
+
     configure_logging()
     log.info("Loading data…")
     raw = data_loader.load_all_meetings()
+    if args.extra_dataset:
+        extras = _load_extra(args.extra_dataset)
+        log.info("Adding %d extra meetings from %s", len(extras), args.extra_dataset)
+        raw = raw + extras
+    log.info("Total meetings under audit: %d", len(raw))
+
     df = data_loader.meetings_to_dataframe(raw)
     sentences_df = data_loader.sentences_dataframe(raw)
     speakers_df = data_loader.speakers_dataframe(raw)

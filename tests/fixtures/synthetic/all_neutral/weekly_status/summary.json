@@ -1,0 +1,12 @@
+{
+  "summary": "Routine weekly standup. No blockers, no changes to priorities.",
+  "actionItems": [],
+  "topics": [
+    "status update",
+    "planning"
+  ],
+  "overallSentiment": "neutral",
+  "sentimentScore": 3.0,
+  "keyMoments": [],
+  "meetingId": "weekly_status"
+}

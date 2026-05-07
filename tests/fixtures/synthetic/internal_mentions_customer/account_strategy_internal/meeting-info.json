@@ -1,0 +1,19 @@
+{
+  "meetingId": "account_strategy_internal",
+  "title": "Account Strategy Internal - Northstar Pharma",
+  "organizerEmail": "lead@aegiscloud.com",
+  "host": "lead@aegiscloud.com",
+  "startTime": "2026-04-15T10:00:00.000Z",
+  "endTime": "2026-04-15T10:10:00.000Z",
+  "duration": 30.0,
+  "allEmails": [
+    "lead@aegiscloud.com",
+    "rep@aegiscloud.com",
+    "vp@aegiscloud.com"
+  ],
+  "invitees": [
+    "lead@aegiscloud.com",
+    "rep@aegiscloud.com",
+    "vp@aegiscloud.com"
+  ]
+}

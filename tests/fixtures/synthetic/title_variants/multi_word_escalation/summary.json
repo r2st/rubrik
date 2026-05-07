@@ -1,0 +1,12 @@
+{
+  "summary": "Compound prefix (ESCALATION + URGENT)",
+  "actionItems": [],
+  "topics": [
+    "renewal",
+    "operations"
+  ],
+  "overallSentiment": "neutral",
+  "sentimentScore": 3.4,
+  "keyMoments": [],
+  "meetingId": "multi_word_escalation"
+}

@@ -1,0 +1,14 @@
+{
+  "data": [
+    {
+      "sentence": "Just confirming the deployment is on track for tomorrow.",
+      "speaker_name": "Rep",
+      "sentimentType": "neutral",
+      "speaker_id": 0,
+      "time": 0.0,
+      "endTime": 3.0,
+      "averageConfidence": 0.92,
+      "index": 0
+    }
+  ]
+}

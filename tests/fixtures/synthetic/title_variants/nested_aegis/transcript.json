@@ -1,0 +1,34 @@
+{
+  "data": [
+    {
+      "sentence": "Thanks for joining today, let's walk through the agenda.",
+      "speaker_name": "Rep",
+      "sentimentType": "neutral",
+      "speaker_id": 0,
+      "time": 0.0,
+      "endTime": 3.0,
+      "averageConfidence": 0.92,
+      "index": 0
+    },
+    {
+      "sentence": "Sounds good, I have about thirty minutes.",
+      "speaker_name": "Customer",
+      "sentimentType": "neutral",
+      "speaker_id": 1,
+      "time": 3.5,
+      "endTime": 5.83,
+      "averageConfidence": 0.92,
+      "index": 1
+    },
+    {
+      "sentence": "We'll cover the renewal terms and the service updates.",
+      "speaker_name": "Rep",
+      "sentimentType": "neutral",
+      "speaker_id": 0,
+      "time": 6.33,
+      "endTime": 9.33,
+      "averageConfidence": 0.92,
+      "index": 2
+    }
+  ]
+}

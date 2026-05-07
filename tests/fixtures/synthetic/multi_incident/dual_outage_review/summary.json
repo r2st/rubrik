@@ -1,0 +1,25 @@
+{
+  "summary": "Two simultaneous outages discussed (Detect + Comply) with separate remediation plans.",
+  "actionItems": [],
+  "topics": [
+    "incident response",
+    "remediation"
+  ],
+  "overallSentiment": "negative",
+  "sentimentScore": 2.3,
+  "keyMoments": [
+    {
+      "time": 5.0,
+      "text": "Customer confirms two outages on Tuesday",
+      "type": "concern",
+      "speaker": "Customer"
+    },
+    {
+      "time": 30.0,
+      "text": "Detect remediation: redundant nodes",
+      "type": "positive_pivot",
+      "speaker": "Rep"
+    }
+  ],
+  "meetingId": "dual_outage_review"
+}

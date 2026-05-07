@@ -1,0 +1,14 @@
+[
+  {
+    "participantName": "rep",
+    "timestamp": 1,
+    "type": "Join",
+    "time": 0.0
+  },
+  {
+    "participantName": "rep",
+    "timestamp": 2,
+    "type": "Leave",
+    "time": 60.0
+  }
+]

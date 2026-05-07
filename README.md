@@ -392,10 +392,22 @@ flowchart LR
 
 Architecture, cost math (~$50–100/day at typical load), code skeletons, and K8s manifests live in [ADR 0010](docs/adr/0010-auto-scaling-ml-pipeline.md) + [`gemma-finetune/scaling/`](gemma-finetune/scaling/README.md).
 
+## Edge-case test data
+
+The client confirmed synthetic transcript generation is acceptable for edge-case coverage. We ship 15 hand-crafted synthetic meetings covering corners the sample doesn't reach (lowercase URGENT prefix, unicode customer names, net-new product references, all-neutral long meetings, single-sentence inputs, multi-incident scenarios, historical-incident references, internal meetings that mention customers).
+
+```bash
+make gen-synthetic              # (re)generate the fixtures
+make validate-edge              # run the 10 audits over the union of real + synthetic
+```
+
+The synthetic fixtures already caught 2 real categorizer bugs during development (compound `ESCALATION URGENT:` prefix; hyphenated customer names like "Foo-Bar Industries" being truncated at the internal hyphen). Both are fixed; both are now regression-protected by `tests/test_edge_cases.py`. See [`docs/edge-cases.md`](docs/edge-cases.md) for the matrix of which edge cases need synthetic data, which are better tested as units, and which are deferred until they materialize.
+
 ## Documentation
 
 - [`docs/APPROACH.md`](docs/APPROACH.md) — methodology, comparisons, and verdicts (start here)
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — system design with Mermaid diagrams
+- [`docs/edge-cases.md`](docs/edge-cases.md) — synthetic data strategy + the test matrix
 - [`docs/adr/`](docs/adr/) — Architecture Decision Records (immutable, dated, per-decision)
 - **`docs/html/`** — same content as standalone HTML files. `make docs` to build, `open docs/html/index.html` to view
 

@@ -1,0 +1,12 @@
+{
+  "summary": "Q2 business review. References the March outage retrospectively as historical context.",
+  "actionItems": [],
+  "topics": [
+    "business review",
+    "reliability"
+  ],
+  "overallSentiment": "positive",
+  "sentimentScore": 4.1,
+  "keyMoments": [],
+  "meetingId": "postmortem_review"
+}

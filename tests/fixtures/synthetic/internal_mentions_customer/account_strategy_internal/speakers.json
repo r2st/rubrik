@@ -1,0 +1,17 @@
+[
+  {
+    "speakerName": "Lead",
+    "timestamp": 0.0,
+    "endTimeTs": 4.33
+  },
+  {
+    "speakerName": "Rep",
+    "timestamp": 4.83,
+    "endTimeTs": 8.83
+  },
+  {
+    "speakerName": "VP",
+    "timestamp": 9.33,
+    "endTimeTs": 14.0
+  }
+]

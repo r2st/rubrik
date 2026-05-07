@@ -1,0 +1,64 @@
+{
+  "data": [
+    {
+      "sentence": "We had two simultaneous outages on Tuesday.",
+      "speaker_name": "Customer",
+      "sentimentType": "negative",
+      "speaker_id": 0,
+      "time": 0.0,
+      "endTime": 2.33,
+      "averageConfidence": 0.92,
+      "index": 0
+    },
+    {
+      "sentence": "Detect was down for forty minutes and Comply was down for an hour.",
+      "speaker_name": "Customer",
+      "sentimentType": "negative",
+      "speaker_id": 0,
+      "time": 2.83,
+      "endTime": 7.17,
+      "averageConfidence": 0.92,
+      "index": 1
+    },
+    {
+      "sentence": "Yes, we treat these as related \u2014 the cascading failure in the event pipeline took both down.",
+      "speaker_name": "Rep",
+      "sentimentType": "neutral",
+      "speaker_id": 1,
+      "time": 7.67,
+      "endTime": 13.33,
+      "averageConfidence": 0.92,
+      "index": 2
+    },
+    {
+      "sentence": "What's the remediation plan for each?",
+      "speaker_name": "Customer",
+      "sentimentType": "negative",
+      "speaker_id": 0,
+      "time": 13.83,
+      "endTime": 15.83,
+      "averageConfidence": 0.92,
+      "index": 3
+    },
+    {
+      "sentence": "Detect remediation is the redundant active-active node rollout.",
+      "speaker_name": "Rep",
+      "sentimentType": "neutral",
+      "speaker_id": 1,
+      "time": 16.33,
+      "endTime": 19.0,
+      "averageConfidence": 0.92,
+      "index": 4
+    },
+    {
+      "sentence": "Comply remediation is independent \u2014 separate circuit-breaker work.",
+      "speaker_name": "Rep",
+      "sentimentType": "neutral",
+      "speaker_id": 1,
+      "time": 19.5,
+      "endTime": 22.17,
+      "averageConfidence": 0.92,
+      "index": 5
+    }
+  ]
+}

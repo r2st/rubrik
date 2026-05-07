@@ -1,0 +1,17 @@
+{
+  "meetingId": "multi_word_escalation",
+  "title": "ESCALATION URGENT: Atlas Precision - Complete Service Outage",
+  "organizerEmail": "rep@aegiscloud.com",
+  "host": "rep@aegiscloud.com",
+  "startTime": "2026-04-15T10:00:00.000Z",
+  "endTime": "2026-04-15T10:10:00.000Z",
+  "duration": 10.0,
+  "allEmails": [
+    "rep@aegiscloud.com",
+    "customer@example.com"
+  ],
+  "invitees": [
+    "rep@aegiscloud.com",
+    "customer@example.com"
+  ]
+}
