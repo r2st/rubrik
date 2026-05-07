@@ -103,6 +103,28 @@ pytest && python validate.py && python run_analysis.py
 uvicorn api.main:app --reload
 ```
 
+### Production-volume mode
+
+The default `run_analysis.py` loads the entire dataset into pandas — correct at sample scale, fails at production volume. For 1M+ records use the streaming pipeline:
+
+```bash
+# Streaming — memory is O(batch_size), regardless of total dataset size
+python run_analysis.py --streaming --batch-size 1000
+
+# Equivalent results to the in-memory pipeline (verified by tests/test_streaming.py)
+# Skips clustering + visualizations (computed in the columnar warehouse at scale)
+```
+
+Backed by `src/repository.py` (Protocol + `LocalDirectoryRepository` today; `DatabaseRepository` slot for ADR 0008's Postgres + Iceberg backend) and `src/streaming.py` (mergeable fold — trivially parallelizes across Ray Data workers).
+
+For schema migrations (`bootstrap.toml` Postgres URL):
+
+```bash
+alembic upgrade head           # apply
+alembic revision --autogenerate -m "add foo column"
+alembic downgrade -1           # roll back one
+```
+
 ## Architecture
 
 ```mermaid

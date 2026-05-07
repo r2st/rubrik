@@ -329,12 +329,14 @@ The client provided a representative **sample** (currently ~100 meetings, ~4k se
 | Component | Comfortable up to | Breaks at | Path forward |
 |---|---|---|---|
 | Regex categorizer | Billions / day on a single thread | n/a — CPU-bound, parallelizes trivially | Already good |
-| TF-IDF + KMeans clustering | ~1M docs in-memory | ~10M (RAM ceiling) | Streaming MiniBatchKMeans, then Spark MLlib / Faiss |
-| Per-sentence sentiment trajectories | ~1M docs | ~10M (RAM ceiling) | Streaming Ray Data with per-partition aggregation |
-| Customer health + insight aggregation | ~1M docs | ~10M (groupby memory) | Postgres OLTP for current period + ClickHouse / DuckDB for history |
-| In-memory pipeline state (singleton) | ≤ ~100k rows | Memory-bound | Repository pattern + Postgres persistence (foundation already in place — see `src/db.py`) |
+| TF-IDF + KMeans clustering (in-memory) | ~1M docs in-memory | ~10M (RAM ceiling) | Streaming MiniBatchKMeans, then Spark MLlib / Faiss |
+| Per-sentence sentiment trajectories | ~1M docs in-memory | ~10M (RAM ceiling) | **Already supported via streaming pipeline** (`src/streaming.py` — `run_analysis.py --streaming`); fold pattern is mergeable so it parallelizes across Ray Data workers |
+| Customer health + insight aggregation | ~1M docs in-memory; **unbounded via streaming** | ~10M in-memory groupby | Streaming fold writes per-customer rollup to CSV/Postgres incrementally |
+| Pipeline state singleton (`api/state.py`) | ≤ ~100k rows | Memory-bound | DatabaseRepository slot in `src/repository.py` — no call-site changes |
+| Repository (data source) | LocalDirectoryRepository: ~100k meetings | Filesystem inode latency | Swap `default_repository()` to return `DatabaseRepository` — Postgres + Iceberg backed |
 | FastAPI request layer | Stateless — replicates horizontally | LB / DB-bound | Multi-instance behind LB, Redis cache for hot queries |
 | Gemma 4 inference | One pod = ~10 RPS | Pod queue depth | vLLM autoscale → ADR 0010 |
+| Schema migrations | Hand-edited DDL in `db.init_db()` | First production schema change | **Alembic now in place** — `alembic upgrade head` |
 
 The point: **every layer has a known ceiling and a known next step**. Nothing requires a rewrite to scale; each transition is a targeted swap with a measurable trigger documented in the relevant ADR.
 

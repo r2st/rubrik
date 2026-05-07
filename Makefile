@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test cov lint format type-check validate validate-edge gen-synthetic run api dev notebook docs rehearsal-html docker-build docker-run start-all stop-all compose-up compose-down clean all
+.PHONY: help install install-dev test cov lint format type-check validate validate-edge gen-synthetic run run-streaming migrate migrate-status api dev notebook docs rehearsal-html docker-build docker-run start-all stop-all compose-up compose-down clean all
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -37,8 +37,18 @@ validate-edge:  ## Semantic validation against client sample + synthetic edge ca
 gen-synthetic:  ## (Re)generate the synthetic edge-case fixtures
 	python tests/fixtures/synthetic/gen_synthetic.py
 
-run:  ## Run the full batch pipeline → output/
+run:  ## Run the full batch pipeline → output/ (in-memory; ≤ ~100k records)
 	python run_analysis.py
+
+run-streaming:  ## Streaming pipeline (production-volume safe; O(batch_size) memory)
+	python run_analysis.py --streaming --batch-size 1000
+
+migrate:  ## Apply alembic migrations to the bootstrap-configured DB
+	alembic upgrade head
+
+migrate-status:  ## Show current alembic revision + pending migrations
+	alembic current
+	alembic history
 
 api:  ## Run the FastAPI server (production: 4 workers)
 	uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers 4

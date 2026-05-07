@@ -42,7 +42,17 @@ def _resolve_url(url: str) -> str:
 
 
 def get_engine() -> Engine:
-    """Return the singleton SQLAlchemy engine, building on first call."""
+    """Return the singleton SQLAlchemy engine, building on first call.
+
+    Pool tuning: SQLite uses NullPool (no pooling — single-file DB doesn't
+    benefit). Postgres / MySQL get an explicit `QueuePool` with sane
+    production defaults — pool_size 5, max_overflow 10, pre-ping on, recycle
+    every 30 minutes to dodge intermediate proxy timeouts (PgBouncer / RDS).
+
+    Override per-deployment via bootstrap.toml's `[database]` section in
+    future iterations; defaults work for the SQLite-backed admin DB today
+    and the Postgres path in ADR 0008/0011.
+    """
     global _engine, _session_factory
     if _engine is None:
         with _lock:
@@ -50,8 +60,22 @@ def get_engine() -> Engine:
                 url = _resolve_url(get_settings().database_url)
                 kwargs: dict = {"echo": False, "future": True}
                 if url.startswith("sqlite"):
-                    # Allow connection sharing across the FastAPI threadpool
+                    # SQLite: single-writer; connection pooling adds nothing.
+                    from sqlalchemy.pool import NullPool
+                    kwargs["poolclass"] = NullPool
                     kwargs["connect_args"] = {"check_same_thread": False}
+                else:
+                    # Postgres / MySQL — production-friendly defaults.
+                    # `pool_pre_ping` catches stale connections from PgBouncer
+                    # restarts or RDS failovers; `pool_recycle=1800s` rotates
+                    # before most LB / proxy idle timeouts (typically 1h).
+                    kwargs.update({
+                        "pool_size": 5,
+                        "max_overflow": 10,
+                        "pool_pre_ping": True,
+                        "pool_recycle": 1800,
+                        "pool_timeout": 30,
+                    })
                 _engine = create_engine(url, **kwargs)
                 _session_factory = sessionmaker(
                     bind=_engine, expire_on_commit=False, class_=Session,

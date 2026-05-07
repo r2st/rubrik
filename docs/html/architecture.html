@@ -654,28 +654,34 @@ footer code {
 <td>Already good</td>
 </tr>
 <tr>
-<td>TF-IDF + KMeans clustering</td>
+<td>TF-IDF + KMeans clustering (in-memory)</td>
 <td>~1M docs in-memory</td>
 <td>~10M (RAM ceiling)</td>
 <td>Streaming MiniBatchKMeans, then Spark MLlib / Faiss</td>
 </tr>
 <tr>
 <td>Per-sentence sentiment trajectories</td>
-<td>~1M docs</td>
+<td>~1M docs in-memory</td>
 <td>~10M (RAM ceiling)</td>
-<td>Streaming Ray Data with per-partition aggregation</td>
+<td><strong>Already supported via streaming pipeline</strong> (<code>src/streaming.py</code> — <code>run_analysis.py --streaming</code>); fold pattern is mergeable so it parallelizes across Ray Data workers</td>
 </tr>
 <tr>
 <td>Customer health + insight aggregation</td>
-<td>~1M docs</td>
-<td>~10M (groupby memory)</td>
-<td>Postgres OLTP for current period + ClickHouse / DuckDB for history</td>
+<td>~1M docs in-memory; <strong>unbounded via streaming</strong></td>
+<td>~10M in-memory groupby</td>
+<td>Streaming fold writes per-customer rollup to CSV/Postgres incrementally</td>
 </tr>
 <tr>
-<td>In-memory pipeline state (singleton)</td>
+<td>Pipeline state singleton (<code>api/state.py</code>)</td>
 <td>≤ ~100k rows</td>
 <td>Memory-bound</td>
-<td>Repository pattern + Postgres persistence (foundation already in place — see <code>src/db.py</code>)</td>
+<td>DatabaseRepository slot in <code>src/repository.py</code> — no call-site changes</td>
+</tr>
+<tr>
+<td>Repository (data source)</td>
+<td>LocalDirectoryRepository: ~100k meetings</td>
+<td>Filesystem inode latency</td>
+<td>Swap <code>default_repository()</code> to return <code>DatabaseRepository</code> — Postgres + Iceberg backed</td>
 </tr>
 <tr>
 <td>FastAPI request layer</td>
@@ -688,6 +694,12 @@ footer code {
 <td>One pod = ~10 RPS</td>
 <td>Pod queue depth</td>
 <td>vLLM autoscale → ADR 0010</td>
+</tr>
+<tr>
+<td>Schema migrations</td>
+<td>Hand-edited DDL in <code>db.init_db()</code></td>
+<td>First production schema change</td>
+<td><strong>Alembic now in place</strong> — <code>alembic upgrade head</code></td>
 </tr>
 </tbody>
 </table>

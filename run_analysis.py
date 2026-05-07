@@ -3,11 +3,23 @@
 Loads the dataset, applies categorization, clustering, sentiment trajectories,
 generates all insights and figures, and exports CSVs/JSON to `output/`.
 
-Usage:
-    python run_analysis.py
+Two modes:
+
+  Default (in-memory)         python run_analysis.py
+    Loads the entire dataset into pandas. Comfortable up to ~100k records.
+    Required for the visualizations + clustering steps which expect a
+    materialized DataFrame.
+
+  Streaming                   python run_analysis.py --streaming --batch-size 1000
+    Folds the analytical aggregates incrementally. Memory is O(batch_size)
+    regardless of dataset size — required at production volume (1M+).
+    Skips the clustering + visualizations stages (those need the full set);
+    the streaming summary still includes call-type / purpose / sentiment
+    breakdowns and the customer-health rollup.
 """
 from __future__ import annotations
 
+import argparse
 import json
 from collections import Counter
 
@@ -17,8 +29,39 @@ from src.logging_config import configure_logging, get_logger
 log = get_logger(__name__)
 
 
+def streaming_mode(batch_size: int) -> None:
+    """Run the analytical pipeline in streaming mode (production-volume safe)."""
+    from src.repository import default_repository
+    from src.streaming import streaming_analyze
+
+    config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    repo = default_repository()
+    log.info("Streaming mode — total=%d, batch_size=%d", repo.count(), batch_size)
+
+    result = streaming_analyze(repo, batch_size=batch_size)
+    result.write_csv(config.OUTPUT_DIR)
+
+    summary_path = config.OUTPUT_DIR / "streaming_summary.json"
+    summary_path.write_text(json.dumps(result.summary, indent=2, default=str))
+    log.info("Streaming summary saved to %s", summary_path)
+    log.info("  %d meetings · %d batches · %.1fs · %.0f rows/s",
+             result.aggregate.n_meetings, result.n_batches,
+             result.elapsed_s, result.aggregate.n_meetings / max(result.elapsed_s, 0.001))
+
+
 def main() -> None:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--streaming", action="store_true",
+                   help="Run in streaming mode (required at production volume).")
+    p.add_argument("--batch-size", type=int, default=1000,
+                   help="Streaming batch size (only with --streaming).")
+    args = p.parse_args()
+
     configure_logging()
+    if args.streaming:
+        streaming_mode(args.batch_size)
+        return
+
     config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     log.info("Loading dataset…")

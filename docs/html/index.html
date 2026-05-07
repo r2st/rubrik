@@ -501,6 +501,20 @@ make docs          # static HTML site at docs/html/
 pytest &amp;&amp; python validate.py &amp;&amp; python run_analysis.py
 uvicorn api.main:app --reload
 </code></pre>
+<h3 id="production-volume-mode">Production-volume mode<a class="anchor" href="#production-volume-mode" title="Permanent link">¶</a></h3>
+<p>The default <code>run_analysis.py</code> loads the entire dataset into pandas — correct at sample scale, fails at production volume. For 1M+ records use the streaming pipeline:</p>
+<pre><code class="language-bash"># Streaming — memory is O(batch_size), regardless of total dataset size
+python run_analysis.py --streaming --batch-size 1000
+
+# Equivalent results to the in-memory pipeline (verified by tests/test_streaming.py)
+# Skips clustering + visualizations (computed in the columnar warehouse at scale)
+</code></pre>
+<p>Backed by <code>src/repository.py</code> (Protocol + <code>LocalDirectoryRepository</code> today; <code>DatabaseRepository</code> slot for ADR 0008's Postgres + Iceberg backend) and <code>src/streaming.py</code> (mergeable fold — trivially parallelizes across Ray Data workers).</p>
+<p>For schema migrations (<code>bootstrap.toml</code> Postgres URL):</p>
+<pre><code class="language-bash">alembic upgrade head           # apply
+alembic revision --autogenerate -m &quot;add foo column&quot;
+alembic downgrade -1           # roll back one
+</code></pre>
 <h2 id="architecture">Architecture<a class="anchor" href="#architecture" title="Permanent link">¶</a></h2>
 <div class="mermaid">flowchart LR
     Data[("Client sample<br/>(JSON · scales out via ADR 0008)")] --> Loader["data_loader<br/>typed DataFrames"]
@@ -990,7 +1004,7 @@ make load-test         # 30s, 20 VUs, all endpoints — exits non-zero if error 
   Generated from <code>README.md</code>
 </footer>
 </main>
-<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#contents" class="h2">Contents</a></li><li><a href="#a-note-on-the-dataset" class="h2">A note on the dataset</a></li><li><a href="#what-this-does" class="h2">What this does</a></li><li><a href="#headline-findings-on-the-sample" class="h2">Headline findings on the sample</a></li><li><a href="#quick-start" class="h2">Quick start</a></li><li><a href="#architecture" class="h2">Architecture</a></li><li><a href="#project-layout" class="h2">Project layout</a></li><li><a href="#testing-validation" class="h2">Testing &amp; validation</a></li><li><a href="#api-web-dashboard" class="h2">API &amp; web dashboard</a></li><li><a href="#why-fastapi-instead-of-streamlit" class="h3">Why FastAPI instead of Streamlit</a></li><li><a href="#run-all-services" class="h2">Run all services</a></li><li><a href="#container-alternative-docker-compose" class="h3">Container alternative (docker compose)</a></li><li><a href="#production-readiness" class="h2">Production readiness</a></li><li><a href="#security" class="h3">Security</a></li><li><a href="#performance-caching" class="h3">Performance &amp; caching</a></li><li><a href="#resilience" class="h3">Resilience</a></li><li><a href="#observability-opt-in" class="h3">Observability (opt-in)</a></li><li><a href="#engineering" class="h3">Engineering</a></li><li><a href="#configuration" class="h3">Configuration</a></li><li><a href="#admin-panel" class="h3">Admin panel</a></li><li><a href="#whats-deliberately-not-done" class="h3">What's deliberately not done</a></li><li><a href="#auto-scaling-at-production-volume" class="h2">Auto-scaling at production volume</a></li><li><a href="#edge-case-test-data" class="h2">Edge-case test data</a></li><li><a href="#documentation" class="h2">Documentation</a></li><li><a href="#load-testing" class="h3">Load testing</a></li><li><a href="#license" class="h2">License</a></li></ul></aside>
+<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#contents" class="h2">Contents</a></li><li><a href="#a-note-on-the-dataset" class="h2">A note on the dataset</a></li><li><a href="#what-this-does" class="h2">What this does</a></li><li><a href="#headline-findings-on-the-sample" class="h2">Headline findings on the sample</a></li><li><a href="#quick-start" class="h2">Quick start</a></li><li><a href="#production-volume-mode" class="h3">Production-volume mode</a></li><li><a href="#architecture" class="h2">Architecture</a></li><li><a href="#project-layout" class="h2">Project layout</a></li><li><a href="#testing-validation" class="h2">Testing &amp; validation</a></li><li><a href="#api-web-dashboard" class="h2">API &amp; web dashboard</a></li><li><a href="#why-fastapi-instead-of-streamlit" class="h3">Why FastAPI instead of Streamlit</a></li><li><a href="#run-all-services" class="h2">Run all services</a></li><li><a href="#container-alternative-docker-compose" class="h3">Container alternative (docker compose)</a></li><li><a href="#production-readiness" class="h2">Production readiness</a></li><li><a href="#security" class="h3">Security</a></li><li><a href="#performance-caching" class="h3">Performance &amp; caching</a></li><li><a href="#resilience" class="h3">Resilience</a></li><li><a href="#observability-opt-in" class="h3">Observability (opt-in)</a></li><li><a href="#engineering" class="h3">Engineering</a></li><li><a href="#configuration" class="h3">Configuration</a></li><li><a href="#admin-panel" class="h3">Admin panel</a></li><li><a href="#whats-deliberately-not-done" class="h3">What's deliberately not done</a></li><li><a href="#auto-scaling-at-production-volume" class="h2">Auto-scaling at production volume</a></li><li><a href="#edge-case-test-data" class="h2">Edge-case test data</a></li><li><a href="#documentation" class="h2">Documentation</a></li><li><a href="#load-testing" class="h3">Load testing</a></li><li><a href="#license" class="h2">License</a></li></ul></aside>
 </div>
 <script
   src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"
