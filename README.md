@@ -445,6 +445,7 @@ The synthetic fixtures already caught 2 real categorizer bugs during development
 - [`docs/edge-cases.md`](docs/edge-cases.md) — synthetic data strategy + the test matrix
 - [`docs/adr/`](docs/adr/) — Architecture Decision Records (immutable, dated, per-decision)
 - **`docs/html/`** — same content as standalone HTML files. `make docs` to build, `open docs/html/index.html` to view
+- [`docs/presentation.html`](docs/presentation.html) — multi-slide HTML presentation (13 slides, keyboard-navigable). Run `make slides` or open the file directly.
 
 ### Load testing
 

@@ -68,6 +68,10 @@ load-test-quick:  ## Quick smoke load test (10s, 5 VUs)
 docs:  ## Build the static HTML documentation site
 	python build_docs.py
 
+slides:  ## Open the HTML presentation in the default browser
+	@open docs/presentation.html 2>/dev/null || xdg-open docs/presentation.html 2>/dev/null || \
+	  echo "Open: file://$$(pwd)/docs/presentation.html"
+
 rehearsal-html:  ## Build personal interview-prep HTML site (rehearsal/html/, gitignored)
 	python rehearsal/build_html.py
 

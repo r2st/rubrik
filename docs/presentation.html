@@ -1,0 +1,746 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Transcript Intelligence — Presentation</title>
+<link rel="icon" type="image/svg+xml" href="../web/static/favicon.svg">
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --ink: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --accent-2: #d2a8ff;
+    --green: #56d364;
+    --orange: #ffa657;
+    --pink: #ff7b72;
+    --line: #30363d;
+    --code-bg: #1f242c;
+    --max-w: 1100px;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "Inter", system-ui, sans-serif;
+    font-size: 18px;
+    line-height: 1.5;
+    overflow: hidden;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  code, pre, .mono {
+    font-family: "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    font-size: 0.92em;
+  }
+  code { background: var(--code-bg); padding: 1px 6px; border-radius: 4px; }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px 18px;
+    overflow: auto;
+  }
+
+  /* ---------- deck container ---------- */
+  .deck {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+  }
+  .slide {
+    position: absolute;
+    inset: 0;
+    padding: 56px 64px 80px;
+    display: none;
+    flex-direction: column;
+    overflow: auto;
+    animation: fadein 220ms ease-out;
+  }
+  .slide.active { display: flex; }
+  @keyframes fadein {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  /* ---------- slide content ---------- */
+  .slide > .body {
+    max-width: var(--max-w);
+    width: 100%;
+    margin: 0 auto;
+    flex: 1;
+  }
+  h1, h2, h3, h4 { margin: 0 0 14px; line-height: 1.2; font-weight: 700; }
+  h1 { font-size: 56px; letter-spacing: -0.02em; }
+  h2 { font-size: 40px; letter-spacing: -0.01em; }
+  h3 { font-size: 22px; color: var(--accent); margin-top: 24px; }
+  p, li { font-size: 18px; }
+  .lead { font-size: 22px; color: var(--muted); margin-bottom: 28px; }
+  ul { padding-left: 22px; }
+  li { margin-bottom: 8px; }
+  .small { font-size: 14px; color: var(--muted); }
+  .kbd {
+    border: 1px solid var(--line);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 1px 7px;
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--muted);
+    background: var(--panel);
+  }
+
+  /* title slide */
+  .title-slide { justify-content: center; align-items: center; text-align: center; }
+  .title-slide .body { display: flex; flex-direction: column; align-items: center; gap: 28px; }
+  .title-slide h1 {
+    font-size: 84px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .title-slide .sub { font-size: 24px; color: var(--muted); max-width: 720px; }
+  .title-slide .meta { font-size: 14px; color: var(--muted); margin-top: 36px; }
+
+  /* layout helpers */
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+  .three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 22px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px 20px;
+  }
+  .card h4 { font-size: 14px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px; }
+  .card .num { font-size: 36px; font-weight: 700; color: var(--ink); margin-bottom: 4px; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 16px;
+    margin-top: 8px;
+  }
+  th, td {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  th { color: var(--accent); font-weight: 600; }
+  td.mono { font-family: "SF Mono", Menlo, monospace; }
+
+  /* tag */
+  .tag {
+    display: inline-block;
+    background: var(--code-bg);
+    color: var(--accent);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 12px;
+    margin: 0 4px 4px 0;
+  }
+  .tag.green  { color: var(--green); }
+  .tag.orange { color: var(--orange); }
+  .tag.pink   { color: var(--pink); }
+
+  /* mermaid container */
+  .diagram {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px;
+    margin: 12px 0 0;
+    overflow: auto;
+    text-align: center;
+  }
+  .diagram svg { max-width: 100%; height: auto; }
+
+  /* ---------- chrome ---------- */
+  .chrome {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 56px;
+    background: linear-gradient(to top, rgba(13,17,23,0.95), rgba(13,17,23,0));
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    pointer-events: none;
+    z-index: 10;
+  }
+  .chrome .progress {
+    height: 3px;
+    background: var(--line);
+    flex: 1;
+    margin: 0 16px;
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .chrome .progress > .bar {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    transition: width 220ms ease-out;
+  }
+  .chrome .counter {
+    font-size: 13px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    min-width: 60px;
+  }
+  .chrome .brand {
+    font-size: 13px;
+    color: var(--muted);
+    min-width: 220px;
+  }
+  .chrome .brand strong { color: var(--ink); }
+  .nav-btn {
+    pointer-events: auto;
+    background: var(--panel);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 13px;
+    cursor: pointer;
+    margin-left: 8px;
+  }
+  .nav-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* TOC dot strip */
+  .toc {
+    position: fixed;
+    top: 18px;
+    right: 24px;
+    display: flex;
+    gap: 6px;
+    z-index: 11;
+  }
+  .toc > button {
+    width: 8px; height: 8px; border-radius: 50%;
+    border: 0;
+    background: var(--line);
+    cursor: pointer;
+    padding: 0;
+    transition: background 120ms;
+  }
+  .toc > button.active { background: var(--accent); transform: scale(1.4); }
+  .toc > button:hover { background: var(--accent-2); }
+
+  /* highlight color helpers */
+  .accent  { color: var(--accent); }
+  .green   { color: var(--green); }
+  .orange  { color: var(--orange); }
+  .pink    { color: var(--pink); }
+  .muted   { color: var(--muted); }
+  .pop     { color: var(--accent-2); }
+
+  /* print mode — every slide visible top to bottom */
+  @media print {
+    html, body { overflow: visible; height: auto; }
+    .slide { display: flex !important; position: relative; height: auto; min-height: 100vh; page-break-after: always; }
+    .chrome, .toc { display: none !important; }
+  }
+</style>
+</head>
+<body>
+  <nav class="toc" id="toc"></nav>
+
+  <main class="deck" id="deck">
+
+    <!-- 1. Title -->
+    <section class="slide title-slide" data-title="Title">
+      <div class="body">
+        <h1>Transcript Intelligence</h1>
+        <p class="sub">Topic categorization, sentiment, and strategic insights for B2B meeting transcripts — designed for the client sample today, architected for 100M+ records tomorrow.</p>
+        <div>
+          <span class="tag">FastAPI</span>
+          <span class="tag">scikit-learn</span>
+          <span class="tag">Gemma 4 (QLoRA)</span>
+          <span class="tag">Postgres + Iceberg path</span>
+          <span class="tag">Ray Train + vLLM</span>
+          <span class="tag">183 tests · 94% cov</span>
+        </div>
+        <p class="meta">Take-home submission · Rubrik · 2026</p>
+      </div>
+    </section>
+
+    <!-- 2. Brief -->
+    <section class="slide" data-title="The brief">
+      <div class="body">
+        <h2>The brief</h2>
+        <p class="lead">Turn ~100 raw meeting transcripts into actionable signal — and make sure the design holds up at production scale.</p>
+        <div class="two-col">
+          <div>
+            <h3>Inputs (per meeting)</h3>
+            <ul>
+              <li>Title + metadata</li>
+              <li>Full transcript (sentences with sentiment labels)</li>
+              <li>Summary, action items, speakers, key topics</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Required signal</h3>
+            <ul>
+              <li>Topic categorization (call type · purpose · product)</li>
+              <li>Sentiment <em>trajectories</em> — not just averages</li>
+              <li>Strategic insights — risk, incidents, churn, competition</li>
+            </ul>
+          </div>
+        </div>
+        <h3>Constraints I imposed on myself</h3>
+        <ul>
+          <li>Production-shaped from day 1 — no notebook-only artifacts.</li>
+          <li>The 100-meeting sample is the test case, not the architecture target.</li>
+          <li>Every non-trivial decision recorded as an ADR.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- 3. Headline findings -->
+    <section class="slide" data-title="Findings">
+      <div class="body">
+        <h2>Headline findings on the sample</h2>
+        <div class="three-col">
+          <div class="card">
+            <h4>At-risk customers</h4>
+            <div class="num green">2</div>
+            <p class="muted">Composite-score 🔴 high-risk (sentiment gap + churn signals + negative pivots).</p>
+          </div>
+          <div class="card">
+            <h4>Latent themes (k=7)</h4>
+            <div class="num accent">7</div>
+            <p class="muted">Silhouette-picked TF-IDF clusters. Catches multi-product migrations the rules can't see.</p>
+          </div>
+          <div class="card">
+            <h4>Neg-pivot meetings</h4>
+            <div class="num pink">12</div>
+            <p class="muted">Ended OK on average but had a sharp mid-meeting drop — friction events.</p>
+          </div>
+        </div>
+        <h3>Why this matters</h3>
+        <ul>
+          <li><strong class="green">Trajectory-based signals</strong> beat averaged sentiment on early-warning detection.</li>
+          <li><strong class="accent">Hybrid categorization</strong> catches both explicit (regex on titles) and latent (KMeans on bodies) patterns.</li>
+          <li><strong class="pop">Validation</strong> is semantic, not just unit-test — <code>validate.py</code> audits rules against the actual dataset.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- 4. System overview -->
+    <section class="slide" data-title="System overview">
+      <div class="body">
+        <h2>System overview</h2>
+        <p class="lead">Five tiers, two cross-cutting concerns. Each tier depends only on the tiers below.</p>
+        <div class="diagram"><pre class="mermaid">
+flowchart TB
+    UI["🧑‍💻 Presentation<br/>web dashboard · /admin · Jupyter"]
+    API["🌐 API · /api/v1/*<br/>routers + middleware stack + state cache"]
+    Core["🧠 Analytics core (src/ + gemma-finetune/)<br/>rules · sentiment · KMeans · LLM cascade · insights"]
+    Ingest["🔌 Ingestion (src/)<br/>TranscriptRepository · data_loader · streaming.py"]
+    Persist["💾 App persistence<br/>admin DB (settings · audit_log)"]
+    Sources["🔗 Upstream data (read only)<br/>client sample · Postgres+Iceberg · Kafka"]
+    Cfg["⚙️ Config<br/>bootstrap.toml + runtime settings"]
+    Obs["📊 Observability<br/>logs · /metrics · OTel · Sentry"]
+
+    UI --> API
+    API --> Core --> Ingest
+    API --> Persist
+    Ingest --> Sources
+    Cfg -.-> Ingest
+    Cfg -.-> Core
+    Cfg -.-> API
+    Obs -.-> Core
+    Obs -.-> API
+
+    classDef tier fill:#161b22,stroke:#58a6ff,color:#e6edf3
+    classDef cross fill:#1f242c,stroke:#d2a8ff,color:#e6edf3
+    classDef src fill:#1f242c,stroke:#56d364,color:#e6edf3
+    class UI,API,Core,Ingest,Persist tier
+    class Cfg,Obs cross
+    class Sources src
+        </pre></div>
+      </div>
+    </section>
+
+    <!-- 5. Per-meeting flow -->
+    <section class="slide" data-title="Per-meeting flow">
+      <div class="body">
+        <h2>What happens to a meeting</h2>
+        <p class="lead">Three parallel enrichment passes converge into the insight functions, get cached, and serve through HTTP with ETag.</p>
+        <div class="diagram"><pre class="mermaid">
+flowchart LR
+    JSON[("meeting/<br/>6 JSON files")]
+    Repo["repository.get(id)<br/>→ Meeting"]
+    DF["DataFrame +<br/>sentences + speakers"]
+    Cat["categorizer<br/>(rules)"]
+    Sent["sentiment<br/>(trajectories)"]
+    Clu["clustering<br/>(TF-IDF + KMeans)"]
+    Ins["insights<br/>(6 modules)"]
+    Cache["PipelineState<br/>cache"]
+    HTTP["HTTP<br/>+ ETag/Cache-Control"]
+
+    JSON --> Repo --> DF
+    DF --> Cat --> Ins
+    DF --> Sent --> Ins
+    DF --> Clu --> Ins
+    Ins --> Cache --> HTTP
+
+    classDef raw fill:#1f242c,stroke:#58a6ff,color:#e6edf3
+    classDef enrich fill:#1f242c,stroke:#56d364,color:#e6edf3
+    classDef serve fill:#1f242c,stroke:#ffa657,color:#e6edf3
+    class JSON,Repo,DF raw
+    class Cat,Sent,Clu,Ins enrich
+    class Cache,HTTP serve
+        </pre></div>
+        <p class="small">After warm-up, identical reads hit the in-memory cache + the HTTP <code>If-None-Match</code> path → 304 Not Modified, no recomputation.</p>
+      </div>
+    </section>
+
+    <!-- 6. Analytics core algorithms -->
+    <section class="slide" data-title="Analytics core">
+      <div class="body">
+        <h2>Analytics core — rules + ML + LLM</h2>
+        <p class="lead">Hybrid by design. Each layer handles what it's best at.</p>
+        <table>
+          <thead>
+            <tr><th>Layer</th><th>Algorithm</th><th>Where</th><th>Why this layer</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="tag">Rules</span></td>
+              <td>Compiled regex + keyword bags (config-driven)</td>
+              <td><code>src/categorizer.py</code></td>
+              <td>~90% coverage, &lt;1ms, deterministic, fully auditable.</td>
+            </tr>
+            <tr>
+              <td><span class="tag green">Sentiment</span></td>
+              <td>Per-sentence labels + numpy trajectory math</td>
+              <td><code>src/sentiment.py</code></td>
+              <td>Catches mid-meeting pivots an averaged score hides.</td>
+            </tr>
+            <tr>
+              <td><span class="tag green">Classical ML</span></td>
+              <td>TF-IDF → KMeans (silhouette-picked <em>k</em>)</td>
+              <td><code>src/clustering.py</code></td>
+              <td>Latent cross-cutting themes the rules' fixed taxonomy can't see.</td>
+            </tr>
+            <tr>
+              <td><span class="tag pink">LLM tier 1</span></td>
+              <td>Gemma 4 E4B-it + QLoRA (ROUGE-L 0.39)</td>
+              <td><code>gemma-finetune/</code></td>
+              <td>Generative work — summaries, action items — at self-hosted economics.</td>
+            </tr>
+            <tr>
+              <td><span class="tag pink">LLM tier 2</span></td>
+              <td>Frontier API (Claude / GPT-4 / Gemini)</td>
+              <td>Gateway · ADR 0012</td>
+              <td>~5% escalation: OOD, long context, world knowledge, high-stakes.</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="small">No LLM in the categorization path — rules already solve it cheaply, deterministically, on-perimeter.</p>
+      </div>
+    </section>
+
+    <!-- 7. Auto-scaling — API tier -->
+    <section class="slide" data-title="API auto-scale">
+      <div class="body">
+        <h2>Auto-scaling the API tier</h2>
+        <p class="lead">15 specific gaps closed in code (ADR 0013). Highlights:</p>
+        <div class="two-col">
+          <div>
+            <h3>Cold start fixed</h3>
+            <p>Singleton CronJob writes <code>PipelineState</code> snapshot to S3. Replicas warm in seconds, not minutes.</p>
+            <h3>Cluster-wide rate limit</h3>
+            <p>slowapi storage on Redis. Per-tenant fairness via <code>(tenant_id, ip)</code> key. Per-tenant cap overrides via FastAPI dependency.</p>
+            <h3>HPA on real signals</h3>
+            <p>RPS + p95 latency via Prometheus Adapter. CPU only as guardrail.</p>
+          </div>
+          <div>
+            <h3>Backpressure + circuit breakers</h3>
+            <p>Inflight cap → <code>503 + Retry-After</code>. <code>readiness_db_probe</code> breaker stops cascading failure.</p>
+            <h3>Graceful shutdown</h3>
+            <p>Lifespan flips readiness, sleeps, drains tasks, disposes pool. Zero-drop rolling deploys.</p>
+            <h3>Push invalidation</h3>
+            <p>Postgres <code>LISTEN/NOTIFY</code> on <code>settings_changed</code> — operator changes propagate &lt;100ms instead of 5s TTL.</p>
+          </div>
+        </div>
+        <p class="small">Plus: alembic-as-Job, PgBouncer, split <code>/api/live</code> ↔ <code>/api/ready</code>, Arq queue, OTel head + tail sampling, CDN runbook.</p>
+      </div>
+    </section>
+
+    <!-- 8. Auto-scaling — ML pipeline -->
+    <section class="slide" data-title="ML auto-scale">
+      <div class="body">
+        <h2>Auto-scaling the ML pipeline</h2>
+        <p class="lead">ADR 0010. Each layer scales independently — same trainer logic.</p>
+        <div class="diagram"><pre class="mermaid">
+flowchart LR
+    Kafka[("Kafka stream")]
+    Iceberg[("Iceberg<br/>versioned datasets")]
+    RayData["Ray Data on KubeRay<br/>(0..N CPU)"]
+    Train["Ray Train + FSDP<br/>(0..N H100, spot OK)"]
+    Adapter[("LoRA adapter<br/>~30 MB")]
+    vLLM["vLLM serving<br/>multi-tenant LoRA hot-swap"]
+    Active["Active learning<br/>LLM-as-judge → next train"]
+
+    Kafka --> RayData --> Iceberg --> Train --> Adapter --> vLLM
+    vLLM -.-> Active -.-> Iceberg
+
+    classDef data  fill:#1f242c,stroke:#58a6ff,color:#e6edf3
+    classDef train fill:#1f242c,stroke:#d2a8ff,color:#e6edf3
+    classDef serve fill:#1f242c,stroke:#56d364,color:#e6edf3
+    class Kafka,Iceberg,RayData data
+    class Train,Adapter train
+    class vLLM,Active serve
+        </pre></div>
+        <p class="small">v3 fine-tune (E4B + LoRA r16/α32, 3 epochs): train loss 0.37, val 1.01, ROUGE-L 0.394, $1.40 / 28 min on a single H100.</p>
+      </div>
+    </section>
+
+    <!-- 9. Production readiness -->
+    <section class="slide" data-title="Production">
+      <div class="body">
+        <h2>Production readiness — what's actually wired</h2>
+        <div class="three-col">
+          <div class="card">
+            <h4>Security</h4>
+            <ul>
+              <li>API-key auth (DB-backed)</li>
+              <li>PBKDF2-SHA256 admin pw</li>
+              <li>HMAC session cookie</li>
+              <li>5/min/IP login throttle</li>
+              <li>1 MiB body cap (DoS)</li>
+              <li>CSP / HSTS / CORS / etc.</li>
+              <li>Audit log on every write</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h4>Resilience</h4>
+            <ul>
+              <li>Backpressure (503 shed)</li>
+              <li>Circuit breakers</li>
+              <li>Graceful drain shutdown</li>
+              <li>Last-good-state on refresh fail</li>
+              <li>X-State-Age + Stale headers</li>
+              <li>Cold-start snapshot</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h4>Observability</h4>
+            <ul>
+              <li>Structured logs (JSON in prod)</li>
+              <li>X-Request-ID end-to-end</li>
+              <li>Prometheus /metrics</li>
+              <li>OTel head + tail sampling</li>
+              <li>Sentry (opt-in)</li>
+              <li>Live + Ready probes</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 10. ADRs -->
+    <section class="slide" data-title="Decisions (ADRs)">
+      <div class="body">
+        <h2>Decisions on record (ADRs 0001–0013)</h2>
+        <table>
+          <tbody>
+            <tr><td class="mono">0002</td><td>Hybrid categorization</td><td class="muted">Rules + KMeans, not LLM.</td></tr>
+            <tr><td class="mono">0003</td><td>Self-host summarization with Gemma 4</td><td class="muted">QLoRA fine-tune, $1.40 PoC, ROUGE-L 0.39.</td></tr>
+            <tr><td class="mono">0004</td><td>FastAPI + static frontend over Streamlit</td><td class="muted">Production-shaped, multi-consumer.</td></tr>
+            <tr><td class="mono">0006</td><td>API-key auth; defer JWT</td><td class="muted">Single-tenant today; clean migration path.</td></tr>
+            <tr><td class="mono">0008</td><td>Tiered storage for 100M+</td><td class="muted">Postgres + Iceberg + columnar warehouse.</td></tr>
+            <tr><td class="mono">0009</td><td>Admin panel + runtime config</td><td class="muted">No env vars; LISTEN/NOTIFY propagation.</td></tr>
+            <tr><td class="mono">0010</td><td>Auto-scaling ML pipeline</td><td class="muted">Ray Data + FSDP + vLLM + active learning.</td></tr>
+            <tr><td class="mono">0011</td><td>Repository pattern + streaming</td><td class="muted">Mergeable folds; in-memory ↔ streaming verified.</td></tr>
+            <tr><td class="mono">0012</td><td>LLM cascade (tier-2 frontier)</td><td class="muted">Bulk economics + edge-case quality.</td></tr>
+            <tr><td class="mono">0013</td><td>API tier auto-scaling</td><td class="muted">15 items implemented; manifests under <code>deploy/k8s/</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 11. Repo highlights -->
+    <section class="slide" data-title="Repo at a glance">
+      <div class="body">
+        <h2>Repo at a glance</h2>
+        <div class="two-col">
+          <div>
+            <h3>Source</h3>
+            <pre><code>src/
+  categorizer.py    — rules
+  clustering.py     — TF-IDF + KMeans
+  sentiment.py      — trajectories
+  insights.py       — 6 modules
+  repository.py     — protocol + 3 backends
+  streaming.py      — mergeable folds
+  runtime_settings  — DB-backed config
+api/
+  main.py           — lifespan + middleware
+  routes.py         — versioned API
+  state.py          — pipeline cache
+  snapshot.py       — cold-start fix
+  jobs.py           — Arq scaffolding
+  limiter.py        — rate-limit + per-tenant
+  circuit_breaker.py
+  backpressure.py
+  admin/            — session + settings
+gemma-finetune/     — QLoRA recipes</code></pre>
+          </div>
+          <div>
+            <h3>Quality bar</h3>
+            <ul>
+              <li><span class="green">183</span> tests · 94% coverage · <code>fakeredis</code> + Postgres LISTEN/NOTIFY paths under test</li>
+              <li><code>ruff</code> clean · <code>mypy</code> on src + api · 13 ADRs</li>
+              <li>27 Mermaid diagrams across docs</li>
+              <li>K8s manifests for HPA, migrate Job, PgBouncer, snapshot CronJob, OTel collector, Arq workers</li>
+            </ul>
+            <h3>Throughput baseline</h3>
+            <p class="muted">Local load test (11 endpoints, weighted mix): ~395 RPS · p95 ≤ 35 ms.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 12. Tradeoffs -->
+    <section class="slide" data-title="Tradeoffs">
+      <div class="body">
+        <h2>What I deliberately didn't do</h2>
+        <ul>
+          <li><strong class="orange">No LLM in categorization.</strong> Rules cover ~90% at &lt;1ms; zero-shot LLM matched accuracy but added cost, latency, and a non-determinism surface. ADR 0002.</li>
+          <li><strong class="orange">No JWT yet.</strong> Single-tenant, single-consumer. JWT is a one-line dependency swap when multi-tenancy lands. ADR 0006.</li>
+          <li><strong class="orange">No DB for analytical state.</strong> The pipeline cache is per-replica + a shared snapshot. Adding a warehouse is the ADR 0008 path; today the snapshot is the bridge.</li>
+          <li><strong class="orange">No streaming clustering.</strong> Streaming pipeline skips clustering + viz; those run separately at scale (Spark MLlib / sampled). ADR 0011.</li>
+          <li><strong class="orange">No frontier-model gateway shipped yet.</strong> Designed (ADR 0012) but not built — Tier-1 fine-tune is sufficient on the sample.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- 13. Closing -->
+    <section class="slide title-slide" data-title="Thanks">
+      <div class="body">
+        <h1>Thanks</h1>
+        <p class="sub">All artifacts at <a href="https://github.com/r2st/rubrik-transcript-intelligence">github.com/r2st/rubrik-transcript-intelligence</a></p>
+        <div>
+          <span class="tag">README</span>
+          <span class="tag">ARCHITECTURE.md</span>
+          <span class="tag">ADRs 0001–0013</span>
+          <span class="tag">SECURITY.md</span>
+          <span class="tag">deploy/cdn-runbook.md</span>
+        </div>
+        <p class="meta">Use <span class="kbd">←</span> <span class="kbd">→</span> to navigate · <span class="kbd">F</span> for fullscreen · <span class="kbd">P</span> for print mode</p>
+      </div>
+    </section>
+  </main>
+
+  <div class="chrome">
+    <div class="brand"><strong>Transcript Intelligence</strong> · Rubrik take-home</div>
+    <div class="progress"><span class="bar" id="bar"></span></div>
+    <div class="counter"><span id="cur">1</span> / <span id="total">1</span>
+      <button class="nav-btn" onclick="prev()">←</button>
+      <button class="nav-btn" onclick="next()">→</button>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js"></script>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: {
+        primaryColor: '#161b22',
+        primaryTextColor: '#e6edf3',
+        primaryBorderColor: '#58a6ff',
+        lineColor: '#8b949e',
+        textColor: '#e6edf3',
+        background: '#0d1117',
+        mainBkg: '#1f242c',
+        secondaryColor: '#1f242c',
+        tertiaryColor: '#1f242c'
+      },
+      flowchart: { htmlLabels: true, curve: 'basis' }
+    });
+
+    const slides = Array.from(document.querySelectorAll('.slide'));
+    const total = slides.length;
+    let idx = 0;
+    const cur = document.getElementById('cur');
+    const totalEl = document.getElementById('total');
+    const bar = document.getElementById('bar');
+    const toc = document.getElementById('toc');
+
+    totalEl.textContent = total;
+
+    // Build TOC dots
+    slides.forEach((_, i) => {
+      const b = document.createElement('button');
+      b.title = slides[i].getAttribute('data-title') || `Slide ${i + 1}`;
+      b.addEventListener('click', () => go(i));
+      toc.appendChild(b);
+    });
+
+    function go(i) {
+      idx = Math.max(0, Math.min(total - 1, i));
+      slides.forEach((s, j) => s.classList.toggle('active', j === idx));
+      cur.textContent = idx + 1;
+      bar.style.width = ((idx + 1) / total * 100) + '%';
+      Array.from(toc.children).forEach((d, j) => d.classList.toggle('active', j === idx));
+      try { window.location.hash = `#${idx + 1}`; } catch (_) {}
+    }
+
+    function next() { go(idx + 1); }
+    function prev() { go(idx - 1); }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      switch (e.key) {
+        case 'ArrowRight':
+        case ' ':
+        case 'PageDown':
+          e.preventDefault(); next(); break;
+        case 'ArrowLeft':
+        case 'PageUp':
+          e.preventDefault(); prev(); break;
+        case 'Home':
+          go(0); break;
+        case 'End':
+          go(total - 1); break;
+        case 'f': case 'F':
+          if (document.fullscreenElement) document.exitFullscreen();
+          else document.documentElement.requestFullscreen();
+          break;
+        case 'p': case 'P':
+          window.print(); break;
+      }
+    });
+
+    // Click halves to navigate (left third = prev, right two-thirds = next)
+    document.getElementById('deck').addEventListener('click', (e) => {
+      if (e.target.closest('a, button, .nav-btn, .toc')) return;
+      const x = e.clientX;
+      if (x < window.innerWidth * 0.33) prev();
+      else next();
+    });
+
+    // Restore from hash if present
+    if (location.hash) {
+      const n = parseInt(location.hash.slice(1), 10);
+      if (!isNaN(n)) go(n - 1);
+      else go(0);
+    } else {
+      go(0);
+    }
+  </script>
+</body>
+</html>
