@@ -111,8 +111,19 @@ flowchart TB
         MW["Middleware stack<br/>body cap · request-id · CSP · CORS · gzip · slowapi · OTel"]
         State["api/state.py<br/>cached pipeline state · refresh task"]
     end
-    subgraph L3["🧠 Analytics core (src/)"]
-        Pipeline["categorizer · sentiment · clustering<br/>insights · visualizations"]
+    subgraph L3["🧠 Analytics core (src/ + gemma-finetune/)"]
+        direction TB
+        Rules["categorizer<br/>📏 regex rules · config-driven"]
+        SentS["sentiment<br/>📈 per-sentence labels<br/>+ numpy trajectory math"]
+        ML["clustering<br/>🎯 TF-IDF + KMeans<br/>silhouette-picked k"]
+        LLM["LLM tier<br/>🤖 Gemma 4 fine-tune (QLoRA)<br/>summaries + action items"]
+        InsightsB["insights<br/>💡 pandas analytics<br/>(health · incidents · pivots · …)"]
+        VizB["visualizations<br/>📊 matplotlib · plotly"]
+        Rules --> InsightsB
+        SentS --> InsightsB
+        ML --> InsightsB
+        LLM --> InsightsB
+        InsightsB --> VizB
     end
     subgraph L2["🔌 Ingestion (src/)"]
         IngestLayer["TranscriptRepository protocol<br/>data_loader · streaming.py"]
@@ -244,6 +255,86 @@ flowchart LR
 ```
 
 Operators tune behavior in the **control plane** (rate limits, churn weights, the API key, feature flags) and every change is audited. Analysts consume the **data plane** through versioned read APIs whose behavior is parameterized by the control plane's current settings — so an operator can adjust risk thresholds without a deploy, and the change propagates to every replica within 5 seconds (the runtime-settings cache TTL).
+
+### Analytics core — what each algorithm does
+
+The "Analytics core" tier in the layered view is intentionally heterogeneous: rules, classical ML, and a fine-tuned LLM each handle the work they're best at. ADR 0002 explains why this hybrid beats any one approach taken to the limit; the diagram below pins what's where.
+
+```mermaid
+flowchart LR
+    subgraph IN["Inputs"]
+        Title["meeting title"]
+        Body["full transcript<br/>(joined sentences)"]
+        Sents["per-sentence rows<br/>(with sentimentType)"]
+        Gold["gold summaries +<br/>action_items.json"]
+    end
+
+    subgraph Rules["📏 Rule layer · src/categorizer.py"]
+        Cat1["classify_call_type()<br/>regex on title"]
+        Cat2["classify_purpose()<br/>ordered regex cascade"]
+        Cat3["detect_product_areas()<br/>keyword bag (multi-label)"]
+        Cat4["extract_customer()<br/>regex group capture"]
+    end
+
+    subgraph Stat["🎯 Classical ML · src/clustering.py + src/sentiment.py"]
+        TFIDF["TfidfVectorizer<br/>(stop words · ngram_range)"]
+        KMeans["KMeans (k chosen by<br/>silhouette over 4–10)"]
+        Traj["numpy trajectory math<br/>open/close means · pivots ·<br/>per-speaker dominance"]
+    end
+
+    subgraph LLMt["🤖 LLM tier · gemma-finetune/"]
+        Base["Gemma 4 E4B-it base"]
+        QLoRA["QLoRA fine-tune<br/>(r=16, α=32, 3 epochs)"]
+        Adapter["v3-e4b-allrec adapter<br/>(ROUGE-L 0.394)"]
+        Serve["vLLM serve + LoRA hot-swap<br/>(prod path · ADR 0010)"]
+        Base --> QLoRA --> Adapter --> Serve
+    end
+
+    subgraph Out["📤 Insight outputs"]
+        Health["customer_health<br/>risk tiers"]
+        Incident["incident_impact"]
+        Compete["competitive_signals"]
+        Pivots["negative_pivots"]
+        Sum["meeting summary +<br/>action items (LLM)"]
+    end
+
+    Title --> Cat1
+    Title --> Cat2
+    Title --> Cat4
+    Body --> Cat3
+    Body --> TFIDF --> KMeans
+    Sents --> Traj
+    Gold --> QLoRA
+    Body --> Serve
+
+    Cat1 --> Health
+    Cat2 --> Incident
+    Cat3 --> Compete
+    Cat4 --> Health
+    KMeans --> Compete
+    Traj --> Pivots
+    Traj --> Health
+    Serve --> Sum
+
+    classDef rules fill:#e3f2fd,stroke:#1f77b4,color:#0d2235
+    classDef stat fill:#e8f5e9,stroke:#2e7d32,color:#0d2235
+    classDef llm fill:#f3e5f5,stroke:#6a1b9a,color:#1a0628
+    class Cat1,Cat2,Cat3,Cat4 rules
+    class TFIDF,KMeans,Traj stat
+    class Base,QLoRA,Adapter,Serve llm
+```
+
+| Layer | Algorithm | Where | Why this layer | Cost / latency |
+|---|---|---|---|---|
+| **Rules** | Compiled regex + keyword bags, config-driven | `src/categorizer.py` (rules in `src/config.py`) | Call types and purposes follow strict prefixes (`Support Case #`, `Aegis /`, `URGENT:`) — rules cover ~90% with sub-ms inference and full auditability. | <1 ms · free · deterministic |
+| **Sentiment** | Per-sentence labels (from source data) + numpy trajectory math | `src/sentiment.py` | Trajectories surface mid-meeting pivots that an averaged score hides. Pure numeric work — no model needed. | <10 ms / meeting · free |
+| **Classical ML** | TF-IDF (sklearn) → KMeans, `k` chosen by silhouette over 4–10 | `src/clustering.py` | Catches latent cross-cutting themes (multi-product migrations, cost-driven renewals) that the rules' fixed taxonomy can't see. | seconds for sample; MiniBatchKMeans / Spark MLlib at 10M+ (ADR 0008) |
+| **LLM (fine-tuned)** | Gemma 4 E4B-it + QLoRA adapter (`v3-e4b-allrec`, ROUGE-L 0.394) | `gemma-finetune/` adapters; production path served via vLLM with multi-tenant LoRA hot-swap (ADR 0010) | Generative tasks where rules and clustering can't compete: meeting summary in client house style + structured action-item extraction. | ~150 ms / meeting on H100 vLLM; $1.40 to train v3 on the sample |
+| **Insights** | Pandas joins, weighted scoring, threshold logic | `src/insights.py` | Composes the four signal layers above into business-readable outputs (customer health, incident impact, competitive mentions, negative pivots). | <100 ms / meeting |
+
+**No LLM in the categorization path.** ADR 0002 documents the deliberate choice: zero-shot LLM matched the rules' accuracy at the sample's structure but added $1–$10/1k-doc cost, 0.5–3s latency, non-determinism, and a data-egress surface — none of which were worth paying for a problem rules already solve. The LLM earns its cost on the *generative* tasks (summaries + action items), not the classification ones.
+
+The training pipeline for the LLM tier (Ray Data dataset prep → multi-node FSDP fine-tune → adapter registry → vLLM serving with autoscaled GPU pools → active-learning feedback loop) is a separate auto-scaling architecture; see ADR 0010 and the "Auto-scaling ML pipeline" section below.
 
 ---
 
