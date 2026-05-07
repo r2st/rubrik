@@ -699,6 +699,71 @@ Migration is incremental: each step in [ADR 0008](adr/0008-data-layer-for-scale.
 
 ---
 
+## Auto-scaling the API tier
+
+ADR 0010 covers the ML pipeline (training + vLLM serving). The **API tier itself** has its own auto-scaling story — and several gaps the current implementation hasn't yet closed. ADR 0013 documents the target; the diagram below shows it.
+
+```mermaid
+flowchart TB
+    subgraph Edge["🌐 Edge"]
+        CDN["CDN (CloudFront/Fastly)<br/>honors ETag + Cache-Control"]
+        Envoy["Envoy / API gateway<br/>per-tenant rate limit (Redis)"]
+    end
+
+    subgraph Migrate["🛠️ Pre-deploy"]
+        MJob["k8s Job: alembic upgrade head<br/>completes before rolling update"]
+    end
+
+    subgraph API["📡 API tier (HPA on RPS + p95)"]
+        Pod1["uvicorn replica<br/>liveness=/api/live · readiness=/api/ready<br/>concurrency-cap semaphore<br/>circuit breakers (DB · vLLM · frontier)"]
+        Pod2["uvicorn replica"]
+        PodN["uvicorn replica"]
+    end
+
+    subgraph Shared["🔗 Shared state (read-mostly)"]
+        Snap[("PipelineState snapshot<br/>S3 / Redis · written by CronJob<br/>replicas read on warm")]
+        RTSet[("settings + audit_log<br/>via PgBouncer")]
+        RLim[("Redis<br/>cluster-wide rate limit · per-tenant buckets<br/>+ pub/sub for settings invalidation")]
+    end
+
+    subgraph Refresh["⏱️ Refresh (singleton)"]
+        Cron["k8s CronJob: pipeline rebuild<br/>writes Snap; bumps manifest"]
+    end
+
+    subgraph Async["📥 Job queue"]
+        Q[("Arq / Celery queue<br/>(scaled by depth)")]
+        Workers["worker Deployment<br/>ETL · validate · training-data prep"]
+        Q --> Workers
+    end
+
+    subgraph Obs["📊 Observability (scaled)"]
+        OTC["OTel Collector<br/>tail-sampling (1% + 100% errors)"]
+        PromAdapter["Prometheus Adapter<br/>(custom metrics → HPA)"]
+    end
+
+    Client["Browser / API consumers"] --> CDN --> Envoy --> Pod1 & Pod2 & PodN
+    Pod1 --> Snap
+    Pod1 --> RTSet
+    Pod1 --> RLim
+    Pod1 --> Q
+    Cron --> Snap
+    RTSet -.->|LISTEN/NOTIFY<br/>or Redis pub/sub| Pod1
+    MJob --> RTSet
+    Pod1 --> OTC
+    OTC --> PromAdapter --> HPA["HPA<br/>scales API replicas"]
+
+    classDef pod fill:#e3f2fd,stroke:#1f77b4,color:#0d2235
+    classDef shared fill:#fffbe6,stroke:#a06b00,color:#3d2a00
+    classDef job fill:#f3e5f5,stroke:#6a1b9a,color:#1a0628
+    class Pod1,Pod2,PodN pod
+    class Snap,RTSet,RLim shared
+    class Cron,Workers,Q,MJob job
+```
+
+The 15 specific improvements (cold-start snapshot, externalized refresh, Redis-backed cluster-wide rate limiting, custom-metric HPA, migrations as a Job, PgBouncer, concurrency-cap backpressure, circuit breakers, settings-change pub/sub, split liveness/readiness, async job queue, CDN, per-tenant fairness, OTel collector + sampling, graceful shutdown) are tabled in [ADR 0013](adr/0013-api-tier-auto-scaling.md). Current code already does some of this (lifespan-based shutdown, ETag headers, slowapi); the rest is the next production-readiness PR.
+
+---
+
 ## Auto-scaling ML pipeline (training + serving)
 
 The Gemma 4 fine-tune in [ADR 0003](adr/0003-self-host-summarization-with-gemma-4.md) was a deliberate proof-of-concept on the client sample (~95 train meetings on a single H100, $1.40 wall-clock cost) — sufficient to demonstrate the recipe works and the economics close. **Production scales every layer independently** without changing the trainer logic:
