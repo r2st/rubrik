@@ -64,6 +64,41 @@ Each layer has its **own scaling primitive** and its **own trigger metric**:
 | Serving | vLLM on GPU pods + HPA | Request queue depth + GPU util | 0–N GPU pods (on-demand) |
 | Active learning | Async worker pool | Pending labels in queue | 0–N CPU workers |
 
+### End-to-end training cycle
+
+How a transcript travels from production into the next model:
+
+```mermaid
+sequenceDiagram
+    participant Src as Sources<br/>(Gong/Otter/Zoom)
+    participant Kafka as Kafka topic<br/>ti.transcripts
+    participant Ray as Ray Data<br/>workers
+    participant Ice as Iceberg<br/>training_sets
+    participant Train as Ray Train<br/>(KubeRay · 8× H100)
+    participant S3 as S3<br/>LoRA adapters
+    participant Reg as MLflow<br/>registry
+    participant vLLM as vLLM serving<br/>(L4 pods)
+
+    Src->>Kafka: stream transcript
+    Note over Kafka: append-only<br/>replayable
+
+    Kafka->>Ray: tail topic, autoscale on lag
+    Ray->>Ray: dedup · quality · multi-task expand
+    Ray->>Ice: write versioned dataset (v=YYYY-MM-DD)
+
+    Note over Ice: weekly cron<br/>or label-queue ≥ 1k
+    Ice->>Train: read sharded
+    Train->>Train: FSDP shard · LoRA · 3 epochs
+    Train->>S3: checkpoint LoRA weights
+    Train->>Reg: register adapter + metrics
+
+    Reg->>vLLM: pull adapter on next pod restart
+    vLLM->>vLLM: --enable-lora · hot-swap
+    Note over vLLM: champion/challenger<br/>before promotion
+```
+
+---
+
 ## Layer 1 — Data preparation at scale
 
 ### Ray Data streaming pipeline
@@ -99,6 +134,26 @@ def build_training_dataset(
 
 **Alternatives considered:** Spark (fine but heavier ops), Apache Beam (more flexible but more boilerplate), pure pandas (breaks at 10M+ rows).
 
+### Pipeline stages
+
+```mermaid
+flowchart LR
+    Raw[(Iceberg<br/>raw_transcripts)] --> Filter[Quality filter<br/>language · length · PII]
+    Filter --> Dedup[Near-dup hash<br/>cross-batch Bloom]
+    Labels[(Iceberg<br/>training_labels)] --> Join
+    Dedup --> Join[Zip on meeting_id]
+    Join --> Expand[Multi-task expand<br/>1 meeting → 4 rows]
+    Expand --> Shuffle[Random shuffle<br/>seed=42]
+    Shuffle --> Out[(Iceberg<br/>training_sets · v=YYYY-MM-DD)]
+
+    classDef src fill:#e8f5e9
+    classDef sink fill:#e3f2fd
+    class Raw,Labels src
+    class Out sink
+```
+
+Each box runs as Ray Data tasks against an autoscaling worker pool. The pipeline streams — no stage materializes the full dataset. Multi-task expansion (the trick that took v3 from loss 1.18 → 0.37) is just one `flat_map` step.
+
 ## Layer 2 — Distributed training
 
 ### Ray Train + FSDP for multi-node fine-tuning
@@ -126,6 +181,41 @@ trainer = TorchTrainer(
 )
 result = trainer.fit()
 ```
+
+### KubeRay topology — what runs where
+
+```mermaid
+flowchart TB
+    subgraph K8s["K8s cluster · KubeRay operator"]
+        direction TB
+        subgraph CtrlPlane["Control plane (1 pod, CPU-on-demand)"]
+            Head[Ray head<br/>scheduler · dashboard]
+        end
+        subgraph WorkerGroup["GPU worker group · Karpenter spot pool"]
+            W1[Worker 1<br/>4× H100]
+            W2[Worker 2<br/>4× H100]
+            W8[Worker 8<br/>4× H100]
+            W1 -.NCCL.- W2
+            W2 -.NCCL.- W8
+        end
+        Head -->|placement| W1
+        Head -->|placement| W2
+        Head -->|placement| W8
+        Job[RayJob CR] --> Head
+    end
+
+    Iceberg[(Iceberg<br/>training set)] -->|sharded read| W1
+    Iceberg -->|sharded read| W2
+    Iceberg -->|sharded read| W8
+    W1 --> S3[(S3 LoRA adapter<br/>+ checkpoints)]
+
+    classDef gpu fill:#fff3e0
+    classDef ctrl fill:#e3f2fd
+    class W1,W2,W8 gpu
+    class Head,Job ctrl
+```
+
+`shutdownAfterJobFinishes=true` in the RayJob CR means the operator tears the cluster down on completion; Karpenter reclaims the H100 nodes within 60 seconds. Zero idle GPU spend.
 
 ### Key production concerns
 
@@ -199,6 +289,28 @@ behavior:
 - `vllm_pending_requests` — direct measure of saturation; if requests queue, scale up
 - `vllm_gpu_cache_usage_perc` — KV-cache pressure; a single pod can be at 100% GPU util but happily serving, OR at 50% GPU util but cache-thrashing — only the cache metric catches the second case
 
+### HPA signal flow
+
+```mermaid
+flowchart LR
+    vLLM[vLLM pod<br/>/metrics endpoint] -->|scrape 15s| Prom[Prometheus]
+    Prom -->|external metrics API| Adapter[prometheus-adapter]
+    Adapter -->|custom metric| HPA[HPA controller]
+    HPA -->|+pods OR -pods| Deploy[gemma-serving<br/>Deployment]
+    Deploy -->|"if Deployment.replicas > available capacity"| Karp[Karpenter]
+    Karp -->|provision L4 node| NewPod[fresh L4 pod]
+    NewPod -->|join| vLLM
+
+    HPA -.->|behavior:<br/>scaleUp 0s window<br/>scaleDown 5min window| HPA
+
+    classDef metric fill:#fff3e0
+    classDef ctrl fill:#e3f2fd
+    class vLLM,Prom,Adapter metric
+    class HPA,Deploy,Karp ctrl
+```
+
+**Why this loop, not CPU%:** the chain is GPU-application-aware end-to-end. CPU% on a vLLM pod is mostly Python overhead — it can be at 30% while the pod is GPU-saturated, or 70% while doing nothing useful. The two custom metrics directly answer "are we serving requests fast enough?"
+
 ### Cold start mitigation
 
 Loading a 4B model + LoRA from S3 to a fresh GPU pod is ~30 seconds. Strategies:
@@ -217,6 +329,30 @@ POST /v1/completions
 ```
 
 This collapses what would be N deployments into 1, with N adapter files in S3. **Cost win is dramatic** at a few-hundred-tenant scale.
+
+```mermaid
+flowchart LR
+    Acme[Acme client] -->|model: tenant-acme| LB[LoadBalancer]
+    Globex[Globex client] -->|model: tenant-globex| LB
+    Public[Public client] -->|model: v3-prod| LB
+
+    LB --> Pod1[vLLM pod 1<br/>base: gemma-4-E4B-it]
+    LB --> Pod2[vLLM pod 2<br/>base: gemma-4-E4B-it]
+
+    Pod1 -.lazy load.- A1[(s3://lora/tenant-acme/)]
+    Pod1 -.lazy load.- A2[(s3://lora/tenant-globex/)]
+    Pod1 -.lazy load.- A3[(s3://lora/v3-prod/)]
+    Pod2 -.lazy load.- A1
+    Pod2 -.lazy load.- A2
+    Pod2 -.lazy load.- A3
+
+    classDef tenant fill:#e8f5e9
+    classDef pod fill:#fff3e0
+    class Acme,Globex,Public tenant
+    class Pod1,Pod2 pod
+```
+
+Each pod loads the base model once (~7 GB on disk, ~25 s) and pulls 30 MB LoRA adapters on first request per tenant. The base-model amortization is what makes this economical: 100 tenants on 1 base model is ~100× cheaper than 100 separate deployments.
 
 ## Layer 4 — Active learning loop
 
@@ -241,6 +377,34 @@ The training queue feeds the next Ray Data run (Layer 1), which feeds the next t
 
 Retraining cadence: weekly cron, or whenever the queue exceeds 1k samples — whichever comes first. Each new LoRA goes through champion/challenger A/B before promotion (`scaling/eval_harness.py`).
 
+### State machine — one inference's journey
+
+```mermaid
+stateDiagram-v2
+    [*] --> Inference: production request
+    Inference --> HighConf: confidence ≥ 0.85
+    Inference --> LowConf: confidence < 0.85
+
+    HighConf --> [*]: discard (model nailed it)
+    LowConf --> Dedup: hash check
+
+    Dedup --> [*]: already seen<br/>(idempotent)
+    Dedup --> BudgetCheck: new
+
+    BudgetCheck --> [*]: daily budget hit<br/>(deferred to tomorrow)
+    BudgetCheck --> Judge: under budget
+
+    Judge --> ModelKept: judge accepts<br/>(score ≥ 0.70)
+    Judge --> JudgeRewrites: judge rewrites<br/>(score < 0.70)
+
+    ModelKept --> Queue: write {prompt, model_output}
+    JudgeRewrites --> Queue: write {prompt, judge_output}
+
+    Queue --> [*]: feeds next training cycle
+```
+
+This pattern is **production-safe**: idempotent (same input → same outcome), budget-bounded (daily $ ceiling never exceeded), and audited (every queue write carries a `(judge_id, score, timestamp)` trail for later analysis).
+
 ## Cost & operations
 
 | Component | Auto-scale floor | Auto-scale ceiling | Cost driver |
@@ -258,6 +422,33 @@ Retraining cadence: weekly cron, or whenever the queue exceeds 1k samples — wh
 - Data prep (sporadic Ray Data jobs): ~$5/day
 
 **Total at typical load: ~$50–100/day for the ML stack** — well under the cost of vendor-API summarization at 10k+ docs/day, which was the core argument in ADR 0003.
+
+### What runs when
+
+```mermaid
+gantt
+    title Daily compute timeline (US working hours, typical workday)
+    dateFormat HH:mm
+    axisFormat %H:%M
+
+    section Serving
+    1 always-warm L4 pod (24h/day)        :active, serve_base, 00:00, 24h
+    Burst to 4–8 pods (peak hours)        :crit, serve_burst, 09:00, 9h
+
+    section Active learning
+    Async judge calls (continuous)        :active, al_judge, 00:00, 24h
+
+    section Training (weekly)
+    Data prep — Ray Data                  :prep, 22:00, 30m
+    Distributed training — 8× H100 spot   :crit, train, 22:30, 4h
+    Champion/challenger eval              :eval, after train, 30m
+    Adapter promote                        :milestone, after eval, 0m
+
+    section Idle compute (auto-scaled to zero)
+    H100 nodes off                         :done, idle1, 02:00, 20h
+```
+
+Training runs once a week (off-peak hours, on spot instances). Serving stays minimal off-peak and bursts during business hours. Active learning runs continuously but cheap. The H100 nodes — by far the most expensive — are off 95% of the time.
 
 ## What this codebase delivers today
 

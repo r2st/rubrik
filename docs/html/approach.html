@@ -604,7 +604,29 @@ footer code {
 <h3 id="verdict_1">Verdict<a class="anchor" href="#verdict_1" title="Permanent link">¶</a></h3>
 <p><strong>Adopt the v3 Gemma 4 adapter for production summarization.</strong> The economics are compelling — $1.40 to train, $0 per inference, fully self-hosted, output style locked in. Vendor APIs are reasonable as a stopgap during early onboarding when speed-to-market beats lock-in concerns, but the long-term answer is the self-hosted model.</p>
 <h3 id="scaling-the-recipe">Scaling the recipe<a class="anchor" href="#scaling-the-recipe" title="Permanent link">¶</a></h3>
-<p>The single-H100 workshop run scales to multi-node training (Ray Train + FSDP) and an autoscaled vLLM serving fleet without changing the trainer logic — only the orchestration wrapper. Active learning closes the loop: production traffic generates the next training set automatically. Full architecture in <a href="adr/0010-auto-scaling-ml-pipeline.md">ADR 0010</a>; code + K8s manifests in <a href="../gemma-finetune/scaling/README.md"><code>gemma-finetune/scaling/</code></a>.</p>
+<p>The single-H100 workshop run scales to multi-node training (Ray Train + FSDP) and an autoscaled vLLM serving fleet without changing the trainer logic — only the orchestration wrapper. Active learning closes the loop: production traffic generates the next training set automatically.</p>
+<div class="mermaid">flowchart LR
+    subgraph Workshop["Today (workshop)"]
+        W1[1 meeting set · 95 rows]
+        W2[1× H100 · 28 min]
+        W3[Local file output]
+        W1 --> W2 --> W3
+    end
+    subgraph Production["Production (ADR 0010)"]
+        P1["Streaming<br/>Kafka → Ray Data → Iceberg"]
+        P2["Multi-node<br/>Ray Train + FSDP · spot OK"]
+        P3["Autoscaled vLLM<br/>multi-tenant LoRA"]
+        P4["Active learning<br/>continuous improvement"]
+        P1 --> P2 --> P3 --> P4 --> P1
+    end
+    Workshop -.same trainer logic.-> Production
+
+    classDef workshop fill:#fff3e0
+    classDef prod fill:#e8f5e9
+    class W1,W2,W3 workshop
+    class P1,P2,P3,P4 prod</div>
+
+<p>Full architecture in <a href="adr/0010-auto-scaling-ml-pipeline.md">ADR 0010</a>; code + K8s manifests in <a href="../gemma-finetune/scaling/README.md"><code>gemma-finetune/scaling/</code></a>.</p>
 <div class="mermaid">flowchart LR
     Trans[Transcript] --> Pipe{Summary source}
     Pipe -->|today| Gold["dataset's<br/>summary.json"]

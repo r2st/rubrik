@@ -4,6 +4,43 @@ The single-H100 recipe in [`../code/finetune_v3.py`](../code/finetune_v3.py) is 
 
 **See [ADR 0010](../../docs/adr/0010-auto-scaling-ml-pipeline.md) for the full architecture rationale.** This README is the code-level entry point.
 
+## How the four files fit together
+
+```mermaid
+flowchart LR
+    subgraph Layer1["📥 Data prep"]
+        DP[data_pipeline.py]
+    end
+    subgraph Layer2["🏋️ Training"]
+        TD[train_distributed.py]
+    end
+    subgraph Layer3["⚡ Serving"]
+        Note[(vLLM image · no Python file<br/>configured via k8s manifests)]
+    end
+    subgraph Layer4["♻️ Active learning"]
+        AL[active_learning.py]
+        EH[eval_harness.py]
+    end
+
+    Kafka[(Kafka<br/>ti.transcripts)] --> DP
+    DP -->|writes versioned dataset| Iceberg[(Iceberg<br/>training_sets)]
+    Iceberg -->|sharded read| TD
+    TD -->|writes adapter| S3[(S3<br/>LoRA adapters)]
+    S3 -->|--lora-modules| vLLM[vLLM pod fleet]
+
+    vLLM -->|inference logs| AL
+    AL -->|low-confidence routed| EH
+    EH -->|judged labels| TrainQueue[(Iceberg<br/>training_labels)]
+    TrainQueue --> DP
+
+    classDef code fill:#e8f5e9
+    classDef store fill:#e3f2fd
+    class DP,TD,AL,EH code
+    class Kafka,Iceberg,S3,TrainQueue store
+```
+
+Each file is the entry point for **its layer's lifecycle**. They run on **different infrastructure** with **independent autoscaling triggers** — that's the architecture working as intended.
+
 ## Layout
 
 ```
@@ -30,6 +67,26 @@ scaling/
 | Training | `train_distributed.py` | `train-job.yaml` | Job submission |
 | Serving | (uses vLLM directly) | `serving-deployment.yaml` + `hpa.yaml` | Queue depth + GPU cache % |
 | Active learning | `active_learning.py` | (worker pool) | Pending labels in queue |
+
+### Scaling triggers — at a glance
+
+```mermaid
+flowchart TB
+    subgraph Triggers["What triggers each layer to scale"]
+        direction LR
+        T1[Data prep<br/>Kafka consumer lag<br/>> 1000 msgs] --> S1[Add CPU workers<br/>Karpenter cpu-on-demand]
+        T2[Training<br/>RayJob submitted] --> S2[Provision H100 nodes<br/>Karpenter spot pool]
+        T3[Serving<br/>vllm_pending_requests > 5<br/>OR gpu_cache_usage > 70%] --> S3[Add L4 pods<br/>HPA → Karpenter on-demand]
+        T4[Active learning<br/>Pending labels > N<br/>AND under daily budget] --> S4[Spawn judge workers<br/>up to rate limit]
+    end
+
+    classDef trig fill:#fff3e0
+    classDef act fill:#e8f5e9
+    class T1,T2,T3,T4 trig
+    class S1,S2,S3,S4 act
+```
+
+Each layer reaches **zero** when idle: Karpenter consolidates empty nodes within 60 s, HPA's `scaleDown` policy floors at the `minReplicas: 1` always-warm baseline for serving, and the active-learning pool literally has no work when the inference logs are empty.
 
 ## Running
 

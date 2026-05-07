@@ -351,6 +351,29 @@ Three tabs:
 - **Async I/O refactor** — not a bottleneck at this scale; sync handlers are simpler
 - **Distributed cache** — single-instance singleton suffices; Redis is the next step at scale
 
+## Auto-scaling at production volume
+
+The Gemma 4 fine-tune (95 meetings, 1× H100, $1.40) is the *workshop recipe*. Production runs the same trainer logic on a multi-node cluster with autoscaled inference. Each layer scales independently against its own bottleneck signal and goes to zero when idle.
+
+```mermaid
+flowchart LR
+    Kafka[(Kafka<br/>transcripts)] --> Data["📥 Ray Data<br/>0..N CPU on lag"]
+    Data --> Iceberg[(Iceberg<br/>training_sets)]
+    Iceberg --> Train["🏋️ Ray Train + FSDP<br/>0..N H100 spot"]
+    Train --> S3[(S3<br/>LoRA adapters)]
+    S3 --> vLLM["⚡ vLLM<br/>multi-LoRA, HPA<br/>min 1 pod, max 24"]
+    vLLM --> Inf[Production inferences]
+    Inf --> Judge["♻️ LLM-as-judge<br/>active learning"]
+    Judge --> Iceberg
+
+    classDef store fill:#e3f2fd
+    classDef compute fill:#e8f5e9
+    class Kafka,Iceberg,S3 store
+    class Data,Train,vLLM,Judge compute
+```
+
+Architecture, cost math (~$50–100/day at typical load), code skeletons, and K8s manifests live in [ADR 0010](docs/adr/0010-auto-scaling-ml-pipeline.md) + [`gemma-finetune/scaling/`](gemma-finetune/scaling/README.md).
+
 ## Documentation
 
 - [`docs/APPROACH.md`](docs/APPROACH.md) — methodology, comparisons, and verdicts (start here)

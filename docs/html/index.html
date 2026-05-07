@@ -900,6 +900,24 @@ open http://127.0.0.1:8000/admin
 <li><strong>Async I/O refactor</strong> — not a bottleneck at this scale; sync handlers are simpler</li>
 <li><strong>Distributed cache</strong> — single-instance singleton suffices; Redis is the next step at scale</li>
 </ul>
+<h2 id="auto-scaling-at-production-volume">Auto-scaling at production volume<a class="anchor" href="#auto-scaling-at-production-volume" title="Permanent link">¶</a></h2>
+<p>The Gemma 4 fine-tune (95 meetings, 1× H100, $1.40) is the <em>workshop recipe</em>. Production runs the same trainer logic on a multi-node cluster with autoscaled inference. Each layer scales independently against its own bottleneck signal and goes to zero when idle.</p>
+<div class="mermaid">flowchart LR
+    Kafka[(Kafka<br/>transcripts)] --> Data["📥 Ray Data<br/>0..N CPU on lag"]
+    Data --> Iceberg[(Iceberg<br/>training_sets)]
+    Iceberg --> Train["🏋️ Ray Train + FSDP<br/>0..N H100 spot"]
+    Train --> S3[(S3<br/>LoRA adapters)]
+    S3 --> vLLM["⚡ vLLM<br/>multi-LoRA, HPA<br/>min 1 pod, max 24"]
+    vLLM --> Inf[Production inferences]
+    Inf --> Judge["♻️ LLM-as-judge<br/>active learning"]
+    Judge --> Iceberg
+
+    classDef store fill:#e3f2fd
+    classDef compute fill:#e8f5e9
+    class Kafka,Iceberg,S3 store
+    class Data,Train,vLLM,Judge compute</div>
+
+<p>Architecture, cost math (~$50–100/day at typical load), code skeletons, and K8s manifests live in <a href="docs/adr/0010-auto-scaling-ml-pipeline.md">ADR 0010</a> + <a href="gemma-finetune/scaling/README.md"><code>gemma-finetune/scaling/</code></a>.</p>
 <h2 id="documentation">Documentation<a class="anchor" href="#documentation" title="Permanent link">¶</a></h2>
 <ul>
 <li><a href="approach.html"><code>docs/APPROACH.md</code></a> — methodology, comparisons, and verdicts (start here)</li>
@@ -918,7 +936,7 @@ make load-test         # 30s, 20 VUs, all endpoints — exits non-zero if error 
   Generated from <code>README.md</code>
 </footer>
 </main>
-<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#contents" class="h2">Contents</a></li><li><a href="#what-this-does" class="h2">What this does</a></li><li><a href="#headline-findings" class="h2">Headline findings</a></li><li><a href="#quick-start" class="h2">Quick start</a></li><li><a href="#architecture" class="h2">Architecture</a></li><li><a href="#project-layout" class="h2">Project layout</a></li><li><a href="#testing-validation" class="h2">Testing &amp; validation</a></li><li><a href="#api-web-dashboard" class="h2">API &amp; web dashboard</a></li><li><a href="#why-fastapi-instead-of-streamlit" class="h3">Why FastAPI instead of Streamlit</a></li><li><a href="#run-all-services" class="h2">Run all services</a></li><li><a href="#container-alternative-docker-compose" class="h3">Container alternative (docker compose)</a></li><li><a href="#production-readiness" class="h2">Production readiness</a></li><li><a href="#security" class="h3">Security</a></li><li><a href="#performance-caching" class="h3">Performance &amp; caching</a></li><li><a href="#resilience" class="h3">Resilience</a></li><li><a href="#observability-opt-in" class="h3">Observability (opt-in)</a></li><li><a href="#engineering" class="h3">Engineering</a></li><li><a href="#configuration" class="h3">Configuration</a></li><li><a href="#admin-panel" class="h3">Admin panel</a></li><li><a href="#whats-deliberately-not-done" class="h3">What's deliberately not done</a></li><li><a href="#documentation" class="h2">Documentation</a></li><li><a href="#load-testing" class="h3">Load testing</a></li><li><a href="#license" class="h2">License</a></li></ul></aside>
+<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#contents" class="h2">Contents</a></li><li><a href="#what-this-does" class="h2">What this does</a></li><li><a href="#headline-findings" class="h2">Headline findings</a></li><li><a href="#quick-start" class="h2">Quick start</a></li><li><a href="#architecture" class="h2">Architecture</a></li><li><a href="#project-layout" class="h2">Project layout</a></li><li><a href="#testing-validation" class="h2">Testing &amp; validation</a></li><li><a href="#api-web-dashboard" class="h2">API &amp; web dashboard</a></li><li><a href="#why-fastapi-instead-of-streamlit" class="h3">Why FastAPI instead of Streamlit</a></li><li><a href="#run-all-services" class="h2">Run all services</a></li><li><a href="#container-alternative-docker-compose" class="h3">Container alternative (docker compose)</a></li><li><a href="#production-readiness" class="h2">Production readiness</a></li><li><a href="#security" class="h3">Security</a></li><li><a href="#performance-caching" class="h3">Performance &amp; caching</a></li><li><a href="#resilience" class="h3">Resilience</a></li><li><a href="#observability-opt-in" class="h3">Observability (opt-in)</a></li><li><a href="#engineering" class="h3">Engineering</a></li><li><a href="#configuration" class="h3">Configuration</a></li><li><a href="#admin-panel" class="h3">Admin panel</a></li><li><a href="#whats-deliberately-not-done" class="h3">What's deliberately not done</a></li><li><a href="#auto-scaling-at-production-volume" class="h2">Auto-scaling at production volume</a></li><li><a href="#documentation" class="h2">Documentation</a></li><li><a href="#load-testing" class="h3">Load testing</a></li><li><a href="#license" class="h2">License</a></li></ul></aside>
 </div>
 <script
   src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"

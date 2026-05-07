@@ -98,7 +98,32 @@ Four iterations, recommended adapter is **v3-e4b-allrec**. Full methodology in [
 
 ### Scaling the recipe
 
-The single-H100 workshop run scales to multi-node training (Ray Train + FSDP) and an autoscaled vLLM serving fleet without changing the trainer logic — only the orchestration wrapper. Active learning closes the loop: production traffic generates the next training set automatically. Full architecture in [ADR 0010](adr/0010-auto-scaling-ml-pipeline.md); code + K8s manifests in [`gemma-finetune/scaling/`](../gemma-finetune/scaling/README.md).
+The single-H100 workshop run scales to multi-node training (Ray Train + FSDP) and an autoscaled vLLM serving fleet without changing the trainer logic — only the orchestration wrapper. Active learning closes the loop: production traffic generates the next training set automatically.
+
+```mermaid
+flowchart LR
+    subgraph Workshop["Today (workshop)"]
+        W1[1 meeting set · 95 rows]
+        W2[1× H100 · 28 min]
+        W3[Local file output]
+        W1 --> W2 --> W3
+    end
+    subgraph Production["Production (ADR 0010)"]
+        P1["Streaming<br/>Kafka → Ray Data → Iceberg"]
+        P2["Multi-node<br/>Ray Train + FSDP · spot OK"]
+        P3["Autoscaled vLLM<br/>multi-tenant LoRA"]
+        P4["Active learning<br/>continuous improvement"]
+        P1 --> P2 --> P3 --> P4 --> P1
+    end
+    Workshop -.same trainer logic.-> Production
+
+    classDef workshop fill:#fff3e0
+    classDef prod fill:#e8f5e9
+    class W1,W2,W3 workshop
+    class P1,P2,P3,P4 prod
+```
+
+Full architecture in [ADR 0010](adr/0010-auto-scaling-ml-pipeline.md); code + K8s manifests in [`gemma-finetune/scaling/`](../gemma-finetune/scaling/README.md).
 
 ```mermaid
 flowchart LR

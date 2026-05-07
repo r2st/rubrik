@@ -395,6 +395,66 @@ Each layer scales on the **right signal** and stops at zero when idle:
 
 Code skeletons + production K8s manifests live in [`gemma-finetune/scaling/`](../gemma-finetune/scaling/README.md). The single-H100 recipe stays as the local-development entry point; the same trainer logic runs on a 32-GPU cluster via Ray Train. **The recipe doesn't change. The substrate does.**
 
+### Training stack — what's where
+
+```mermaid
+flowchart TB
+    subgraph K8s["Kubernetes cluster"]
+        subgraph CtrlPlane["Control plane · Karpenter cpu-on-demand pool"]
+            Job[RayJob CR<br/>shutdownAfterJobFinishes=true]
+            Head[Ray head<br/>scheduler · dashboard]
+        end
+        subgraph TrainPool["Training data plane · Karpenter gpu-h100-spot"]
+            W1[Worker 1 · 4× H100<br/>FSDP shard]
+            W2[Worker 2 · 4× H100<br/>FSDP shard]
+            Wn[… up to 8 nodes]
+            W1 -.NCCL/EFA.- W2
+            W2 -.NCCL/EFA.- Wn
+        end
+        Job --> Head
+        Head --> W1
+        Head --> W2
+        Head --> Wn
+    end
+    Ice[(Iceberg<br/>training_sets)] -.sharded read.-> W1
+    Ice -.sharded read.-> W2
+    Ice -.sharded read.-> Wn
+    W1 --> S3[(S3 LoRA adapters<br/>+ checkpoints)]
+    Head --> ML[(MLflow registry)]
+```
+
+### Serving stack — autoscaling chain end-to-end
+
+```mermaid
+flowchart LR
+    Client[Client] -->|/v1/completions<br/>model: tenant-acme| LB[k8s Service]
+    LB --> Pod1[vLLM pod 1]
+    LB --> Pod2[vLLM pod 2]
+    LB --> PodN[…]
+
+    Pod1 -.scrape /metrics.- Prom[Prometheus]
+    Pod2 -.scrape.- Prom
+    PodN -.scrape.- Prom
+
+    Prom --> Adapter[prometheus-adapter<br/>vllm_pending_requests<br/>vllm_gpu_cache_usage_perc]
+    Adapter --> HPA[HPA controller]
+    HPA -->|desired replicas| Deploy[gemma-serving<br/>Deployment]
+    Deploy -->|pods needed > capacity| Karp[Karpenter]
+    Karp -->|provision L4| NodePool[gpu-l4 NodePool<br/>on-demand]
+    NodePool -.new node.-> Pod1
+
+    Pod1 -.lazy load.-> S3[(S3 LoRA<br/>tenant adapters)]
+
+    classDef metric fill:#fff3e0
+    classDef ctrl fill:#e3f2fd
+    classDef pod fill:#e8f5e9
+    class Prom,Adapter metric
+    class HPA,Deploy,Karp,LB ctrl
+    class Pod1,Pod2,PodN pod
+```
+
+Two real signals drive scale-up: queue depth (`vllm_pending_requests`) and KV-cache pressure (`vllm_gpu_cache_usage_perc`). CPU% is intentionally not in the loop — it's misleading for GPU inference.
+
 See [ADR 0010](adr/0010-auto-scaling-ml-pipeline.md) for the full architecture, cost math, and decision rationale.
 
 ---

@@ -724,6 +724,59 @@ footer code {
 </tbody>
 </table>
 <p>Code skeletons + production K8s manifests live in <a href="../gemma-finetune/scaling/README.md"><code>gemma-finetune/scaling/</code></a>. The single-H100 recipe stays as the local-development entry point; the same trainer logic runs on a 32-GPU cluster via Ray Train. <strong>The recipe doesn't change. The substrate does.</strong></p>
+<h3 id="training-stack-whats-where">Training stack — what's where<a class="anchor" href="#training-stack-whats-where" title="Permanent link">¶</a></h3>
+<div class="mermaid">flowchart TB
+    subgraph K8s["Kubernetes cluster"]
+        subgraph CtrlPlane["Control plane · Karpenter cpu-on-demand pool"]
+            Job[RayJob CR<br/>shutdownAfterJobFinishes=true]
+            Head[Ray head<br/>scheduler · dashboard]
+        end
+        subgraph TrainPool["Training data plane · Karpenter gpu-h100-spot"]
+            W1[Worker 1 · 4× H100<br/>FSDP shard]
+            W2[Worker 2 · 4× H100<br/>FSDP shard]
+            Wn[… up to 8 nodes]
+            W1 -.NCCL/EFA.- W2
+            W2 -.NCCL/EFA.- Wn
+        end
+        Job --> Head
+        Head --> W1
+        Head --> W2
+        Head --> Wn
+    end
+    Ice[(Iceberg<br/>training_sets)] -.sharded read.-> W1
+    Ice -.sharded read.-> W2
+    Ice -.sharded read.-> Wn
+    W1 --> S3[(S3 LoRA adapters<br/>+ checkpoints)]
+    Head --> ML[(MLflow registry)]</div>
+
+<h3 id="serving-stack-autoscaling-chain-end-to-end">Serving stack — autoscaling chain end-to-end<a class="anchor" href="#serving-stack-autoscaling-chain-end-to-end" title="Permanent link">¶</a></h3>
+<div class="mermaid">flowchart LR
+    Client[Client] -->|/v1/completions<br/>model: tenant-acme| LB[k8s Service]
+    LB --> Pod1[vLLM pod 1]
+    LB --> Pod2[vLLM pod 2]
+    LB --> PodN[…]
+
+    Pod1 -.scrape /metrics.- Prom[Prometheus]
+    Pod2 -.scrape.- Prom
+    PodN -.scrape.- Prom
+
+    Prom --> Adapter[prometheus-adapter<br/>vllm_pending_requests<br/>vllm_gpu_cache_usage_perc]
+    Adapter --> HPA[HPA controller]
+    HPA -->|desired replicas| Deploy[gemma-serving<br/>Deployment]
+    Deploy -->|pods needed > capacity| Karp[Karpenter]
+    Karp -->|provision L4| NodePool[gpu-l4 NodePool<br/>on-demand]
+    NodePool -.new node.-> Pod1
+
+    Pod1 -.lazy load.-> S3[(S3 LoRA<br/>tenant adapters)]
+
+    classDef metric fill:#fff3e0
+    classDef ctrl fill:#e3f2fd
+    classDef pod fill:#e8f5e9
+    class Prom,Adapter metric
+    class HPA,Deploy,Karp,LB ctrl
+    class Pod1,Pod2,PodN pod</div>
+
+<p>Two real signals drive scale-up: queue depth (<code>vllm_pending_requests</code>) and KV-cache pressure (<code>vllm_gpu_cache_usage_perc</code>). CPU% is intentionally not in the loop — it's misleading for GPU inference.</p>
 <p>See <a href="adr/0010-auto-scaling-ml-pipeline.md">ADR 0010</a> for the full architecture, cost math, and decision rationale.</p>
 <hr />
 <h2 id="admin-panel-runtime-configuration-without-env-vars">Admin panel — runtime configuration without env vars<a class="anchor" href="#admin-panel-runtime-configuration-without-env-vars" title="Permanent link">¶</a></h2>
@@ -831,7 +884,7 @@ footer code {
   Generated from <code>docs/ARCHITECTURE.md</code>
 </footer>
 </main>
-<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#design-principles" class="h2">Design principles</a></li><li><a href="#system-overview" class="h2">System overview</a></li><li><a href="#module-dependencies" class="h2">Module dependencies</a></li><li><a href="#data-model" class="h2">Data model</a></li><li><a href="#pipeline-stages" class="h2">Pipeline stages</a></li><li><a href="#interface-layering" class="h2">Interface layering</a></li><li><a href="#validation-flow" class="h2">Validation flow</a></li><li><a href="#api-request-lifecycle" class="h2">API request lifecycle</a></li><li><a href="#scaling-to-100m-records" class="h2">Scaling to 100M+ records</a></li><li><a href="#auto-scaling-ml-pipeline-training-serving" class="h2">Auto-scaling ML pipeline (training + serving)</a></li><li><a href="#admin-panel-runtime-configuration-without-env-vars" class="h2">Admin panel — runtime configuration without env vars</a></li><li><a href="#performance-caching" class="h2">Performance &amp; caching</a></li><li><a href="#extensibility" class="h2">Extensibility</a></li></ul></aside>
+<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#design-principles" class="h2">Design principles</a></li><li><a href="#system-overview" class="h2">System overview</a></li><li><a href="#module-dependencies" class="h2">Module dependencies</a></li><li><a href="#data-model" class="h2">Data model</a></li><li><a href="#pipeline-stages" class="h2">Pipeline stages</a></li><li><a href="#interface-layering" class="h2">Interface layering</a></li><li><a href="#validation-flow" class="h2">Validation flow</a></li><li><a href="#api-request-lifecycle" class="h2">API request lifecycle</a></li><li><a href="#scaling-to-100m-records" class="h2">Scaling to 100M+ records</a></li><li><a href="#auto-scaling-ml-pipeline-training-serving" class="h2">Auto-scaling ML pipeline (training + serving)</a></li><li><a href="#training-stack-whats-where" class="h3">Training stack — what's where</a></li><li><a href="#serving-stack-autoscaling-chain-end-to-end" class="h3">Serving stack — autoscaling chain end-to-end</a></li><li><a href="#admin-panel-runtime-configuration-without-env-vars" class="h2">Admin panel — runtime configuration without env vars</a></li><li><a href="#performance-caching" class="h2">Performance &amp; caching</a></li><li><a href="#extensibility" class="h2">Extensibility</a></li></ul></aside>
 </div>
 <script
   src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"
