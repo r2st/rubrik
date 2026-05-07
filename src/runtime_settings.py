@@ -270,6 +270,19 @@ def _publish_change(key: str) -> None:
         log.debug("LISTEN/NOTIFY publish skipped: %s", e)
 
 
+def handle_notification(payload: str, callback) -> None:
+    """Dispatch a single notification payload to ``callback``.
+
+    Extracted from the listener-thread loop so the load-bearing logic — what
+    happens *given* a notification — is unit-testable without spinning up
+    Postgres. The thread loop is the I/O wrapper; this is the policy.
+    """
+    try:
+        callback(payload)
+    except Exception:  # noqa: BLE001
+        log.exception("settings listener callback failed (payload=%r)", payload)
+
+
 def start_listener(callback):
     """Start a background thread that LISTENs for settings_changed notifications.
 
@@ -313,10 +326,7 @@ class _ListenerThread(threading.Thread):
                 raw.poll()
                 while raw.notifies:
                     n = raw.notifies.pop(0)
-                    try:
-                        self._callback(n.payload or "")
-                    except Exception:  # noqa: BLE001
-                        log.exception("settings listener callback failed")
+                    handle_notification(n.payload or "", self._callback)
         except Exception:  # noqa: BLE001
             log.exception("settings listener crashed; falling back to TTL-only")
 

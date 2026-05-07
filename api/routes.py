@@ -23,6 +23,7 @@ from src import sentiment as sent_mod
 from . import state
 from .auth import require_api_key
 from .caching import cached
+from .limiter import per_tenant_rate_limit_dep
 from .models import (
     ActionItemOwner,
     ClusterInfo,
@@ -192,7 +193,16 @@ def summary(request: Request, response: Response) -> SummaryResponse:
 # ---------------------------------------------------------------------------
 # Meetings
 # ---------------------------------------------------------------------------
-@router.get("/meetings", response_model=list[MeetingSummary], tags=["meetings"])
+@router.get(
+    "/meetings",
+    response_model=list[MeetingSummary],
+    tags=["meetings"],
+    # Per-tenant cap override. The global limiter already gives fairness via
+    # tenant_aware_key (each tenant has their own bucket); this dependency
+    # additionally enforces a per-tenant cap from rate_limit.per_tenant when
+    # the operator has set one, returning 429 + Retry-After.
+    dependencies=[Depends(per_tenant_rate_limit_dep)],
+)
 def list_meetings(
     call_type: Optional[list[str]] = Query(None),
     product: Optional[list[str]] = Query(None),
