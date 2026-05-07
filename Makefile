@@ -28,10 +28,10 @@ format:  ## Auto-format with ruff
 type-check:  ## mypy type check
 	mypy src api
 
-validate:  ## Semantic validation against the client sample
+validate:  ## Semantic validation against the development dataset
 	python validate.py
 
-validate-edge:  ## Semantic validation against client sample + synthetic edge cases
+validate-edge:  ## Semantic validation against development dataset + synthetic edge cases
 	python validate.py --extra-dataset tests/fixtures/synthetic
 
 gen-synthetic:  ## (Re)generate the synthetic edge-case fixtures

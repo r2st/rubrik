@@ -1,11 +1,11 @@
 """Transcript repository — abstraction over the data source.
 
 The original `data_loader.load_all_meetings()` reads every meeting JSON file
-into memory. That's correct for sample-volume data; it fails at 100M+
+into memory. That's correct for small datasets; it fails at 100M+
 records. This module introduces a `TranscriptRepository` Protocol so the
 analytical pipeline can run against any backend that implements it:
 
-  - **LocalDirectoryRepository** — the original sample-volume behavior; reads
+  - **LocalDirectoryRepository** — the original development-volume behavior; reads
     JSON dirs from disk. Default for dev / take-home.
   - **DatabaseRepository** — production path; reads from Postgres + Iceberg.
     Not implemented here; documented in ADR 0008 + 0011 as the swap target.
@@ -49,13 +49,13 @@ class TranscriptRepository(Protocol):
         ...
 
     def all(self) -> list[Meeting]:
-        """Eager load everything. Convenience for sample-volume use; do NOT
+        """Eager load everything. Convenience for small datasets; do NOT
         call at production volume — use `stream()` instead."""
         ...
 
 
 # ---------------------------------------------------------------------------
-# Backend: local directory of JSON files (the sample-volume default)
+# Backend: local directory of JSON files (the development-volume default)
 # ---------------------------------------------------------------------------
 class LocalDirectoryRepository:
     """Reads meeting directories from a local filesystem path.

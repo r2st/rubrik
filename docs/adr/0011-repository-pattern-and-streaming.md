@@ -70,7 +70,7 @@ Streaming output **must match** in-memory output on the same input. Tests in `te
 
 | Property | Verified by |
 |---|---|
-| Total meetings | `test_streaming_total_meetings_matches_sample` |
+| Total meetings | `test_streaming_total_meetings_matches_dataset` |
 | Call-type distribution | `test_streaming_call_type_distribution_matches` |
 | Average sentiment (within 0.001) | `test_streaming_avg_sentiment_matches` |
 | Friction moments (sharp pivots) | `test_streaming_finds_same_friction_moments` |

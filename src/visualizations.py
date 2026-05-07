@@ -203,9 +203,9 @@ def plot_speaker_dynamics(dominance: pd.DataFrame) -> plt.Figure:
 def plot_sentiment_trajectories(meetings: pd.DataFrame, n: int = 6) -> plt.Figure:
     """Show a few example within-meeting sentiment trajectories — the new view."""
     _setup()
-    sample = meetings.dropna(subset=["trajectory"]).sort_values("max_drop").head(n)
+    selection = meetings.dropna(subset=["trajectory"]).sort_values("max_drop").head(n)
     fig, ax = plt.subplots(figsize=(11, 5))
-    for _, row in sample.iterrows():
+    for _, row in selection.iterrows():
         ax.plot(row["trajectory"], marker="o",
                 label=row["title"][:50] + ("…" if len(row["title"]) > 50 else ""))
     ax.axhline(y=0, color="gray", ls="--", alpha=0.4)

@@ -1,7 +1,7 @@
 """Streaming analytical pipeline for production-volume data.
 
 The default pipeline (`run_analysis.py` without `--streaming`) holds the full
-dataset in pandas — fine for the client sample, fails at production volume.
+dataset in pandas — fine for small datasets, fails at production volume.
 
 This module provides a streaming alternative: process meetings in batches,
 fold partial results, never hold the full set in memory. Same insights, same
@@ -17,7 +17,7 @@ Usage:
     print(result.summary)        # category counts, sentiment averages
     result.write_csv("./out/")   # same outputs as the in-memory pipeline
 
-For sample volumes (≤ ~100k records), the in-memory pipeline is faster.
+For development volumes (≤ ~100k records), the in-memory pipeline is faster.
 For production (≥ ~1M records), streaming is required.
 """
 from __future__ import annotations

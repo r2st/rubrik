@@ -1,8 +1,8 @@
 # Rubrik Take-Home — Gemma 4 Fine-Tune on Meeting Transcripts
 
-QLoRA fine-tunes of Gemma 4 (E2B and E4B) on the **client's sample** of meeting transcripts. Goal: turn a generic instruction-tuned base model into a specialized **meeting-summarizer + action-item extractor** that matches the style of the gold-labelled summaries shipped with the sample.
+QLoRA fine-tunes of Gemma 4 (E2B and E4B) on the development dataset of meeting transcripts. Goal: turn a generic instruction-tuned base model into a specialized **meeting-summarizer + action-item extractor** that matches the style of the gold-labelled summaries in the dataset.
 
-> **Scope: proof-of-concept.** The client provided a representative sample (~100 meetings) and confirmed synthetic generation is acceptable for edge cases. This work demonstrates **the recipe** — that fine-tuning Gemma 4 on the dataset's gold summaries produces meaningful quality gains over the baseline at workshop economics ($1.40, 28 minutes). It is **not** a production training run. Production volume (millions to 100M+ records) trains via the path in [`scaling/`](scaling/README.md) and [ADR 0010](../docs/adr/0010-auto-scaling-ml-pipeline.md): Ray Data streaming dataset prep, multi-node FSDP training on autoscaled GPU pools, autoscaled vLLM serving with multi-tenant LoRA hot-swap, and an active-learning loop that turns production traffic into the next training set.
+> **Scope: recipe validation.** The QLoRA recipe was validated in development; synthetic generation is acceptable for edge cases. This work demonstrates **the recipe** — that fine-tuning Gemma 4 on the dataset's gold summaries produces meaningful quality gains over the baseline at workshop economics ($1.40, 28 minutes). It is **not** a production training run. Production volume (millions to 100M+ records) trains via the path in [`scaling/`](scaling/README.md) and [ADR 0010](../docs/adr/0010-auto-scaling-ml-pipeline.md): Ray Data streaming dataset prep, multi-node FSDP training on autoscaled GPU pools, autoscaled vLLM serving with multi-tenant LoRA hot-swap, and an active-learning loop that turns production traffic into the next training set.
 
 Trained on a single Nebius H100 (80 GB). Four iterations — recommended adapter is `v3-e4b-allrec`.
 
@@ -23,7 +23,7 @@ All runs hit the workshop "5/5 prompts visibly shifted vs baseline" verdict. v3 
 
 ## Task
 
-The client-provided sample (`/dataset/{meetingId}/`) ships **~100 representative meetings** (production volume target: millions+), each with:
+The development dataset (`/dataset/{meetingId}/`) ships representative meetings (production volume target: millions+), each with:
 
 - `transcript.json` — speaker-labelled turns
 - `summary.json` — gold paragraph summary + structured `actionItems[]`
@@ -31,7 +31,7 @@ The client-provided sample (`/dataset/{meetingId}/`) ships **~100 representative
 
 The fine-tune target: given a raw transcript, produce a one-paragraph summary followed by `Owner: task` action-item bullets, in the exact style the dataset's gold summaries use.
 
-Held-out **5 meetings** (last 5 by sort order) for evaluation. Trained on the remaining 95.
+A small held-out slice (last meetings by sort order) is used for evaluation; the rest train the adapter.
 
 ---
 
@@ -46,7 +46,7 @@ Held-out **5 meetings** (last 5 by sort order) for evaluation. Trained on the re
 **v3 — stack 7 known wins.** Applied a focused list of upgrades:
 
 1. **Larger base model** — `gemma-4-E4B-it` (~4B params)
-2. **Multi-task data** — each meeting → 4 training rows (full summary, summary-only, actions-only, attendees) → 380 rows
+2. **Multi-task data** — each meeting → 4 training rows (full summary, summary-only, actions-only, attendees)
 3. **Completion-only loss** — only the response tokens contribute to gradient (`completion_only_loss=True`)
 4. **Validation split** — 10 % held out, val loss measured manually after training
 5. **Truncation fix** — `max_seq_length=8192` (transcripts up to ~5k tokens were silently truncated at 4096)
@@ -72,7 +72,7 @@ The shared workshop script (`templates/finetune.py` from the gemma-finetune work
 
 **`adapters/v3-e4b-allrec/attendee-12-v3-r1.adapter/`** — 31 MB LoRA on `unsloth/gemma-4-E4B-it`. Wins on ROUGE-L, val loss, and qualitative read.
 
-**Sample output (held-out meeting-1):**
+**Example output (held-out meeting-1):**
 
 > David Kim from Aegis Cloud Security support is speaking with Lauren Bishop, VP of Infrastructure at Cobalt Software, regarding a complete outage of the Aegis Detect dashboard and threat monitoring capabilities for their Enterprise account (CSW-4492). Lauren is extremely frustrated and is actively evaluating SentinelShield as a competitor due to the critical nature of the security blind spot her team is currently facing. David is escalating this as a P1 incident and committing to providing updates every fifteen minutes until service is restored, while also ensuring a full root cause analysis and service credit discussion with her account team.
 >
@@ -97,8 +97,8 @@ pip install -U unsloth trl peft datasets bitsandbytes accelerate
 
 # 2. Build the multi-task dataset from the Rubrik /dataset folder
 python code/build_rubrik_jsonl.py
-# -> data/rubrik_meetings.jsonl (380 rows = 95 meetings × 4 tasks)
-# -> data/rubrik_eval_prompts.json (5 held-out meetings)
+# -> data/rubrik_meetings.jsonl (multi-task expansion: 4 rows per meeting)
+# -> data/rubrik_eval_prompts.json (held-out meetings for eval)
 
 # 3. Train
 python code/finetune_v3.py \
@@ -146,8 +146,8 @@ gemma-finetune/
 │   ├── judge_compare.py               Claude-as-judge (v3 vs v4 side-by-side)
 │   └── test_v3.py                     smoke-test inference script
 ├── data/
-│   ├── rubrik_meetings.jsonl          380 train rows, JSONL with {instruction, context, response}
-│   └── rubrik_eval_prompts.json       5 held-out meetings + reference summaries
+│   ├── rubrik_meetings.jsonl          training rows (JSONL with {instruction, context, response})
+│   └── rubrik_eval_prompts.json       held-out meetings + reference summaries
 ├── adapters/
 │   ├── v1-r4-3ep/                     E2B, rank 4, 3 epochs
 │   ├── v2-r16-5ep/                    E2B, rank 16, 5 epochs
@@ -169,7 +169,7 @@ In priority order:
 
 1. **LLM-as-judge pipeline** — ROUGE-L scored v3's meeting-1 output at 0.39 even though it captured every fact in the reference (penalized for paraphrasing). Replace ROUGE with Claude-graded faithfulness / completeness / format / hallucinations scores. Code is in `code/judge_compare.py`; needs only an `ANTHROPIC_API_KEY`.
 
-2. **Synthesize more training data.** The client sample is intentionally small (proof-of-concept scope) and the client confirmed synthetic generation is acceptable. Use Claude or GPT-4 to generate 200–500 additional transcripts in the dataset's voice for edge-case coverage; at production volume, this becomes part of the active-learning loop in `scaling/active_learning.py`. Train v5 on real + synthetic mix. Likely the single biggest unrealized lift on the proof-of-concept.
+2. **Synthesize more training data.** The development dataset is intentionally small (recipe-validation scope) and synthetic generation is acceptable. Use Claude or GPT-4 to generate 200–500 additional transcripts in the dataset's voice for edge-case coverage; at production volume, this becomes part of the active-learning loop in `scaling/active_learning.py`. Train v5 on real + synthetic mix. Likely the single biggest unrealized lift at this stage.
 
 3. **Action-item F1 as the primary metric.** The structured output (action items) is what end-users actually consume. Parse `Owner: task` lines, score precision/recall on owner+task overlap. Already implemented in `finetune_v4.py`; promote it from a side-metric to the gating one.
 
@@ -181,11 +181,11 @@ In priority order:
 
 ## Caveats / known limitations
 
-The numbers below all reflect proof-of-concept scope on the client sample. None are production-grade; production deployment runs against the path in [`scaling/`](scaling/README.md).
+The numbers below all reflect recipe-validation scope on a small development dataset. None are production-grade; production deployment runs against the path in [`scaling/`](scaling/README.md).
 
-- **Sample-size training data.** The client provided a representative sample (proof-of-concept scope, not the production training set). Production trains on millions of records sourced from Kafka via Ray Data, with synthetic augmentation for edge cases the natural traffic stream is slow to surface.
+- **Small training set.** The development dataset is small by design (recipe validation, not the production training set). Production trains on millions of records sourced from Kafka via Ray Data, with synthetic augmentation for edge cases the natural traffic stream is slow to surface.
 - **Single seed.** All numbers from one training run per config. ±0.02-0.05 ROUGE-L noise expected from re-running with a different seed.
-- **5-meeting eval set is small.** Each metric averaged over 5 examples — directional signal, not statistically rigorous. Production eval uses the LLM-as-judge harness in `scaling/eval_harness.py` over a much larger held-out set generated continuously by the active-learning loop.
+- **Small eval set.** Each metric averaged over a handful of held-out examples — directional signal, not statistically rigorous. Production eval uses the LLM-as-judge harness in `scaling/eval_harness.py` over a much larger held-out set generated continuously by the active-learning loop.
 - **ROUGE-L is lexical.** Penalizes paraphrase. v3 scored modestly on ROUGE despite producing factually clean output — see point #1 in recommendations.
 - **Multimodal Gemma 4 has rough edges.** Required workarounds for `assistant_only_loss`, per-epoch eval, and adapter loading via `peft`. None of these are dealbreakers but they're under-documented in the unsloth/transformers stack as of May 2026.
 - **No instruction-following safety eval.** The fine-tune is narrow (meeting summaries). Did not measure regression on the base model's general instruction-following — would matter if this adapter were deployed broadly.

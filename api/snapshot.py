@@ -1,7 +1,7 @@
 """Shared `PipelineState` snapshot — cold-start fix.
 
 Without this, every replica calls ``state._build()`` on first request and
-rebuilds the entire pipeline from the data source. At sample volume that's
+rebuilds the entire pipeline from the data source. At development volume that's
 seconds; at 100M records it's minutes per pod, and HPA scale-up becomes a
 guaranteed latency cliff.
 

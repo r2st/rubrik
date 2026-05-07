@@ -77,7 +77,7 @@ def streaming_result():
     return streaming_analyze(repo, batch_size=25)
 
 
-def test_streaming_total_meetings_matches_sample(streaming_result, raw_meetings):
+def test_streaming_total_meetings_matches_dataset(streaming_result, raw_meetings):
     assert streaming_result.aggregate.n_meetings == len(raw_meetings)
 
 

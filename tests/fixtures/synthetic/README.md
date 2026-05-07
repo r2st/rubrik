@@ -1,6 +1,6 @@
 # Synthetic edge-case fixtures
 
-Hand-crafted meeting directories that exercise corners the client's sample doesn't reach. See [`docs/edge-cases.md`](../../../docs/edge-cases.md) for the full rationale.
+Hand-crafted meeting directories that exercise corners the production stream is unlikely to surface organically. See [`docs/edge-cases.md`](../../../docs/edge-cases.md) for the full rationale.
 
 ## Layout
 
