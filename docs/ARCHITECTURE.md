@@ -102,10 +102,12 @@ graph TD
     clust --> viz
     ins --> viz
 
-    classDef root fill:#1f77b4,color:#fff
-    classDef leaf fill:#aec7e8
+    classDef root fill:#1f77b4,stroke:#0d3d66,color:#ffffff
+    classDef leaf fill:#aec7e8,stroke:#3a6ea5,color:#0d2235
+    classDef mid fill:#f5f7fa,stroke:#5a6b80,color:#0d2235
     class config root
     class viz leaf
+    class loader,cat,sent,clust,ins mid
 ```
 
 `config.py` is the dependency root — every other module reads from it. `visualizations.py` is the leaf. Clean DAG; no cycles.
