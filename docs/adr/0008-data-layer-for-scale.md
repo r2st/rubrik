@@ -6,7 +6,7 @@
 
 ## Context
 
-ADR 0005 documented why we ship without a database today: the input is static JSON, every endpoint is read-only, the pipeline rebuilds in seconds, and a single-tenant in-memory cache covers the workload. That verdict was right for the client's representative sample (~100 meetings) and remains comfortable up to **~100k records**.
+ADR 0005 documented why we ship without a database today: the input is static JSON, every endpoint is read-only, the pipeline rebuilds in seconds, and a single-tenant in-memory cache covers the workload. That verdict was right for verifying the system on the shipped sample dataset and remains comfortable up to **~100k records**.
 
 It does not survive contact with **100 million records**, which is the realistic production ceiling:
 

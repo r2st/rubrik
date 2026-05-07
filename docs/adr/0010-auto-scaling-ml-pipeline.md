@@ -6,7 +6,7 @@
 
 ## Context
 
-The client provided a representative **sample** of meeting transcripts (~100 meetings, of which ~95 became the training split). The fine-tuning work in ADR 0003 ran against that sample — single H100, $1.40 wall-clock cost, 28 minutes — which was the right scope to *prove the recipe* and verify the cost economics close. It is not the right scope to run in production. The client also confirmed synthetic generation can supplement the sample for edge cases.
+The system targets **millions to 100M+ records**, with the ML tier auto-scaling to match. The dataset shipped with the brief is a representative *sample* used for verification; the fine-tuning work in ADR 0003 ran against that sample — single H100, $1.40 wall-clock cost, 28 minutes — which was the right scope to *prove the recipe* and verify the cost economics close. It is **not** the right scope to run in production. The client also confirmed synthetic generation can supplement the sample for edge cases.
 
 Production assumptions for this ADR:
 

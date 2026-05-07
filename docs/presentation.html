@@ -287,12 +287,13 @@
     <section class="slide title-slide" data-title="Title">
       <div class="body">
         <h1>Transcript Intelligence</h1>
-        <p class="sub">Topic categorization, sentiment, and strategic insights for B2B meeting transcripts — designed for the client sample today, architected for 100M+ records tomorrow.</p>
+        <p class="sub">An <strong class="accent">auto-scalable system</strong> for topic categorization, sentiment, and strategic insights from B2B meeting transcripts.<br/>Target scale: <strong class="pop">millions to 100M+ records</strong>. The dataset shipped with the brief is a representative sample used for verification.</p>
         <div>
+          <span class="tag">Auto-scalable</span>
           <span class="tag">FastAPI</span>
           <span class="tag">scikit-learn</span>
           <span class="tag">Gemma 4 (QLoRA)</span>
-          <span class="tag">Postgres + Iceberg path</span>
+          <span class="tag">Postgres + Iceberg</span>
           <span class="tag">Ray Train + vLLM</span>
           <span class="tag">183 tests · 94% cov</span>
         </div>
@@ -304,7 +305,7 @@
     <section class="slide" data-title="The brief">
       <div class="body">
         <h2>The brief</h2>
-        <p class="lead">Turn ~100 raw meeting transcripts into actionable signal — and make sure the design holds up at production scale.</p>
+        <p class="lead">Build an <strong class="accent">auto-scalable system</strong> that turns raw meeting transcripts — at production volume of <strong class="pop">millions to 100M+ records</strong> — into actionable signal. The dataset shipped with the brief is a representative sample used for end-to-end verification.</p>
         <div class="two-col">
           <div>
             <h3>Inputs (per meeting)</h3>
@@ -325,8 +326,9 @@
         </div>
         <h3>Constraints I imposed on myself</h3>
         <ul>
+          <li><strong class="accent">Auto-scalable by design.</strong> Every component states its scale envelope and the substrate it switches to past that envelope.</li>
           <li>Production-shaped from day 1 — no notebook-only artifacts.</li>
-          <li>The 100-meeting sample is the test case, not the architecture target.</li>
+          <li>The shipped dataset is a sample for verification, not the architecture target.</li>
           <li>Every non-trivial decision recorded as an ADR.</li>
         </ul>
       </div>
@@ -335,7 +337,7 @@
     <!-- 3. Headline findings -->
     <section class="slide" data-title="Findings">
       <div class="body">
-        <h2>Headline findings on the sample</h2>
+        <h2>Headline findings <span class="muted" style="font-size:24px">(verified on the sample)</span></h2>
         <div class="three-col">
           <div class="card">
             <h4>At-risk customers</h4>

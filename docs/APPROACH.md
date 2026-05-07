@@ -2,7 +2,7 @@
 
 This document captures the design decisions behind the pipeline — what we evaluated, what we shipped, and why.
 
-> **Note on data scale.** The client provided a representative *sample* (~100 meetings spanning the 3 call types and a major incident scenario). Production volume is expected to grow into the millions, with **100M+** as a realistic target. The client also confirmed synthetic transcript generation is acceptable for edge-case coverage. Numbers like "the sample has 100 meetings" or "the v3 fine-tune trained on 95 meetings" are accurate descriptions of **what was verified during development**, not assertions about production volume. Each verdict below states the **scale envelope** of the chosen approach — where it works, where it breaks, what comes next.
+> **Scope: an auto-scalable system.** The target architecture handles **millions to 100M+ records**. The dataset shipped with the brief is a representative *sample* (spanning the 3 call types and a major incident scenario) used to verify pipeline correctness during development — not the production volume, and not the architecture target. The client also confirmed synthetic transcript generation is acceptable for edge-case coverage. Concrete numbers about the sample describe **what was verified during development**, not assertions about production volume. Each verdict below states the **scale envelope** of the chosen approach — where it works, where it breaks, what comes next.
 
 ## Executive summary
 

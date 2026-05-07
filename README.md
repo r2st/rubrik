@@ -1,6 +1,6 @@
 # Transcript Intelligence
 
-> A production-ready pipeline that processes B2B meeting transcripts and surfaces topic categorization, sentiment trends, and strategic insights — exposed as a REST API with a lightweight web dashboard.
+> An **auto-scalable system** that processes B2B meeting transcripts and surfaces topic categorization, sentiment trends, and strategic insights — exposed as a REST API with a lightweight web dashboard. **Target scale: millions to 100M+ records.** The dataset shipped with the brief is a representative sample used for end-to-end verification.
 
 [![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue)](.github/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/tests-123%20passing-brightgreen)](tests/)
@@ -26,9 +26,9 @@
 
 ---
 
-## A note on the dataset
+## Scope: an auto-scalable system
 
-The client provided a **representative sample** of meeting transcripts (~100 meetings spanning support cases, customer-facing calls, and internal meetings). This is **not the production data volume** — production is expected to grow to millions, with **100M+ records** as a realistic target. The client also indicated synthetic data can be generated to cover edge cases the sample doesn't reach.
+**The target is an auto-scalable system that handles millions to 100M+ meeting records.** The dataset provided with the brief is a representative *sample* (spanning support cases, customer-facing calls, and internal meetings) used to verify pipeline correctness end-to-end during development — it is **not** the production data volume, nor is it the architecture target. The client also indicated synthetic data can be generated to cover edge cases the sample doesn't reach.
 
 The codebase reflects that distinction:
 
@@ -40,11 +40,11 @@ The codebase reflects that distinction:
 | Gemma 4 fine-tune | ✅ 4 iterations on the sample | Proof-of-concept | Multi-node Ray Train + autoscaled vLLM → ADR 0010 |
 | Admin panel + runtime config | ✅ functional | Same operational surface at any scale | Scales as the API scales |
 
-Numbers like "the sample has 100 meetings" or "the v3 fine-tune trained on 95 meetings" appear throughout the docs — they are accurate descriptions of **what was verified during development**, not assertions about production volume. Wherever a design decision depends on scale, the doc states the **scale envelope** explicitly (e.g., "TF-IDF + KMeans is sound up to ~1M docs in-memory; switch to streaming/minibatch above that").
+Concrete sample-size numbers appear throughout the docs (e.g., "the v3 fine-tune trained on the sample dataset" or "the load test ran against the sample"). These describe **what was verified during development**, not assertions about production volume. Wherever a design decision depends on scale, the doc states the **scale envelope** explicitly (e.g., "TF-IDF + KMeans is sound up to ~1M docs in-memory; switch to streaming/minibatch above that").
 
 ## What this does
 
-Given the client's sample of meeting transcripts (support cases, customer-facing calls, internal meetings), this pipeline:
+For a stream of B2B meeting transcripts (support cases, customer-facing calls, internal meetings) — verified on the sample, designed to scale to millions / 100M+ — this system:
 
 1. **Categorizes** every meeting along three dimensions — call type, purpose, product area — using regex rules + TF-IDF clustering
 2. **Analyzes sentiment** at meeting *and* sentence granularity, surfacing within-call friction moments invisible to summary-level scores

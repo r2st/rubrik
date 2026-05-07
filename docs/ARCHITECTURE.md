@@ -659,7 +659,7 @@ Three probe endpoints are registered on a separate **public** router that bypass
 
 ## Scaling to 100M+ records
 
-The client provided a representative **sample** (currently ~100 meetings, ~4k sentences). The current single-instance, in-memory pipeline is correct **for that sample volume** — it's how we verify pipeline correctness end-to-end during development. At **production volume (millions to 100M+ records)** the substrate changes — the analytical layers run against a real data platform — but the *application code shape* stays mostly the same.
+**The architecture target is an auto-scalable system handling millions to 100M+ records.** The dataset shipped with the brief is a representative *sample* used to verify pipeline correctness end-to-end during development — the in-memory single-instance build is the verification path, not the production path. At production volume the substrate changes (the analytical layers run against a real data platform; the API tier auto-scales per [ADR 0013](adr/0013-api-tier-auto-scaling.md); the ML tier auto-scales per [ADR 0010](adr/0010-auto-scaling-ml-pipeline.md)) but the *application code shape* stays mostly the same.
 
 ### Scale envelopes per component
 

@@ -1,6 +1,6 @@
 # Edge Cases & Synthetic Test Data
 
-The client provided a representative *sample* (~100 meetings). It demonstrates the three call types and the major incident scenario, but it doesn't reach into corners the pipeline will hit in production.
+The system is designed to be auto-scalable to millions / 100M+ records. The dataset shipped with the brief is a representative *sample* — it demonstrates the three call types and the major incident scenario, but it doesn't reach into corners the pipeline will hit at production volume.
 
 This doc enumerates those corners, says **which ones need synthetic data** (vs which are better handled by unit tests or operational hardening), and links to the synthetic fixtures we ship.
 

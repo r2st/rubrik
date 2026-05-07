@@ -979,7 +979,7 @@ footer code {
 </ul>
 <hr />
 <h2 id="scaling-to-100m-records">Scaling to 100M+ records<a class="anchor" href="#scaling-to-100m-records" title="Permanent link">¶</a></h2>
-<p>The client provided a representative <strong>sample</strong> (currently ~100 meetings, ~4k sentences). The current single-instance, in-memory pipeline is correct <strong>for that sample volume</strong> — it's how we verify pipeline correctness end-to-end during development. At <strong>production volume (millions to 100M+ records)</strong> the substrate changes — the analytical layers run against a real data platform — but the <em>application code shape</em> stays mostly the same.</p>
+<p><strong>The architecture target is an auto-scalable system handling millions to 100M+ records.</strong> The dataset shipped with the brief is a representative <em>sample</em> used to verify pipeline correctness end-to-end during development — the in-memory single-instance build is the verification path, not the production path. At production volume the substrate changes (the analytical layers run against a real data platform; the API tier auto-scales per <a href="adr/0013-api-tier-auto-scaling.md">ADR 0013</a>; the ML tier auto-scales per <a href="adr/0010-auto-scaling-ml-pipeline.md">ADR 0010</a>) but the <em>application code shape</em> stays mostly the same.</p>
 <h3 id="scale-envelopes-per-component">Scale envelopes per component<a class="anchor" href="#scale-envelopes-per-component" title="Permanent link">¶</a></h3>
 <table>
 <thead>

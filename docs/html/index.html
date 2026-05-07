@@ -336,7 +336,7 @@ footer code {
 <main>
 <h1 id="transcript-intelligence">Transcript Intelligence<a class="anchor" href="#transcript-intelligence" title="Permanent link">¶</a></h1>
 <blockquote>
-<p>A production-ready pipeline that processes B2B meeting transcripts and surfaces topic categorization, sentiment trends, and strategic insights — exposed as a REST API with a lightweight web dashboard.</p>
+<p>An <strong>auto-scalable system</strong> that processes B2B meeting transcripts and surfaces topic categorization, sentiment trends, and strategic insights — exposed as a REST API with a lightweight web dashboard. <strong>Target scale: millions to 100M+ records.</strong> The dataset shipped with the brief is a representative sample used for end-to-end verification.</p>
 </blockquote>
 <p><a href=".github/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-blue" /></a>
 <a href="https://github.com/"><img alt="Tests" src="https://img.shields.io/badge/tests-123%20passing-brightgreen" /></a>
@@ -359,8 +359,8 @@ footer code {
 <li><a href="#documentation">Documentation</a></li>
 </ul>
 <hr />
-<h2 id="a-note-on-the-dataset">A note on the dataset<a class="anchor" href="#a-note-on-the-dataset" title="Permanent link">¶</a></h2>
-<p>The client provided a <strong>representative sample</strong> of meeting transcripts (~100 meetings spanning support cases, customer-facing calls, and internal meetings). This is <strong>not the production data volume</strong> — production is expected to grow to millions, with <strong>100M+ records</strong> as a realistic target. The client also indicated synthetic data can be generated to cover edge cases the sample doesn't reach.</p>
+<h2 id="scope-an-auto-scalable-system">Scope: an auto-scalable system<a class="anchor" href="#scope-an-auto-scalable-system" title="Permanent link">¶</a></h2>
+<p><strong>The target is an auto-scalable system that handles millions to 100M+ meeting records.</strong> The dataset provided with the brief is a representative <em>sample</em> (spanning support cases, customer-facing calls, and internal meetings) used to verify pipeline correctness end-to-end during development — it is <strong>not</strong> the production data volume, nor is it the architecture target. The client also indicated synthetic data can be generated to cover edge cases the sample doesn't reach.</p>
 <p>The codebase reflects that distinction:</p>
 <table>
 <thead>
@@ -404,9 +404,9 @@ footer code {
 </tr>
 </tbody>
 </table>
-<p>Numbers like "the sample has 100 meetings" or "the v3 fine-tune trained on 95 meetings" appear throughout the docs — they are accurate descriptions of <strong>what was verified during development</strong>, not assertions about production volume. Wherever a design decision depends on scale, the doc states the <strong>scale envelope</strong> explicitly (e.g., "TF-IDF + KMeans is sound up to ~1M docs in-memory; switch to streaming/minibatch above that").</p>
+<p>Concrete sample-size numbers appear throughout the docs (e.g., "the v3 fine-tune trained on the sample dataset" or "the load test ran against the sample"). These describe <strong>what was verified during development</strong>, not assertions about production volume. Wherever a design decision depends on scale, the doc states the <strong>scale envelope</strong> explicitly (e.g., "TF-IDF + KMeans is sound up to ~1M docs in-memory; switch to streaming/minibatch above that").</p>
 <h2 id="what-this-does">What this does<a class="anchor" href="#what-this-does" title="Permanent link">¶</a></h2>
-<p>Given the client's sample of meeting transcripts (support cases, customer-facing calls, internal meetings), this pipeline:</p>
+<p>For a stream of B2B meeting transcripts (support cases, customer-facing calls, internal meetings) — verified on the sample, designed to scale to millions / 100M+ — this system:</p>
 <ol>
 <li><strong>Categorizes</strong> every meeting along three dimensions — call type, purpose, product area — using regex rules + TF-IDF clustering</li>
 <li><strong>Analyzes sentiment</strong> at meeting <em>and</em> sentence granularity, surfacing within-call friction moments invisible to summary-level scores</li>
@@ -1037,6 +1037,7 @@ make validate-edge              # run the 10 audits over the union of real + syn
 <li><a href="docs/edge-cases.md"><code>docs/edge-cases.md</code></a> — synthetic data strategy + the test matrix</li>
 <li><a href="docs/adr/"><code>docs/adr/</code></a> — Architecture Decision Records (immutable, dated, per-decision)</li>
 <li><strong><code>docs/html/</code></strong> — same content as standalone HTML files. <code>make docs</code> to build, <code>open docs/html/index.html</code> to view</li>
+<li><a href="docs/presentation.html"><code>docs/presentation.html</code></a> — multi-slide HTML presentation (13 slides, keyboard-navigable). Run <code>make slides</code> or open the file directly.</li>
 </ul>
 <h3 id="load-testing">Load testing<a class="anchor" href="#load-testing" title="Permanent link">¶</a></h3>
 <pre><code class="language-bash">make dev               # start the API on :8000
@@ -1049,7 +1050,7 @@ make load-test         # 30s, 20 VUs, all endpoints — exits non-zero if error 
   Generated from <code>README.md</code>
 </footer>
 </main>
-<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#contents" class="h2">Contents</a></li><li><a href="#a-note-on-the-dataset" class="h2">A note on the dataset</a></li><li><a href="#what-this-does" class="h2">What this does</a></li><li><a href="#headline-findings-on-the-sample" class="h2">Headline findings on the sample</a></li><li><a href="#quick-start" class="h2">Quick start</a></li><li><a href="#production-volume-mode" class="h3">Production-volume mode</a></li><li><a href="#architecture" class="h2">Architecture</a></li><li><a href="#project-layout" class="h2">Project layout</a></li><li><a href="#testing-validation" class="h2">Testing &amp; validation</a></li><li><a href="#api-web-dashboard" class="h2">API &amp; web dashboard</a></li><li><a href="#why-fastapi-instead-of-streamlit" class="h3">Why FastAPI instead of Streamlit</a></li><li><a href="#run-all-services" class="h2">Run all services</a></li><li><a href="#container-alternative-docker-compose" class="h3">Container alternative (docker compose)</a></li><li><a href="#production-readiness" class="h2">Production readiness</a></li><li><a href="#security" class="h3">Security</a></li><li><a href="#performance-caching" class="h3">Performance &amp; caching</a></li><li><a href="#resilience" class="h3">Resilience</a></li><li><a href="#observability-opt-in" class="h3">Observability (opt-in)</a></li><li><a href="#engineering" class="h3">Engineering</a></li><li><a href="#configuration" class="h3">Configuration</a></li><li><a href="#admin-panel" class="h3">Admin panel</a></li><li><a href="#whats-deliberately-not-done" class="h3">What's deliberately not done</a></li><li><a href="#auto-scaling-at-production-volume" class="h2">Auto-scaling at production volume</a></li><li><a href="#edge-case-test-data" class="h2">Edge-case test data</a></li><li><a href="#documentation" class="h2">Documentation</a></li><li><a href="#load-testing" class="h3">Load testing</a></li><li><a href="#license" class="h2">License</a></li></ul></aside>
+<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#contents" class="h2">Contents</a></li><li><a href="#scope-an-auto-scalable-system" class="h2">Scope: an auto-scalable system</a></li><li><a href="#what-this-does" class="h2">What this does</a></li><li><a href="#headline-findings-on-the-sample" class="h2">Headline findings on the sample</a></li><li><a href="#quick-start" class="h2">Quick start</a></li><li><a href="#production-volume-mode" class="h3">Production-volume mode</a></li><li><a href="#architecture" class="h2">Architecture</a></li><li><a href="#project-layout" class="h2">Project layout</a></li><li><a href="#testing-validation" class="h2">Testing &amp; validation</a></li><li><a href="#api-web-dashboard" class="h2">API &amp; web dashboard</a></li><li><a href="#why-fastapi-instead-of-streamlit" class="h3">Why FastAPI instead of Streamlit</a></li><li><a href="#run-all-services" class="h2">Run all services</a></li><li><a href="#container-alternative-docker-compose" class="h3">Container alternative (docker compose)</a></li><li><a href="#production-readiness" class="h2">Production readiness</a></li><li><a href="#security" class="h3">Security</a></li><li><a href="#performance-caching" class="h3">Performance &amp; caching</a></li><li><a href="#resilience" class="h3">Resilience</a></li><li><a href="#observability-opt-in" class="h3">Observability (opt-in)</a></li><li><a href="#engineering" class="h3">Engineering</a></li><li><a href="#configuration" class="h3">Configuration</a></li><li><a href="#admin-panel" class="h3">Admin panel</a></li><li><a href="#whats-deliberately-not-done" class="h3">What's deliberately not done</a></li><li><a href="#auto-scaling-at-production-volume" class="h2">Auto-scaling at production volume</a></li><li><a href="#edge-case-test-data" class="h2">Edge-case test data</a></li><li><a href="#documentation" class="h2">Documentation</a></li><li><a href="#load-testing" class="h3">Load testing</a></li><li><a href="#license" class="h2">License</a></li></ul></aside>
 </div>
 <script
   src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"
