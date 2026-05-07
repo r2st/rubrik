@@ -28,11 +28,7 @@ log = get_logger(__name__)
 def _resolve_url(arg_url: str | None) -> str:
     if arg_url:
         return arg_url
-    try:
-        from src.runtime_settings import get_runtime
-        url = get_runtime().get("snapshot.url", "")
-    except Exception:  # noqa: BLE001
-        url = ""
+    url = state._snapshot_url()  # noqa: SLF001
     if not url:
         log.error(
             "No snapshot URL provided. Pass --url or set the snapshot.url "

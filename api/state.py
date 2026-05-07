@@ -1,12 +1,16 @@
 """Pipeline state — runs the analysis once at startup, caches the result.
 
-The dataset is largely static, so we trade memory for response latency. For
-multi-instance deployment, swap this for a shared cache (Redis) or run the
-pipeline as a batch job and serve from a persisted store.
+Three sources, in order of preference at warm-up:
 
-Optional periodic refresh: if `settings.pipeline_refresh_minutes > 0`, an
-asyncio task rebuilds the state on that cadence so the API picks up new
-meeting JSON files without a process restart.
+  1. **Snapshot** (``api/snapshot.py``) — when ``snapshot.url`` is set, read
+     a precomputed ``PipelineState`` written by the snapshot CronJob. Fixes
+     the HPA cold-start cliff at production volume.
+  2. **In-process build** — fallback for dev / single-replica deployments;
+     reads from the ``TranscriptRepository`` and runs the pipeline.
+
+A background refresh task can be enabled via ``pipeline.refresh_minutes``,
+and a snapshot-manifest poll watches for fresh checksums and reloads in
+place. Both tasks run only on the active replica's event loop.
 """
 from __future__ import annotations
 
@@ -15,13 +19,15 @@ import contextlib
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 import pandas as pd
 
 from src import categorizer, clustering, data_loader, insights, sentiment
 from src.logging_config import get_logger
 from src.repository import TranscriptRepository, default_repository
+
+from . import snapshot as snap
 
 log = get_logger(__name__)
 
@@ -44,16 +50,16 @@ class PipelineState:
     built_at_monotonic: float = 0.0
 
 
-_state: PipelineState | None = None
+_state: Optional[PipelineState] = None
 _lock = threading.Lock()
-_refresh_task: asyncio.Task | None = None
-_snapshot_poll_task: asyncio.Task | None = None
+_refresh_task: Optional[asyncio.Task] = None
+_snapshot_poll_task: Optional[asyncio.Task] = None
 _consecutive_refresh_failures: int = 0
 _refresh_interval_minutes: int = 0
 # Active repository — resolved lazily so tests can override before first use.
-_repository: TranscriptRepository | None = None
+_repository: Optional[TranscriptRepository] = None
 # Last manifest checksum we loaded — drives snapshot-poll reload decisions.
-_loaded_snapshot_checksum: str | None = None
+_loaded_snapshot_checksum: Optional[str] = None
 
 
 def set_repository(repo: TranscriptRepository | None) -> None:
@@ -87,30 +93,28 @@ def is_warm() -> bool:
     return _state is not None
 
 
-def _try_load_snapshot() -> PipelineState | None:
-    """Try to satisfy the build from a shared snapshot — cold-start fix.
-
-    Returns None if no snapshot is configured, the manifest is missing, or
-    the payload fails verification. Caller falls back to building from the
-    repository.
-    """
-    global _loaded_snapshot_checksum
+def _snapshot_url() -> str:
+    """Return the configured snapshot URL, or ``""`` if unset / DB unavailable."""
     try:
         from src.runtime_settings import get_runtime
-        url = get_runtime().get("snapshot.url", "")
+        return get_runtime().get("snapshot.url", "") or ""
     except Exception:  # noqa: BLE001
-        url = ""
+        return ""
+
+
+def _try_load_snapshot() -> Optional[PipelineState]:
+    """Read a shared snapshot, or return None to fall back to a fresh build."""
+    global _loaded_snapshot_checksum
+    url = _snapshot_url()
     if not url:
         return None
-    from . import snapshot as snap
     manifest = snap.read_manifest(url)
     if manifest is None:
         return None
     payload = snap.read_snapshot(url)
-    if payload is None:
-        return None
     if not isinstance(payload, PipelineState):
-        log.warning("Snapshot is not a PipelineState — falling back to build")
+        if payload is not None:
+            log.warning("Snapshot is not a PipelineState — falling back to build")
         return None
     payload.built_at_monotonic = time.monotonic()
     _loaded_snapshot_checksum = manifest.get("checksum")
@@ -120,26 +124,21 @@ def _try_load_snapshot() -> PipelineState | None:
 
 
 async def start_snapshot_poll(interval_seconds: int = 30) -> None:
-    """Watch the snapshot manifest for checksum changes; reload when it bumps.
+    """Watch the snapshot manifest; reload when its checksum bumps.
 
     No-op if ``snapshot.url`` is unset or the task is already running. The
-    poll cadence defaults to 30s — short enough that operators see refreshes
+    poll cadence defaults to 30 s — short enough that operators see refreshes
     promptly, long enough to keep S3 GET cost negligible.
     """
     global _snapshot_poll_task
     if _snapshot_poll_task is not None:
         return
-    try:
-        from src.runtime_settings import get_runtime
-        url = get_runtime().get("snapshot.url", "")
-    except Exception:  # noqa: BLE001
-        url = ""
+    url = _snapshot_url()
     if not url:
         return
 
     async def _loop() -> None:
         global _state, _loaded_snapshot_checksum
-        from . import snapshot as snap
         log.info("Snapshot poll starting (url=%s, every %ds)", url, interval_seconds)
         try:
             while True:

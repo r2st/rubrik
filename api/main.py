@@ -16,6 +16,7 @@ Run prod: uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers 4
 """
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -27,8 +28,13 @@ from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIASGIMiddleware
 
+from src.db import get_engine
 from src.logging_config import configure_logging, get_logger
-from src.runtime_settings import initialize_db_and_seed
+from src.runtime_settings import (
+    get_runtime,
+    initialize_db_and_seed,
+    start_listener,
+)
 from src.settings import get_runtime_view, get_settings
 
 from . import backpressure as backpressure_mod
@@ -71,9 +77,8 @@ async def lifespan(app_: FastAPI):
              runtime.pipeline_refresh_minutes)
 
     # Settings push invalidation: LISTEN on Postgres for `settings_changed`
-    # and drop the cache locally — operator changes propagate < 100 ms
+    # and drop the local cache so operator changes propagate < 100 ms
     # instead of waiting for the 5 s TTL. No-op on SQLite.
-    from src.runtime_settings import get_runtime, start_listener
     listener = start_listener(lambda _payload: get_runtime()._invalidate())  # noqa: SLF001
 
     state.get_state()  # warm pipeline cache (snapshot if available)
@@ -84,22 +89,17 @@ async def lifespan(app_: FastAPI):
     yield
 
     # ----- Graceful shutdown drain -----
-    # Order matters: stop accepting new work, drain inflight, then teardown.
+    # Order matters: flip readiness, give the LB a beat, then teardown.
     log.info("Shutting down — initiating drain")
     app_.state.shutting_down = True  # /api/ready flips to 503
-    # Give the LB a beat to observe the readiness change before we close
-    # the door on inflight requests.
-    import asyncio as _asyncio
-    await _asyncio.sleep(2)
+    await asyncio.sleep(2)
 
     await state.stop_snapshot_poll()
     await state.stop_refresh_task()
     if listener is not None:
         listener.stop()
 
-    # Close DB pool — SQLAlchemy's engine.dispose() drains lazily.
     try:
-        from src.db import get_engine
         get_engine().dispose()
     except Exception:  # noqa: BLE001
         log.exception("Engine dispose during shutdown failed")
@@ -138,9 +138,8 @@ def _default_rate_limits() -> list[str]:
     return [get_runtime_view().rate_limit_default]
 
 
-# Static default applies cluster-wide. Routes that need per-tenant overrides
-# decorate with `@limiter.limit(limiter_mod.per_tenant_limit)` — slowapi
-# resolves the callable per request and consults rate_limit.per_tenant.
+# Cluster-wide global limit (Redis when configured). Per-tenant overrides
+# attach to specific routes via `Depends(per_tenant_rate_limit_dep)`.
 limiter = limiter_mod.build_limiter(
     redis_url=settings.redis_url,
     default_limits=_default_rate_limits(),
@@ -159,8 +158,7 @@ app.add_middleware(BodySizeLimitMiddleware)
 # Backpressure: cap inflight requests; over the cap → 503 + Retry-After.
 # Cap is read from runtime settings (admin-tunable).
 try:
-    from src.runtime_settings import get_runtime as _get_rt
-    _bp_cap = int(_get_rt().get(
+    _bp_cap = int(get_runtime().get(
         "backpressure.max_inflight", backpressure_mod.DEFAULT_MAX_INFLIGHT
     ))
 except Exception:  # noqa: BLE001

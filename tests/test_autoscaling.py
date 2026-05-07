@@ -253,44 +253,8 @@ def test_readiness_registers_db_circuit_breaker():
     assert breakers["readiness_db_probe"] == "closed"
 
 
-# ---------------------------------------------------------------------------
-# Per-tenant rate-limit override (#13 wired)
-# ---------------------------------------------------------------------------
-def test_per_tenant_limit_falls_back_to_default():
-    from starlette.datastructures import Headers
-    from starlette.requests import Request
-
-    from api.limiter import per_tenant_limit
-    scope = {
-        "type": "http", "method": "GET", "path": "/x",
-        "headers": Headers({"host": "x"}).raw,
-        "client": ("1.1.1.1", 1), "query_string": b"",
-    }
-    # Default seeded value is "120/minute" (rate_limit.default).
-    assert per_tenant_limit(Request(scope)) == "120/minute"
-
-
-def test_per_tenant_limit_honors_override():
-    from starlette.datastructures import Headers
-    from starlette.requests import Request
-
-    from api.limiter import _tenant_id, per_tenant_limit
-    from src.runtime_settings import get_runtime
-
-    api_key = "tenant-A-key"
-    scope = {
-        "type": "http", "method": "GET", "path": "/x",
-        "headers": Headers({"x-api-key": api_key, "host": "x"}).raw,
-        "client": ("1.1.1.1", 1), "query_string": b"",
-    }
-    req = Request(scope)
-    tid = _tenant_id(req)
-    rt = get_runtime()
-    rt.set("rate_limit.per_tenant", {tid: "999/hour"}, actor="test")
-    try:
-        assert per_tenant_limit(req) == "999/hour"
-    finally:
-        rt.set("rate_limit.per_tenant", {}, actor="test")
+# Per-tenant cap enforcement is covered end-to-end in
+# tests/test_distributed.py::test_meetings_route_enforces_per_tenant_cap
 
 
 # ---------------------------------------------------------------------------
