@@ -18,13 +18,29 @@ How the system is organized and how data flows through it.
 
 ```mermaid
 flowchart LR
-    subgraph "Input"
-        Data[("Client sample<br/>(JSON × 6 per meeting)<br/>scales out → ADR 0008")]
+    subgraph Sources["Data sources"]
+        Sample[("Client sample<br/>(JSON × 6 per meeting)")]
+        DBSrc[("Postgres + Iceberg<br/>(production · ADR 0008)")]
+        Stream[("Kafka stream<br/>(real-time · future)")]
     end
 
-    subgraph "Core (src/)"
+    subgraph Ingest["Ingestion (src/)"]
         direction TB
-        Loader["data_loader<br/>📄 raw → DataFrames"]
+        Repo{{"TranscriptRepository<br/>(Protocol)"}}
+        Local["LocalDirectoryRepository<br/>📂 sample / dev"]
+        DBRepo["DatabaseRepository<br/>🗄️ slot — ADR 0011"]
+        KStream["KafkaStreamingRepository<br/>🌊 slot"]
+        Loader["data_loader<br/>📄 JSON → Meeting"]
+        Stream2["streaming.py<br/>🔁 mergeable folds"]
+        Repo --> Local
+        Repo --> DBRepo
+        Repo --> KStream
+        Local --> Loader
+        Loader --> Stream2
+    end
+
+    subgraph Core["Core (src/)"]
+        direction TB
         Cat["categorizer<br/>🏷️ rules"]
         Sent["sentiment<br/>📈 trajectories"]
         Clust["clustering<br/>🎯 TF-IDF + KMeans"]
@@ -33,21 +49,25 @@ flowchart LR
         Cfg[("config<br/>⚙️ keywords<br/>thresholds")]
     end
 
-    subgraph "Interfaces"
+    subgraph Interfaces["Interfaces"]
         NB["📓 Notebook"]
         DB["📊 Dashboard<br/>(FastAPI + Plotly.js)"]
         CLI["⚙️ run_analysis.py"]
         Val["🔍 validate.py"]
     end
 
-    subgraph "Output"
+    subgraph OutputG["Output"]
         Out[("output/<br/>CSVs · JSON · PNGs")]
     end
 
-    Data --> Loader
+    Sample --> Local
+    DBSrc -.-> DBRepo
+    Stream -.-> KStream
+
     Loader --> Cat
     Loader --> Sent
     Loader --> Clust
+    Stream2 --> Ins
     Cat --> Ins
     Sent --> Ins
     Clust --> Ins
@@ -66,9 +86,12 @@ flowchart LR
 
     CLI --> Out
     NB --> Out
+
+    classDef slot stroke-dasharray: 5 5,fill:#f5f7fa,color:#0d2235
+    class DBRepo,KStream slot
 ```
 
-Raw JSON enters from the left, gets parsed into typed DataFrames, then enriched in three parallel passes (categorize · sentiment · cluster). Insight modules consume the enriched frames. Four interfaces draw from the same insight functions — no logic duplicated across them.
+Raw inputs enter on the left and pass through the **ingestion layer** — a `TranscriptRepository` Protocol with one concrete backend today (`LocalDirectoryRepository`, reading the client sample from disk) and two slots wired through the same interface (`DatabaseRepository` for ADR 0008's Postgres + Iceberg, `KafkaStreamingRepository` for real-time). `data_loader` parses each meeting into a typed `Meeting`, and `streaming.py` exposes a mergeable fold so the same pipeline runs at production volume. The core then enriches the data in three parallel passes (categorize · sentiment · cluster), insight modules consume the enriched frames, and four interfaces draw from the same insight functions — no logic duplicated across them.
 
 ---
 
