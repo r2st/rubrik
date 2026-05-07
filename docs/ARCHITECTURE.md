@@ -19,7 +19,7 @@ How the system is organized and how data flows through it.
 ```mermaid
 flowchart LR
     subgraph "Input"
-        Data[("100 meeting<br/>directories<br/>(JSON × 6)")]
+        Data[("Client sample<br/>(JSON × 6 per meeting)<br/>scales out → ADR 0008")]
     end
 
     subgraph "Core (src/)"
@@ -322,7 +322,21 @@ The `/api/health` endpoint is registered on a separate **public** router that by
 
 ## Scaling to 100M+ records
 
-The current single-instance, in-memory pipeline is correct for the dataset size today (~100 meetings, ~4k sentences). At **100M+ records** the substrate changes — the analytical layers run against a real data platform — but the *application code shape* stays mostly the same.
+The client provided a representative **sample** (currently ~100 meetings, ~4k sentences). The current single-instance, in-memory pipeline is correct **for that sample volume** — it's how we verify pipeline correctness end-to-end during development. At **production volume (millions to 100M+ records)** the substrate changes — the analytical layers run against a real data platform — but the *application code shape* stays mostly the same.
+
+### Scale envelopes per component
+
+| Component | Comfortable up to | Breaks at | Path forward |
+|---|---|---|---|
+| Regex categorizer | Billions / day on a single thread | n/a — CPU-bound, parallelizes trivially | Already good |
+| TF-IDF + KMeans clustering | ~1M docs in-memory | ~10M (RAM ceiling) | Streaming MiniBatchKMeans, then Spark MLlib / Faiss |
+| Per-sentence sentiment trajectories | ~1M docs | ~10M (RAM ceiling) | Streaming Ray Data with per-partition aggregation |
+| Customer health + insight aggregation | ~1M docs | ~10M (groupby memory) | Postgres OLTP for current period + ClickHouse / DuckDB for history |
+| In-memory pipeline state (singleton) | ≤ ~100k rows | Memory-bound | Repository pattern + Postgres persistence (foundation already in place — see `src/db.py`) |
+| FastAPI request layer | Stateless — replicates horizontally | LB / DB-bound | Multi-instance behind LB, Redis cache for hot queries |
+| Gemma 4 inference | One pod = ~10 RPS | Pod queue depth | vLLM autoscale → ADR 0010 |
+
+The point: **every layer has a known ceiling and a known next step**. Nothing requires a rewrite to scale; each transition is a targeted swap with a measurable trigger documented in the relevant ADR.
 
 ```mermaid
 flowchart LR
@@ -359,7 +373,7 @@ Migration is incremental: each step in [ADR 0008](adr/0008-data-layer-for-scale.
 
 ## Auto-scaling ML pipeline (training + serving)
 
-The Gemma 4 fine-tune in [ADR 0003](adr/0003-self-host-summarization-with-gemma-4.md) was deliberately small — 95 meetings on a single H100, $1.40 wall-clock cost. That's the workshop recipe. **Production scales every layer independently** without changing the trainer logic:
+The Gemma 4 fine-tune in [ADR 0003](adr/0003-self-host-summarization-with-gemma-4.md) was a deliberate proof-of-concept on the client sample (~95 train meetings on a single H100, $1.40 wall-clock cost) — sufficient to demonstrate the recipe works and the economics close. **Production scales every layer independently** without changing the trainer logic:
 
 ```mermaid
 flowchart LR
@@ -495,7 +509,7 @@ What lives where:
 | Notebook | None | Re-running cells is the user's intent |
 | CLI | None | Designed for one-shot batch |
 
-End-to-end runtime: ~10s on 100 meetings. The bottleneck is silhouette-based `k` selection (fits 7 KMeans models). At 10x scale, switch to mini-batch KMeans or run the silhouette sweep on a sample.
+End-to-end runtime: ~10s on the client's sample dataset. The bottleneck is silhouette-based `k` selection (fits 7 KMeans models). At ~10× the sample size the silhouette sweep should run on a sample, not the full set; at ~100× MiniBatchKMeans replaces KMeans; beyond that the clustering is out-of-process via Spark MLlib (see ADR 0008's analytical tier).
 
 ---
 

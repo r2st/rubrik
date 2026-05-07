@@ -2,6 +2,8 @@
 
 This document captures the design decisions behind the pipeline — what we evaluated, what we shipped, and why.
 
+> **Note on data scale.** The client provided a representative *sample* (~100 meetings spanning the 3 call types and a major incident scenario). Production volume is expected to grow into the millions, with **100M+** as a realistic target. The client also confirmed synthetic transcript generation is acceptable for edge-case coverage. Numbers like "the sample has 100 meetings" or "the v3 fine-tune trained on 95 meetings" are accurate descriptions of **what was verified during development**, not assertions about production volume. Each verdict below states the **scale envelope** of the chosen approach — where it works, where it breaks, what comes next.
+
 ## Executive summary
 
 Four decisions drive the architecture. The verdict for each:
@@ -48,6 +50,15 @@ We need to classify every meeting along four dimensions: **call type** (support 
 ### Verdict
 
 **Ship rules + TF-IDF/KMeans.** Add an LLM fallback only when validation shows the catch-all bucket has grown past ~25% of traffic, or when a customer demands a custom taxonomy.
+
+### Scale envelope
+
+| Approach | Comfortable up to | Breaks at | Next step |
+|---|---|---|---|
+| Regex categorizer | Billions/day on a single thread | n/a — embarrassingly parallel | Already production-grade |
+| TF-IDF + KMeans | ~1M docs in-memory | ~10M (RAM ceiling) | MiniBatchKMeans → Spark MLlib → Faiss for nearest-neighbor lookups |
+| Zero-shot LLM | Cost-bound, ~10k/day at vendor pricing | Vendor rate limits | Fine-tuned classifier (next tier in the cascade) |
+| Fine-tuned LLM fallback | GPU-amortized, ~10k/sec serving | Per-tenant cold-start | Multi-tenant LoRA hot-swap (ADR 0010) |
 
 ---
 
@@ -232,13 +243,13 @@ What guided every decision above:
 
 ## What we deliberately did not do
 
-| Skipped | Why |
-|---|---|
-| Build a production multi-tenant SaaS | Out of scope for the take-home; trivial to add via FastAPI dependencies |
-| Train a custom embedding model | TF-IDF is sufficient at 100 docs; embeddings would be runtime overhead with marginal lift |
-| Use an LLM for categorization | Rules are 99% accurate vs the dataset's own topic tags; LLM adds latency and cost without measurable lift |
-| Generate synthetic data for the main pipeline | The 100 meetings cover all three call types and a meaningful incident — already useful |
-| Add a database / persistence layer | Pipeline runs in 10 seconds; on-demand is simpler than caching to disk |
-| Forecasting / time-series modeling | Three months of data is too short for meaningful forecasts; we surface trends, not predictions |
+| Skipped | Why | When to revisit |
+|---|---|---|
+| Build a production multi-tenant SaaS | Out of scope for the take-home; trivial to add via FastAPI dependencies | First multi-tenant customer (ADR 0006) |
+| Train a custom embedding model | TF-IDF is sufficient on the sample and stays comfortable up to ~1M docs | Clustering quality drops in `validate.py` at scale → switch to sentence-transformers + Faiss |
+| Use an LLM for categorization | Rules are 99% accurate against the dataset's own topic tags on the sample, with no latency or egress cost | Catch-all bucket grows past 25% → LLM fallback (ADR 0002) |
+| Generate synthetic transcripts for the main pipeline | The client sample already covers the 3 call types and the major incident scenario — sufficient to verify pipeline correctness | Edge cases the sample doesn't cover; the client confirmed synthetic generation is acceptable |
+| Add a database / persistence layer | Pipeline runs in ~10 seconds at sample volume; on-demand is simpler | Production volume — Postgres + ClickHouse, ADR 0008 |
+| Forecasting / time-series modeling | The sample only spans Feb–Apr 2026; too short for meaningful forecasts | Multi-quarter production data lands |
 
 The principle: ship the simplest thing that produces correct, defensible insights. Complexity earns its way in.

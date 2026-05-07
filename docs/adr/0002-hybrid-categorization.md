@@ -16,10 +16,12 @@ Three approaches were on the table:
 2. **Pure unsupervised clustering** (TF-IDF + KMeans) — finds latent themes but produces clusters that don't map cleanly to business taxonomy
 3. **Pure LLM** (zero-shot or fine-tuned) — handles ambiguity well, but costs $1–$10 per 1k docs, has 0.5–3s latency, is non-deterministic, and sends data outside the perimeter
 
-A spike on each:
+A spike on each (run against the client's representative sample):
 - Rules labeled 87% of meetings into specific buckets with **99% agreement** with the dataset's own `topics` field
 - TF-IDF/KMeans (silhouette-selected `k=7`) surfaces interpretable cross-cutting themes
 - Zero-shot LLM matched rules' accuracy but added cost, latency, and non-determinism
+
+These percentages reflect the sample's structure; we expect the regex prefixes (`Support Case #`, `Aegis /`, `URGENT:`) to dominate at production scale because they're the platform's canonical event-type signals, not artifacts of the sample. Validation continuously monitors rule coverage — see "Scale envelope" below.
 
 ## Decision
 
@@ -40,6 +42,15 @@ We ship a **hybrid: regex rules for the explicit layer, TF-IDF + KMeans for the 
 **Negative**
 - Brittle if title formats change wholesale (acquisition, multi-tenant rename, multilingual data)
 - The 13% catch-all bucket is a known coverage gap — `validate.py` monitors it
+
+## Scale envelope
+
+| Layer | Comfortable up to | Breaks at | Next step |
+|---|---|---|---|
+| Regex categorizer | Billions of meetings/day on a single thread (CPU-bound, parallelizes trivially) | n/a | Already production-grade |
+| TF-IDF + KMeans | ~1M meetings in-memory | ~10M (RAM ceiling) | MiniBatchKMeans → Spark MLlib clustering |
+| Catch-all bucket sizing (validation flag) | <25% of traffic | Grows past 25% → rule drift | LLM fallback specifically on rule-misses |
+| Per-tenant taxonomies | Single tenant | Second tenant arrives | Tenant-aware regex tables in `src/config.py` (one-line refactor) |
 
 ## When to revisit
 

@@ -14,7 +14,7 @@ This decision affects every customer transcript that flows through the system, i
 
 ### What we tried
 
-We fine-tuned **Gemma 4** (E2B and E4B variants) on the dataset's 95 train + 5 held-out meetings using QLoRA on a Nebius H100. Four iterations:
+The client provided a representative *sample* of meeting transcripts and confirmed synthetic generation is acceptable for edge cases the sample doesn't cover. As a proof-of-concept that the **recipe** (fine-tune Gemma 4 on the dataset's gold summaries) works, we fine-tuned **Gemma 4** (E2B and E4B variants) on the sample's 95 train + 5 held-out meetings using QLoRA on a Nebius H100. Four iterations:
 
 | Run | Base | LoRA | Epochs | Train loss | Val loss | ROUGE-L | Notes |
 |---|---|---|---|---|---|---|---|
@@ -58,8 +58,17 @@ We **adopt the v3 Gemma 4 adapter for production summarization**. Vendor APIs ar
 
 **Negative**
 - MLOps overhead: versioned models, retraining cadence, drift monitoring, evaluation harness
-- 95-meeting dataset is below the comfortable training floor — synthetic data generation is the recommended next step
+- The proof-of-concept run trained on the client's sample (95 meetings), which is well below the comfortable training floor for production deployment. The path forward is twofold: (a) the active-learning loop in ADR 0010 generates labels from real production traffic, and (b) synthetic transcript generation (Claude / GPT-4) covers edge cases the natural traffic stream is slow to surface
 - ROUGE-L is a lexical metric and penalizes paraphrase; LLM-as-judge is the better next metric (code already in `gemma-finetune/code/judge_compare.py`)
+
+### Scale envelope
+
+| Stage | At sample volume (today) | At production volume (millions+) |
+|---|---|---|
+| Training | Single H100, 28 min, $1.40 | Multi-node FSDP via Ray Train (ADR 0010), spot H100 pool |
+| Adapter size | 30 MB | Same (LoRA scales by rank, not dataset size) |
+| Inference | Single L4 pod = ~10 RPS | Autoscaled vLLM with multi-LoRA hot-swap (ADR 0010) |
+| Active learning | Manual eval | Continuous label generation from production traffic |
 
 **Neutral**
 - This decision is *coupled* to ADR 0002 (categorization stays rules-based). Rules + small fine-tuned LLM is the right division of labor: rules for the head, LLM for the long tail of free-text generation.

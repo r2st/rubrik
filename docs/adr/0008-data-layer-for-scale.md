@@ -6,9 +6,9 @@
 
 ## Context
 
-ADR 0005 documented why we ship without a database today: the input is static JSON, every endpoint is read-only, the pipeline rebuilds in 10 seconds, and a single-tenant in-memory cache covers the workload. That verdict was right for ~100 meetings.
+ADR 0005 documented why we ship without a database today: the input is static JSON, every endpoint is read-only, the pipeline rebuilds in seconds, and a single-tenant in-memory cache covers the workload. That verdict was right for the client's representative sample (~100 meetings) and remains comfortable up to **~100k records**.
 
-It does not survive contact with **100 million records**:
+It does not survive contact with **100 million records**, which is the realistic production ceiling:
 
 | Concern | Why the in-memory design breaks |
 |---|---|

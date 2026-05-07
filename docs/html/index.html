@@ -359,8 +359,54 @@ footer code {
 <li><a href="#documentation">Documentation</a></li>
 </ul>
 <hr />
+<h2 id="a-note-on-the-dataset">A note on the dataset<a class="anchor" href="#a-note-on-the-dataset" title="Permanent link">¶</a></h2>
+<p>The client provided a <strong>representative sample</strong> of meeting transcripts (~100 meetings spanning support cases, customer-facing calls, and internal meetings). This is <strong>not the production data volume</strong> — production is expected to grow to millions, with <strong>100M+ records</strong> as a realistic target. The client also indicated synthetic data can be generated to cover edge cases the sample doesn't reach.</p>
+<p>The codebase reflects that distinction:</p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Verified on the sample</th>
+<th>Designed for</th>
+<th>Path to scale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Pipeline correctness</td>
+<td>✅ end-to-end</td>
+<td>Any volume</td>
+<td>Component-by-component scaling envelopes below</td>
+</tr>
+<tr>
+<td>In-memory pandas analysis</td>
+<td>✅ ~10s build</td>
+<td>≤ ~100k records</td>
+<td>Switch to streaming + repository pattern → ADR 0008</td>
+</tr>
+<tr>
+<td>FastAPI service</td>
+<td>✅ load-tested</td>
+<td>Stateless, horizontal scale</td>
+<td>Replicate behind LB; cache via Redis</td>
+</tr>
+<tr>
+<td>Gemma 4 fine-tune</td>
+<td>✅ 4 iterations on the sample</td>
+<td>Proof-of-concept</td>
+<td>Multi-node Ray Train + autoscaled vLLM → ADR 0010</td>
+</tr>
+<tr>
+<td>Admin panel + runtime config</td>
+<td>✅ functional</td>
+<td>Same operational surface at any scale</td>
+<td>Scales as the API scales</td>
+</tr>
+</tbody>
+</table>
+<p>Numbers like "the sample has 100 meetings" or "the v3 fine-tune trained on 95 meetings" appear throughout the docs — they are accurate descriptions of <strong>what was verified during development</strong>, not assertions about production volume. Wherever a design decision depends on scale, the doc states the <strong>scale envelope</strong> explicitly (e.g., "TF-IDF + KMeans is sound up to ~1M docs in-memory; switch to streaming/minibatch above that").</p>
 <h2 id="what-this-does">What this does<a class="anchor" href="#what-this-does" title="Permanent link">¶</a></h2>
-<p>Given ~100 meeting transcripts (support cases, customer-facing calls, internal meetings), this pipeline:</p>
+<p>Given the client's sample of meeting transcripts (support cases, customer-facing calls, internal meetings), this pipeline:</p>
 <ol>
 <li><strong>Categorizes</strong> every meeting along three dimensions — call type, purpose, product area — using regex rules + TF-IDF clustering</li>
 <li><strong>Analyzes sentiment</strong> at meeting <em>and</em> sentence granularity, surfacing within-call friction moments invisible to summary-level scores</li>
@@ -398,18 +444,19 @@ footer code {
 </tbody>
 </table>
 <p>Plus a separate experiment in <a href="gemma-finetune/README.md"><code>gemma-finetune/</code></a>: fine-tunes <strong>Gemma 4 (E4B)</strong> on the dataset's gold summaries to demonstrate a self-hosted alternative to vendor LLM APIs ($1.40 training cost, ROUGE-L 0.39 vs 0.29 baseline). See <a href="docs/APPROACH.md#2-summarization--action-items">APPROACH §Summarization</a> for the verdict, and <a href="gemma-finetune/scaling/README.md"><code>gemma-finetune/scaling/</code></a> + <a href="docs/adr/0010-auto-scaling-ml-pipeline.md">ADR 0010</a> for the production auto-scaling architecture (Ray Train + FSDP for training, vLLM + HPA for serving, active learning for continuous improvement).</p>
-<h2 id="headline-findings">Headline findings<a class="anchor" href="#headline-findings" title="Permanent link">¶</a></h2>
+<h2 id="headline-findings-on-the-sample">Headline findings on the sample<a class="anchor" href="#headline-findings-on-the-sample" title="Permanent link">¶</a></h2>
+<p>These are real findings from the client's sample dataset. They illustrate <strong>the kind of insight the pipeline produces</strong> — at production volume the same layers will surface analogous patterns at much larger scale.</p>
 <table>
 <thead>
 <tr>
 <th>Area</th>
-<th>Headline</th>
+<th>Headline (on sample)</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td>Categorization</td>
-<td>100 meetings → 3 call types · 11 purposes · 4 product areas. <strong>k=7</strong> content clusters (silhouette-selected).</td>
+<td>3 call types · 11 purposes · 4 product areas. <strong>k=7</strong> content clusters (silhouette-selected).</td>
 </tr>
 <tr>
 <td>Sentiment</td>
@@ -417,7 +464,7 @@ footer code {
 </tr>
 <tr>
 <td>Outage impact</td>
-<td>One incident touched <strong>68% of all meetings</strong>, dragged sentiment by <strong>0.77 points</strong>.</td>
+<td>One incident touched <strong>68% of meetings in the sample</strong>, dragged sentiment by <strong>0.77 points</strong>.</td>
 </tr>
 <tr>
 <td>Top at-risk customers</td>
@@ -425,7 +472,7 @@ footer code {
 </tr>
 <tr>
 <td>Execution bottleneck</td>
-<td>Maria Santos owns 31 action items (most by far)</td>
+<td>Maria Santos owns 31 action items (most by far in the sample)</td>
 </tr>
 <tr>
 <td>Conversation health</td>
@@ -456,7 +503,7 @@ uvicorn api.main:app --reload
 </code></pre>
 <h2 id="architecture">Architecture<a class="anchor" href="#architecture" title="Permanent link">¶</a></h2>
 <div class="mermaid">flowchart LR
-    Data[("100 meetings<br/>(JSON)")] --> Loader["data_loader<br/>typed DataFrames"]
+    Data[("Client sample<br/>(JSON · scales out via ADR 0008)")] --> Loader["data_loader<br/>typed DataFrames"]
 
     Loader --> Categorizer["categorizer<br/>regex rules"]
     Loader --> Sentiment["sentiment<br/>per-sentence trajectories"]
@@ -901,7 +948,7 @@ open http://127.0.0.1:8000/admin
 <li><strong>Distributed cache</strong> — single-instance singleton suffices; Redis is the next step at scale</li>
 </ul>
 <h2 id="auto-scaling-at-production-volume">Auto-scaling at production volume<a class="anchor" href="#auto-scaling-at-production-volume" title="Permanent link">¶</a></h2>
-<p>The Gemma 4 fine-tune (95 meetings, 1× H100, $1.40) is the <em>workshop recipe</em>. Production runs the same trainer logic on a multi-node cluster with autoscaled inference. Each layer scales independently against its own bottleneck signal and goes to zero when idle.</p>
+<p>The Gemma 4 fine-tune ran on the client's sample (~95 train + 5 held-out meetings) with 1× H100 in 28 minutes for $1.40 — a <em>proof-of-concept on the sample</em>, not a production training run. Production runs the same trainer logic on a multi-node cluster with autoscaled inference. Each layer scales independently against its own bottleneck signal and goes to zero when idle.</p>
 <div class="mermaid">flowchart LR
     Kafka[(Kafka<br/>transcripts)] --> Data["📥 Ray Data<br/>0..N CPU on lag"]
     Data --> Iceberg[(Iceberg<br/>training_sets)]
@@ -936,7 +983,7 @@ make load-test         # 30s, 20 VUs, all endpoints — exits non-zero if error 
   Generated from <code>README.md</code>
 </footer>
 </main>
-<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#contents" class="h2">Contents</a></li><li><a href="#what-this-does" class="h2">What this does</a></li><li><a href="#headline-findings" class="h2">Headline findings</a></li><li><a href="#quick-start" class="h2">Quick start</a></li><li><a href="#architecture" class="h2">Architecture</a></li><li><a href="#project-layout" class="h2">Project layout</a></li><li><a href="#testing-validation" class="h2">Testing &amp; validation</a></li><li><a href="#api-web-dashboard" class="h2">API &amp; web dashboard</a></li><li><a href="#why-fastapi-instead-of-streamlit" class="h3">Why FastAPI instead of Streamlit</a></li><li><a href="#run-all-services" class="h2">Run all services</a></li><li><a href="#container-alternative-docker-compose" class="h3">Container alternative (docker compose)</a></li><li><a href="#production-readiness" class="h2">Production readiness</a></li><li><a href="#security" class="h3">Security</a></li><li><a href="#performance-caching" class="h3">Performance &amp; caching</a></li><li><a href="#resilience" class="h3">Resilience</a></li><li><a href="#observability-opt-in" class="h3">Observability (opt-in)</a></li><li><a href="#engineering" class="h3">Engineering</a></li><li><a href="#configuration" class="h3">Configuration</a></li><li><a href="#admin-panel" class="h3">Admin panel</a></li><li><a href="#whats-deliberately-not-done" class="h3">What's deliberately not done</a></li><li><a href="#auto-scaling-at-production-volume" class="h2">Auto-scaling at production volume</a></li><li><a href="#documentation" class="h2">Documentation</a></li><li><a href="#load-testing" class="h3">Load testing</a></li><li><a href="#license" class="h2">License</a></li></ul></aside>
+<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#contents" class="h2">Contents</a></li><li><a href="#a-note-on-the-dataset" class="h2">A note on the dataset</a></li><li><a href="#what-this-does" class="h2">What this does</a></li><li><a href="#headline-findings-on-the-sample" class="h2">Headline findings on the sample</a></li><li><a href="#quick-start" class="h2">Quick start</a></li><li><a href="#architecture" class="h2">Architecture</a></li><li><a href="#project-layout" class="h2">Project layout</a></li><li><a href="#testing-validation" class="h2">Testing &amp; validation</a></li><li><a href="#api-web-dashboard" class="h2">API &amp; web dashboard</a></li><li><a href="#why-fastapi-instead-of-streamlit" class="h3">Why FastAPI instead of Streamlit</a></li><li><a href="#run-all-services" class="h2">Run all services</a></li><li><a href="#container-alternative-docker-compose" class="h3">Container alternative (docker compose)</a></li><li><a href="#production-readiness" class="h2">Production readiness</a></li><li><a href="#security" class="h3">Security</a></li><li><a href="#performance-caching" class="h3">Performance &amp; caching</a></li><li><a href="#resilience" class="h3">Resilience</a></li><li><a href="#observability-opt-in" class="h3">Observability (opt-in)</a></li><li><a href="#engineering" class="h3">Engineering</a></li><li><a href="#configuration" class="h3">Configuration</a></li><li><a href="#admin-panel" class="h3">Admin panel</a></li><li><a href="#whats-deliberately-not-done" class="h3">What's deliberately not done</a></li><li><a href="#auto-scaling-at-production-volume" class="h2">Auto-scaling at production volume</a></li><li><a href="#documentation" class="h2">Documentation</a></li><li><a href="#load-testing" class="h3">Load testing</a></li><li><a href="#license" class="h2">License</a></li></ul></aside>
 </div>
 <script
   src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"

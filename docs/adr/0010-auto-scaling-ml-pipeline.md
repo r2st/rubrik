@@ -6,13 +6,13 @@
 
 ## Context
 
-The fine-tuning work in ADR 0003 was deliberately small: 95 training meetings, single H100, $1.40 wall-clock cost. That was the right scope to *prove the recipe*. It is not the right scope to run in production.
+The client provided a representative **sample** of meeting transcripts (~100 meetings, of which ~95 became the training split). The fine-tuning work in ADR 0003 ran against that sample — single H100, $1.40 wall-clock cost, 28 minutes — which was the right scope to *prove the recipe* and verify the cost economics close. It is not the right scope to run in production. The client also confirmed synthetic generation can supplement the sample for edge cases.
 
 Production assumptions for this ADR:
 
-| Dimension | Workshop (today) | Production target |
+| Dimension | Proof-of-concept (today, on the client sample) | Production target |
 |---|---|---|
-| Training set | 95 meetings | 1M – 100M+ meetings, growing daily |
+| Training set | ~95 meetings (the client sample) | 1M – 100M+ meetings, plus synthetic augmentation, growing daily |
 | Train wall-clock | 28 min on 1× H100 | minutes per epoch on multi-node, hours total |
 | Inference QPS | n/a | 10–10,000 RPS, bursty (US working hours) |
 | p95 latency budget | n/a | <500 ms for summarization, <100 ms for classification |

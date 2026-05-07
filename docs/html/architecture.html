@@ -371,7 +371,7 @@ footer code {
 <h2 id="system-overview">System overview<a class="anchor" href="#system-overview" title="Permanent link">¶</a></h2>
 <div class="mermaid">flowchart LR
     subgraph "Input"
-        Data[("100 meeting<br/>directories<br/>(JSON × 6)")]
+        Data[("Client sample<br/>(JSON × 6 per meeting)<br/>scales out → ADR 0008")]
     end
 
     subgraph "Core (src/)"
@@ -635,7 +635,63 @@ footer code {
 <p>The <code>/api/health</code> endpoint is registered on a separate <strong>public</strong> router that bypasses the auth dependency — load balancers and k8s probes need to hit it without credentials.</p>
 <hr />
 <h2 id="scaling-to-100m-records">Scaling to 100M+ records<a class="anchor" href="#scaling-to-100m-records" title="Permanent link">¶</a></h2>
-<p>The current single-instance, in-memory pipeline is correct for the dataset size today (~100 meetings, ~4k sentences). At <strong>100M+ records</strong> the substrate changes — the analytical layers run against a real data platform — but the <em>application code shape</em> stays mostly the same.</p>
+<p>The client provided a representative <strong>sample</strong> (currently ~100 meetings, ~4k sentences). The current single-instance, in-memory pipeline is correct <strong>for that sample volume</strong> — it's how we verify pipeline correctness end-to-end during development. At <strong>production volume (millions to 100M+ records)</strong> the substrate changes — the analytical layers run against a real data platform — but the <em>application code shape</em> stays mostly the same.</p>
+<h3 id="scale-envelopes-per-component">Scale envelopes per component<a class="anchor" href="#scale-envelopes-per-component" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Comfortable up to</th>
+<th>Breaks at</th>
+<th>Path forward</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Regex categorizer</td>
+<td>Billions / day on a single thread</td>
+<td>n/a — CPU-bound, parallelizes trivially</td>
+<td>Already good</td>
+</tr>
+<tr>
+<td>TF-IDF + KMeans clustering</td>
+<td>~1M docs in-memory</td>
+<td>~10M (RAM ceiling)</td>
+<td>Streaming MiniBatchKMeans, then Spark MLlib / Faiss</td>
+</tr>
+<tr>
+<td>Per-sentence sentiment trajectories</td>
+<td>~1M docs</td>
+<td>~10M (RAM ceiling)</td>
+<td>Streaming Ray Data with per-partition aggregation</td>
+</tr>
+<tr>
+<td>Customer health + insight aggregation</td>
+<td>~1M docs</td>
+<td>~10M (groupby memory)</td>
+<td>Postgres OLTP for current period + ClickHouse / DuckDB for history</td>
+</tr>
+<tr>
+<td>In-memory pipeline state (singleton)</td>
+<td>≤ ~100k rows</td>
+<td>Memory-bound</td>
+<td>Repository pattern + Postgres persistence (foundation already in place — see <code>src/db.py</code>)</td>
+</tr>
+<tr>
+<td>FastAPI request layer</td>
+<td>Stateless — replicates horizontally</td>
+<td>LB / DB-bound</td>
+<td>Multi-instance behind LB, Redis cache for hot queries</td>
+</tr>
+<tr>
+<td>Gemma 4 inference</td>
+<td>One pod = ~10 RPS</td>
+<td>Pod queue depth</td>
+<td>vLLM autoscale → ADR 0010</td>
+</tr>
+</tbody>
+</table>
+<p>The point: <strong>every layer has a known ceiling and a known next step</strong>. Nothing requires a rewrite to scale; each transition is a targeted swap with a measurable trigger documented in the relevant ADR.</p>
 <div class="mermaid">flowchart LR
     Src[Transcript sources] --> Stream[Kafka / Kinesis<br/>append-only log]
     Stream --> Raw[(S3 + Iceberg<br/>raw + audit)]
@@ -664,7 +720,7 @@ footer code {
 <p>Migration is incremental: each step in <a href="adr/0008-data-layer-for-scale.md#migration-path-concrete-sequential">ADR 0008</a> is independently shippable, none requires a wholesale rewrite. The current SQLite + SQLAlchemy code is the foundation — change <code>bootstrap.toml</code>'s database URL to Postgres and step #2 is done.</p>
 <hr />
 <h2 id="auto-scaling-ml-pipeline-training-serving">Auto-scaling ML pipeline (training + serving)<a class="anchor" href="#auto-scaling-ml-pipeline-training-serving" title="Permanent link">¶</a></h2>
-<p>The Gemma 4 fine-tune in <a href="adr/0003-self-host-summarization-with-gemma-4.md">ADR 0003</a> was deliberately small — 95 meetings on a single H100, $1.40 wall-clock cost. That's the workshop recipe. <strong>Production scales every layer independently</strong> without changing the trainer logic:</p>
+<p>The Gemma 4 fine-tune in <a href="adr/0003-self-host-summarization-with-gemma-4.md">ADR 0003</a> was a deliberate proof-of-concept on the client sample (~95 train meetings on a single H100, $1.40 wall-clock cost) — sufficient to demonstrate the recipe works and the economics close. <strong>Production scales every layer independently</strong> without changing the trainer logic:</p>
 <div class="mermaid">flowchart LR
     subgraph Data["DATA — Ray Data on KubeRay (autoscale 0..N CPU)"]
         Kafka[Kafka stream] --> Prep[Streaming dedup,<br/>quality, multi-task]
@@ -846,7 +902,7 @@ footer code {
 </tr>
 </tbody>
 </table>
-<p>End-to-end runtime: ~10s on 100 meetings. The bottleneck is silhouette-based <code>k</code> selection (fits 7 KMeans models). At 10x scale, switch to mini-batch KMeans or run the silhouette sweep on a sample.</p>
+<p>End-to-end runtime: ~10s on the client's sample dataset. The bottleneck is silhouette-based <code>k</code> selection (fits 7 KMeans models). At ~10× the sample size the silhouette sweep should run on a sample, not the full set; at ~100× MiniBatchKMeans replaces KMeans; beyond that the clustering is out-of-process via Spark MLlib (see ADR 0008's analytical tier).</p>
 <hr />
 <h2 id="extensibility">Extensibility<a class="anchor" href="#extensibility" title="Permanent link">¶</a></h2>
 <p>How to add new things without touching unrelated code:</p>
@@ -884,7 +940,7 @@ footer code {
   Generated from <code>docs/ARCHITECTURE.md</code>
 </footer>
 </main>
-<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#design-principles" class="h2">Design principles</a></li><li><a href="#system-overview" class="h2">System overview</a></li><li><a href="#module-dependencies" class="h2">Module dependencies</a></li><li><a href="#data-model" class="h2">Data model</a></li><li><a href="#pipeline-stages" class="h2">Pipeline stages</a></li><li><a href="#interface-layering" class="h2">Interface layering</a></li><li><a href="#validation-flow" class="h2">Validation flow</a></li><li><a href="#api-request-lifecycle" class="h2">API request lifecycle</a></li><li><a href="#scaling-to-100m-records" class="h2">Scaling to 100M+ records</a></li><li><a href="#auto-scaling-ml-pipeline-training-serving" class="h2">Auto-scaling ML pipeline (training + serving)</a></li><li><a href="#training-stack-whats-where" class="h3">Training stack — what's where</a></li><li><a href="#serving-stack-autoscaling-chain-end-to-end" class="h3">Serving stack — autoscaling chain end-to-end</a></li><li><a href="#admin-panel-runtime-configuration-without-env-vars" class="h2">Admin panel — runtime configuration without env vars</a></li><li><a href="#performance-caching" class="h2">Performance &amp; caching</a></li><li><a href="#extensibility" class="h2">Extensibility</a></li></ul></aside>
+<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#design-principles" class="h2">Design principles</a></li><li><a href="#system-overview" class="h2">System overview</a></li><li><a href="#module-dependencies" class="h2">Module dependencies</a></li><li><a href="#data-model" class="h2">Data model</a></li><li><a href="#pipeline-stages" class="h2">Pipeline stages</a></li><li><a href="#interface-layering" class="h2">Interface layering</a></li><li><a href="#validation-flow" class="h2">Validation flow</a></li><li><a href="#api-request-lifecycle" class="h2">API request lifecycle</a></li><li><a href="#scaling-to-100m-records" class="h2">Scaling to 100M+ records</a></li><li><a href="#scale-envelopes-per-component" class="h3">Scale envelopes per component</a></li><li><a href="#auto-scaling-ml-pipeline-training-serving" class="h2">Auto-scaling ML pipeline (training + serving)</a></li><li><a href="#training-stack-whats-where" class="h3">Training stack — what's where</a></li><li><a href="#serving-stack-autoscaling-chain-end-to-end" class="h3">Serving stack — autoscaling chain end-to-end</a></li><li><a href="#admin-panel-runtime-configuration-without-env-vars" class="h2">Admin panel — runtime configuration without env vars</a></li><li><a href="#performance-caching" class="h2">Performance &amp; caching</a></li><li><a href="#extensibility" class="h2">Extensibility</a></li></ul></aside>
 </div>
 <script
   src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"

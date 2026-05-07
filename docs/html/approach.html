@@ -336,6 +336,9 @@ footer code {
 <main>
 <h1 id="approach-methodology">Approach &amp; Methodology<a class="anchor" href="#approach-methodology" title="Permanent link">¶</a></h1>
 <p>This document captures the design decisions behind the pipeline — what we evaluated, what we shipped, and why.</p>
+<blockquote>
+<p><strong>Note on data scale.</strong> The client provided a representative <em>sample</em> (~100 meetings spanning the 3 call types and a major incident scenario). Production volume is expected to grow into the millions, with <strong>100M+</strong> as a realistic target. The client also confirmed synthetic transcript generation is acceptable for edge-case coverage. Numbers like "the sample has 100 meetings" or "the v3 fine-tune trained on 95 meetings" are accurate descriptions of <strong>what was verified during development</strong>, not assertions about production volume. Each verdict below states the <strong>scale envelope</strong> of the chosen approach — where it works, where it breaks, what comes next.</p>
+</blockquote>
 <h2 id="executive-summary">Executive summary<a class="anchor" href="#executive-summary" title="Permanent link">¶</a></h2>
 <p>Four decisions drive the architecture. The verdict for each:</p>
 <table>
@@ -452,6 +455,43 @@ footer code {
 <p><strong>Fine-tuned LLM</strong> — Considered for the catch-all bucket. Rejected as premature: 13% is below the threshold where the operational cost of a separate ML system pays off. Revisit when the catch-all grows past ~25% (taxonomy drift, multi-tenant deployment with varied title formats, multilingual data).</p>
 <h3 id="verdict">Verdict<a class="anchor" href="#verdict" title="Permanent link">¶</a></h3>
 <p><strong>Ship rules + TF-IDF/KMeans.</strong> Add an LLM fallback only when validation shows the catch-all bucket has grown past ~25% of traffic, or when a customer demands a custom taxonomy.</p>
+<h3 id="scale-envelope">Scale envelope<a class="anchor" href="#scale-envelope" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Approach</th>
+<th>Comfortable up to</th>
+<th>Breaks at</th>
+<th>Next step</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Regex categorizer</td>
+<td>Billions/day on a single thread</td>
+<td>n/a — embarrassingly parallel</td>
+<td>Already production-grade</td>
+</tr>
+<tr>
+<td>TF-IDF + KMeans</td>
+<td>~1M docs in-memory</td>
+<td>~10M (RAM ceiling)</td>
+<td>MiniBatchKMeans → Spark MLlib → Faiss for nearest-neighbor lookups</td>
+</tr>
+<tr>
+<td>Zero-shot LLM</td>
+<td>Cost-bound, ~10k/day at vendor pricing</td>
+<td>Vendor rate limits</td>
+<td>Fine-tuned classifier (next tier in the cascade)</td>
+</tr>
+<tr>
+<td>Fine-tuned LLM fallback</td>
+<td>GPU-amortized, ~10k/sec serving</td>
+<td>Per-tenant cold-start</td>
+<td>Multi-tenant LoRA hot-swap (ADR 0010)</td>
+</tr>
+</tbody>
+</table>
 <hr />
 <h2 id="2-summarization-action-items">2. Summarization &amp; action items<a class="anchor" href="#2-summarization-action-items" title="Permanent link">¶</a></h2>
 <p>The dataset ships with <code>summary.json</code> for each meeting — a paragraph summary, an <code>actionItems[]</code> list, topics, and key moments. The pipeline consumes those directly. <strong>But where do they come from in production?</strong></p>
@@ -745,32 +785,39 @@ footer code {
 <tr>
 <th>Skipped</th>
 <th>Why</th>
+<th>When to revisit</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td>Build a production multi-tenant SaaS</td>
 <td>Out of scope for the take-home; trivial to add via FastAPI dependencies</td>
+<td>First multi-tenant customer (ADR 0006)</td>
 </tr>
 <tr>
 <td>Train a custom embedding model</td>
-<td>TF-IDF is sufficient at 100 docs; embeddings would be runtime overhead with marginal lift</td>
+<td>TF-IDF is sufficient on the sample and stays comfortable up to ~1M docs</td>
+<td>Clustering quality drops in <code>validate.py</code> at scale → switch to sentence-transformers + Faiss</td>
 </tr>
 <tr>
 <td>Use an LLM for categorization</td>
-<td>Rules are 99% accurate vs the dataset's own topic tags; LLM adds latency and cost without measurable lift</td>
+<td>Rules are 99% accurate against the dataset's own topic tags on the sample, with no latency or egress cost</td>
+<td>Catch-all bucket grows past 25% → LLM fallback (ADR 0002)</td>
 </tr>
 <tr>
-<td>Generate synthetic data for the main pipeline</td>
-<td>The 100 meetings cover all three call types and a meaningful incident — already useful</td>
+<td>Generate synthetic transcripts for the main pipeline</td>
+<td>The client sample already covers the 3 call types and the major incident scenario — sufficient to verify pipeline correctness</td>
+<td>Edge cases the sample doesn't cover; the client confirmed synthetic generation is acceptable</td>
 </tr>
 <tr>
 <td>Add a database / persistence layer</td>
-<td>Pipeline runs in 10 seconds; on-demand is simpler than caching to disk</td>
+<td>Pipeline runs in ~10 seconds at sample volume; on-demand is simpler</td>
+<td>Production volume — Postgres + ClickHouse, ADR 0008</td>
 </tr>
 <tr>
 <td>Forecasting / time-series modeling</td>
-<td>Three months of data is too short for meaningful forecasts; we surface trends, not predictions</td>
+<td>The sample only spans Feb–Apr 2026; too short for meaningful forecasts</td>
+<td>Multi-quarter production data lands</td>
 </tr>
 </tbody>
 </table>
@@ -779,7 +826,7 @@ footer code {
   Generated from <code>docs/APPROACH.md</code>
 </footer>
 </main>
-<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#executive-summary" class="h2">Executive summary</a></li><li><a href="#1-categorization" class="h2">1. Categorization</a></li><li><a href="#comparison" class="h3">Comparison</a></li><li><a href="#why-each-shipped-or-didnt" class="h3">Why each shipped (or didn't)</a></li><li><a href="#verdict" class="h3">Verdict</a></li><li><a href="#2-summarization-action-items" class="h2">2. Summarization &amp; action items</a></li><li><a href="#comparison_1" class="h3">Comparison</a></li><li><a href="#training-results" class="h3">Training results</a></li><li><a href="#implementation-lessons-worth-knowing-if-you-replicate" class="h3">Implementation lessons (worth knowing if you replicate)</a></li><li><a href="#verdict_1" class="h3">Verdict</a></li><li><a href="#scaling-the-recipe" class="h3">Scaling the recipe</a></li><li><a href="#3-sentiment-analysis" class="h2">3. Sentiment analysis</a></li><li><a href="#what-the-per-sentence-layer-adds" class="h3">What the per-sentence layer adds</a></li><li><a href="#why-not-derive-sentiment-with-a-model" class="h3">Why not derive sentiment with a model</a></li><li><a href="#verdict_2" class="h3">Verdict</a></li><li><a href="#4-customer-churn-risk-score" class="h2">4. Customer churn risk score</a></li><li><a href="#why-these-weights" class="h3">Why these weights</a></li><li><a href="#why-these-thresholds" class="h3">Why these thresholds</a></li><li><a href="#verdict_3" class="h3">Verdict</a></li><li><a href="#cross-cutting-principles" class="h2">Cross-cutting principles</a></li><li><a href="#when-to-revisit-each-verdict" class="h2">When to revisit each verdict</a></li><li><a href="#what-we-deliberately-did-not-do" class="h2">What we deliberately did not do</a></li></ul></aside>
+<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#executive-summary" class="h2">Executive summary</a></li><li><a href="#1-categorization" class="h2">1. Categorization</a></li><li><a href="#comparison" class="h3">Comparison</a></li><li><a href="#why-each-shipped-or-didnt" class="h3">Why each shipped (or didn't)</a></li><li><a href="#verdict" class="h3">Verdict</a></li><li><a href="#scale-envelope" class="h3">Scale envelope</a></li><li><a href="#2-summarization-action-items" class="h2">2. Summarization &amp; action items</a></li><li><a href="#comparison_1" class="h3">Comparison</a></li><li><a href="#training-results" class="h3">Training results</a></li><li><a href="#implementation-lessons-worth-knowing-if-you-replicate" class="h3">Implementation lessons (worth knowing if you replicate)</a></li><li><a href="#verdict_1" class="h3">Verdict</a></li><li><a href="#scaling-the-recipe" class="h3">Scaling the recipe</a></li><li><a href="#3-sentiment-analysis" class="h2">3. Sentiment analysis</a></li><li><a href="#what-the-per-sentence-layer-adds" class="h3">What the per-sentence layer adds</a></li><li><a href="#why-not-derive-sentiment-with-a-model" class="h3">Why not derive sentiment with a model</a></li><li><a href="#verdict_2" class="h3">Verdict</a></li><li><a href="#4-customer-churn-risk-score" class="h2">4. Customer churn risk score</a></li><li><a href="#why-these-weights" class="h3">Why these weights</a></li><li><a href="#why-these-thresholds" class="h3">Why these thresholds</a></li><li><a href="#verdict_3" class="h3">Verdict</a></li><li><a href="#cross-cutting-principles" class="h2">Cross-cutting principles</a></li><li><a href="#when-to-revisit-each-verdict" class="h2">When to revisit each verdict</a></li><li><a href="#what-we-deliberately-did-not-do" class="h2">What we deliberately did not do</a></li></ul></aside>
 </div>
 <script
   src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"

@@ -26,9 +26,25 @@
 
 ---
 
+## A note on the dataset
+
+The client provided a **representative sample** of meeting transcripts (~100 meetings spanning support cases, customer-facing calls, and internal meetings). This is **not the production data volume** — production is expected to grow to millions, with **100M+ records** as a realistic target. The client also indicated synthetic data can be generated to cover edge cases the sample doesn't reach.
+
+The codebase reflects that distinction:
+
+| Layer | Verified on the sample | Designed for | Path to scale |
+|---|---|---|---|
+| Pipeline correctness | ✅ end-to-end | Any volume | Component-by-component scaling envelopes below |
+| In-memory pandas analysis | ✅ ~10s build | ≤ ~100k records | Switch to streaming + repository pattern → ADR 0008 |
+| FastAPI service | ✅ load-tested | Stateless, horizontal scale | Replicate behind LB; cache via Redis |
+| Gemma 4 fine-tune | ✅ 4 iterations on the sample | Proof-of-concept | Multi-node Ray Train + autoscaled vLLM → ADR 0010 |
+| Admin panel + runtime config | ✅ functional | Same operational surface at any scale | Scales as the API scales |
+
+Numbers like "the sample has 100 meetings" or "the v3 fine-tune trained on 95 meetings" appear throughout the docs — they are accurate descriptions of **what was verified during development**, not assertions about production volume. Wherever a design decision depends on scale, the doc states the **scale envelope** explicitly (e.g., "TF-IDF + KMeans is sound up to ~1M docs in-memory; switch to streaming/minibatch above that").
+
 ## What this does
 
-Given ~100 meeting transcripts (support cases, customer-facing calls, internal meetings), this pipeline:
+Given the client's sample of meeting transcripts (support cases, customer-facing calls, internal meetings), this pipeline:
 
 1. **Categorizes** every meeting along three dimensions — call type, purpose, product area — using regex rules + TF-IDF clustering
 2. **Analyzes sentiment** at meeting *and* sentence granularity, surfacing within-call friction moments invisible to summary-level scores
@@ -46,15 +62,17 @@ Five surfaces over the same `src/` analysis core:
 
 Plus a separate experiment in [`gemma-finetune/`](gemma-finetune/README.md): fine-tunes **Gemma 4 (E4B)** on the dataset's gold summaries to demonstrate a self-hosted alternative to vendor LLM APIs ($1.40 training cost, ROUGE-L 0.39 vs 0.29 baseline). See [APPROACH §Summarization](docs/APPROACH.md#2-summarization--action-items) for the verdict, and [`gemma-finetune/scaling/`](gemma-finetune/scaling/README.md) + [ADR 0010](docs/adr/0010-auto-scaling-ml-pipeline.md) for the production auto-scaling architecture (Ray Train + FSDP for training, vLLM + HPA for serving, active learning for continuous improvement).
 
-## Headline findings
+## Headline findings on the sample
 
-| Area | Headline |
+These are real findings from the client's sample dataset. They illustrate **the kind of insight the pipeline produces** — at production volume the same layers will surface analogous patterns at much larger scale.
+
+| Area | Headline (on sample) |
 |---|---|
-| Categorization | 100 meetings → 3 call types · 11 purposes · 4 product areas. **k=7** content clusters (silhouette-selected). |
+| Categorization | 3 call types · 11 purposes · 4 product areas. **k=7** content clusters (silhouette-selected). |
 | Sentiment | Support 2.94 < internal 3.42 < external 3.71. Detect 3.20 — outage drag. |
-| Outage impact | One incident touched **68% of all meetings**, dragged sentiment by **0.77 points**. |
+| Outage impact | One incident touched **68% of meetings in the sample**, dragged sentiment by **0.77 points**. |
 | Top at-risk customers | Northstar Pharma · Cobalt Software · Summit Trust |
-| Execution bottleneck | Maria Santos owns 31 action items (most by far) |
+| Execution bottleneck | Maria Santos owns 31 action items (most by far in the sample) |
 | Conversation health | Support calls have **51% single-speaker dominance** — agents may be over-talking |
 | Friction moments | **9 meetings** with sharp within-call sentiment drops (sentence-level analysis) |
 
@@ -89,7 +107,7 @@ uvicorn api.main:app --reload
 
 ```mermaid
 flowchart LR
-    Data[("100 meetings<br/>(JSON)")] --> Loader["data_loader<br/>typed DataFrames"]
+    Data[("Client sample<br/>(JSON · scales out via ADR 0008)")] --> Loader["data_loader<br/>typed DataFrames"]
 
     Loader --> Categorizer["categorizer<br/>regex rules"]
     Loader --> Sentiment["sentiment<br/>per-sentence trajectories"]
@@ -353,7 +371,7 @@ Three tabs:
 
 ## Auto-scaling at production volume
 
-The Gemma 4 fine-tune (95 meetings, 1× H100, $1.40) is the *workshop recipe*. Production runs the same trainer logic on a multi-node cluster with autoscaled inference. Each layer scales independently against its own bottleneck signal and goes to zero when idle.
+The Gemma 4 fine-tune ran on the client's sample (~95 train + 5 held-out meetings) with 1× H100 in 28 minutes for $1.40 — a *proof-of-concept on the sample*, not a production training run. Production runs the same trainer logic on a multi-node cluster with autoscaled inference. Each layer scales independently against its own bottleneck signal and goes to zero when idle.
 
 ```mermaid
 flowchart LR
