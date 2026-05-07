@@ -599,12 +599,16 @@ footer code {
 <h2 id="api-request-lifecycle">API request lifecycle<a class="anchor" href="#api-request-lifecycle" title="Permanent link">¶</a></h2>
 <p>A request to a <code>/api/v1/*</code> endpoint flows through this middleware stack:</p>
 <div class="mermaid">flowchart TD
-    Req[Incoming request] --> RID["RequestIDMiddleware<br/>mint or honor X-Request-ID<br/>start latency timer"]
+    Req[Incoming request] --> Body["BodySizeLimitMiddleware<br/>reject >1 MiB up front (DoS guard)"]
+    Body -->|too large| Err413["413 + error envelope"]
+    Body -->|ok| RID["RequestIDMiddleware<br/>mint or honor X-Request-ID<br/>start latency timer"]
     RID --> Sec["SecurityHeadersMiddleware<br/>CSP · HSTS · X-Frame-Options · …"]
     Sec --> CORS["CORSMiddleware<br/>configurable origins"]
     CORS --> GZ["GZipMiddleware<br/>compresses payloads >500B"]
     GZ --> RL["SlowAPI rate limiter<br/>X-RateLimit-* headers"]
-    RL --> OTel["OpenTelemetry<br/>(if OTEL_ENDPOINT set)"]
+    RL --> Strict{"strict_rate_limit dep<br/>(admin login + password only)<br/>5/min/IP"}
+    Strict -->|exceeded| Err429["429 + error envelope"]
+    Strict -->|ok| OTel["OpenTelemetry<br/>(if OTEL_ENDPOINT set)"]
     OTel --> Auth{X-API-Key check<br/>(if API_KEY set)}
     Auth -->|invalid| Err401["401 + error envelope"]
     Auth -->|ok / disabled| ETag{If-None-Match<br/>matches ETag?}
@@ -613,10 +617,14 @@ footer code {
     Route --> Stale["StateAgeMiddleware<br/>X-State-Age-Seconds<br/>X-Stale-Response (if applicable)"]
     Stale --> Resp[Response]
 
+    style Body fill:#fff3e0
+    style Err413 fill:#ffcdd2
     style RID fill:#e3f2fd
     style Sec fill:#e3f2fd
     style GZ fill:#e8f5e9
     style RL fill:#fff3e0
+    style Strict fill:#fff3e0
+    style Err429 fill:#ffcdd2
     style Auth fill:#ffebee
     style Err401 fill:#ffcdd2
     style ETag fill:#e8f5e9
@@ -887,6 +895,68 @@ footer code {
 </table>
 <p><strong>No env vars</strong> are read for application configuration. The runtime substrate (uvicorn, k8s) may still use them for infrastructure. See <a href="adr/0009-admin-panel-for-runtime-config.md">ADR 0009</a> for the full rationale.</p>
 <hr />
+<h2 id="security-hardening">Security hardening<a class="anchor" href="#security-hardening" title="Permanent link">¶</a></h2>
+<p>Defense-in-depth controls layered onto the request path:</p>
+<table>
+<thead>
+<tr>
+<th>Control</th>
+<th>Where</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BodySizeLimitMiddleware</code> (1 MiB)</td>
+<td>outermost middleware</td>
+<td>Reject oversized requests before any handler allocates buffers — DoS guard.</td>
+</tr>
+<tr>
+<td>Strict 5/min/IP rate limit</td>
+<td><code>Depends(strict_rate_limit)</code> on <code>/admin/login</code> + <code>/admin/password</code></td>
+<td>Slow brute-force credential attacks below the global slowapi cap.</td>
+</tr>
+<tr>
+<td>Global slowapi rate limiter</td>
+<td>app-wide</td>
+<td>Per-IP fairness across all routes; admin-tunable via <code>rate_limit.default</code>.</td>
+</tr>
+<tr>
+<td>PBKDF2-SHA256 (200k iters)</td>
+<td><code>api/admin/auth.py</code></td>
+<td>Admin password hashing.</td>
+</tr>
+<tr>
+<td>HMAC-signed session cookie</td>
+<td><code>api/admin/auth.py</code></td>
+<td><code>Secure</code> (prod) + <code>HttpOnly</code> + <code>SameSite=Strict</code>.</td>
+</tr>
+<tr>
+<td><code>SecurityHeadersMiddleware</code></td>
+<td>per response</td>
+<td>CSP, HSTS (prod), X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy.</td>
+</tr>
+<tr>
+<td>Audit log</td>
+<td><code>audit_log</code> table</td>
+<td>Every admin mutation recorded with actor + before/after value.</td>
+</tr>
+</tbody>
+</table>
+<p>Reporting process and scope live in <a href="../SECURITY.md"><code>SECURITY.md</code></a>.</p>
+<hr />
+<h2 id="operational-lifecycle">Operational lifecycle<a class="anchor" href="#operational-lifecycle" title="Permanent link">¶</a></h2>
+<p>Container start (<code>Dockerfile</code> entrypoint):</p>
+<div class="mermaid">flowchart LR
+    Start([Container start]) --> Boot["read bootstrap.toml<br/>(env, DB url, secrets)"]
+    Boot --> Mig["alembic upgrade head<br/>(idempotent; locks safely<br/>under multi-replica boot)"]
+    Mig --> Seed["initialize_db_and_seed()<br/>+ ensure_admin_password_seeded()"]
+    Seed --> Warm["state.get_state()<br/>warm pipeline cache"]
+    Warm --> Refresh["start refresh task<br/>(if interval > 0)"]
+    Refresh --> Ready([uvicorn ready])</div>
+
+<p>Schema evolution flows through Alembic — <code>db.init_db()</code>'s create-all is now an idempotent fallback for sample-volume tests; production-equivalent containers always run migrations on boot.</p>
+<hr />
 <h2 id="performance-caching">Performance &amp; caching<a class="anchor" href="#performance-caching" title="Permanent link">¶</a></h2>
 <table>
 <thead>
@@ -952,7 +1022,7 @@ footer code {
   Generated from <code>docs/ARCHITECTURE.md</code>
 </footer>
 </main>
-<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#design-principles" class="h2">Design principles</a></li><li><a href="#system-overview" class="h2">System overview</a></li><li><a href="#module-dependencies" class="h2">Module dependencies</a></li><li><a href="#data-model" class="h2">Data model</a></li><li><a href="#pipeline-stages" class="h2">Pipeline stages</a></li><li><a href="#interface-layering" class="h2">Interface layering</a></li><li><a href="#validation-flow" class="h2">Validation flow</a></li><li><a href="#api-request-lifecycle" class="h2">API request lifecycle</a></li><li><a href="#scaling-to-100m-records" class="h2">Scaling to 100M+ records</a></li><li><a href="#scale-envelopes-per-component" class="h3">Scale envelopes per component</a></li><li><a href="#auto-scaling-ml-pipeline-training-serving" class="h2">Auto-scaling ML pipeline (training + serving)</a></li><li><a href="#training-stack-whats-where" class="h3">Training stack — what's where</a></li><li><a href="#serving-stack-autoscaling-chain-end-to-end" class="h3">Serving stack — autoscaling chain end-to-end</a></li><li><a href="#admin-panel-runtime-configuration-without-env-vars" class="h2">Admin panel — runtime configuration without env vars</a></li><li><a href="#performance-caching" class="h2">Performance &amp; caching</a></li><li><a href="#extensibility" class="h2">Extensibility</a></li></ul></aside>
+<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#design-principles" class="h2">Design principles</a></li><li><a href="#system-overview" class="h2">System overview</a></li><li><a href="#module-dependencies" class="h2">Module dependencies</a></li><li><a href="#data-model" class="h2">Data model</a></li><li><a href="#pipeline-stages" class="h2">Pipeline stages</a></li><li><a href="#interface-layering" class="h2">Interface layering</a></li><li><a href="#validation-flow" class="h2">Validation flow</a></li><li><a href="#api-request-lifecycle" class="h2">API request lifecycle</a></li><li><a href="#scaling-to-100m-records" class="h2">Scaling to 100M+ records</a></li><li><a href="#scale-envelopes-per-component" class="h3">Scale envelopes per component</a></li><li><a href="#auto-scaling-ml-pipeline-training-serving" class="h2">Auto-scaling ML pipeline (training + serving)</a></li><li><a href="#training-stack-whats-where" class="h3">Training stack — what's where</a></li><li><a href="#serving-stack-autoscaling-chain-end-to-end" class="h3">Serving stack — autoscaling chain end-to-end</a></li><li><a href="#admin-panel-runtime-configuration-without-env-vars" class="h2">Admin panel — runtime configuration without env vars</a></li><li><a href="#security-hardening" class="h2">Security hardening</a></li><li><a href="#operational-lifecycle" class="h2">Operational lifecycle</a></li><li><a href="#performance-caching" class="h2">Performance &amp; caching</a></li><li><a href="#extensibility" class="h2">Extensibility</a></li></ul></aside>
 </div>
 <script
   src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"

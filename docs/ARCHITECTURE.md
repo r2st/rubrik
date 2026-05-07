@@ -279,12 +279,16 @@ A request to a `/api/v1/*` endpoint flows through this middleware stack:
 
 ```mermaid
 flowchart TD
-    Req[Incoming request] --> RID["RequestIDMiddleware<br/>mint or honor X-Request-ID<br/>start latency timer"]
+    Req[Incoming request] --> Body["BodySizeLimitMiddleware<br/>reject >1 MiB up front (DoS guard)"]
+    Body -->|too large| Err413["413 + error envelope"]
+    Body -->|ok| RID["RequestIDMiddleware<br/>mint or honor X-Request-ID<br/>start latency timer"]
     RID --> Sec["SecurityHeadersMiddleware<br/>CSP · HSTS · X-Frame-Options · …"]
     Sec --> CORS["CORSMiddleware<br/>configurable origins"]
     CORS --> GZ["GZipMiddleware<br/>compresses payloads >500B"]
     GZ --> RL["SlowAPI rate limiter<br/>X-RateLimit-* headers"]
-    RL --> OTel["OpenTelemetry<br/>(if OTEL_ENDPOINT set)"]
+    RL --> Strict{"strict_rate_limit dep<br/>(admin login + password only)<br/>5/min/IP"}
+    Strict -->|exceeded| Err429["429 + error envelope"]
+    Strict -->|ok| OTel["OpenTelemetry<br/>(if OTEL_ENDPOINT set)"]
     OTel --> Auth{X-API-Key check<br/>(if API_KEY set)}
     Auth -->|invalid| Err401["401 + error envelope"]
     Auth -->|ok / disabled| ETag{If-None-Match<br/>matches ETag?}
@@ -293,10 +297,14 @@ flowchart TD
     Route --> Stale["StateAgeMiddleware<br/>X-State-Age-Seconds<br/>X-Stale-Response (if applicable)"]
     Stale --> Resp[Response]
 
+    style Body fill:#fff3e0
+    style Err413 fill:#ffcdd2
     style RID fill:#e3f2fd
     style Sec fill:#e3f2fd
     style GZ fill:#e8f5e9
     style RL fill:#fff3e0
+    style Strict fill:#fff3e0
+    style Err429 fill:#ffcdd2
     style Auth fill:#ffebee
     style Err401 fill:#ffcdd2
     style ETag fill:#e8f5e9
@@ -500,6 +508,42 @@ What lives where:
 | **Runtime** | DB `settings` table | API key, rate limits, churn weights, feature flags | Yes — change in `/admin`, takes effect within 5s |
 
 **No env vars** are read for application configuration. The runtime substrate (uvicorn, k8s) may still use them for infrastructure. See [ADR 0009](adr/0009-admin-panel-for-runtime-config.md) for the full rationale.
+
+---
+
+## Security hardening
+
+Defense-in-depth controls layered onto the request path:
+
+| Control | Where | Purpose |
+|---|---|---|
+| `BodySizeLimitMiddleware` (1 MiB) | outermost middleware | Reject oversized requests before any handler allocates buffers — DoS guard. |
+| Strict 5/min/IP rate limit | `Depends(strict_rate_limit)` on `/admin/login` + `/admin/password` | Slow brute-force credential attacks below the global slowapi cap. |
+| Global slowapi rate limiter | app-wide | Per-IP fairness across all routes; admin-tunable via `rate_limit.default`. |
+| PBKDF2-SHA256 (200k iters) | `api/admin/auth.py` | Admin password hashing. |
+| HMAC-signed session cookie | `api/admin/auth.py` | `Secure` (prod) + `HttpOnly` + `SameSite=Strict`. |
+| `SecurityHeadersMiddleware` | per response | CSP, HSTS (prod), X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy. |
+| Audit log | `audit_log` table | Every admin mutation recorded with actor + before/after value. |
+
+Reporting process and scope live in [`SECURITY.md`](../SECURITY.md).
+
+---
+
+## Operational lifecycle
+
+Container start (`Dockerfile` entrypoint):
+
+```mermaid
+flowchart LR
+    Start([Container start]) --> Boot["read bootstrap.toml<br/>(env, DB url, secrets)"]
+    Boot --> Mig["alembic upgrade head<br/>(idempotent; locks safely<br/>under multi-replica boot)"]
+    Mig --> Seed["initialize_db_and_seed()<br/>+ ensure_admin_password_seeded()"]
+    Seed --> Warm["state.get_state()<br/>warm pipeline cache"]
+    Warm --> Refresh["start refresh task<br/>(if interval > 0)"]
+    Refresh --> Ready([uvicorn ready])
+```
+
+Schema evolution flows through Alembic — `db.init_db()`'s create-all is now an idempotent fallback for sample-volume tests; production-equivalent containers always run migrations on boot.
 
 ---
 

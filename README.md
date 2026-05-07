@@ -125,6 +125,8 @@ alembic revision --autogenerate -m "add foo column"
 alembic downgrade -1           # roll back one
 ```
 
+The Docker image runs `alembic upgrade head` on container start (entrypoint), so production-equivalent boots always apply pending migrations before `uvicorn` starts. Migrations are idempotent; Alembic's lock makes it safe under multi-replica boots.
+
 ## Architecture
 
 ```mermaid
@@ -288,14 +290,19 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 ### Security
 | Concern | How it's handled |
 |---|---|
-| **API key auth** | `X-API-Key` header check on every `/api/v1/*` route. Disabled when `API_KEY` env unset (dev). Health probe stays public. |
-| **CORS** | Configurable origins (`CORS_ORIGINS` env). Tighten in prod. |
-| **Rate limiting** | `slowapi` with default 120 req/min/IP, `X-RateLimit-*` headers. |
+| **API key auth** | `X-API-Key` header check on every `/api/v1/*` route. Disabled when `auth.api_key` runtime setting is empty (dev). Health probe stays public. |
+| **Admin login brute-force guard** | Stricter 5/min/IP rate limit on `/api/v1/admin/login` and `/api/v1/admin/password` via a dedicated FastAPI dependency (`strict_rate_limit`), layered on top of the global slowapi cap. |
+| **Body-size cap (DoS guard)** | `BodySizeLimitMiddleware` rejects requests >1 MiB with a 413 envelope before any handler allocates buffers. Checks `Content-Length` first, then enforces the cap on streaming/chunked bodies. |
+| **CORS** | Configurable origins (runtime setting). Tighten in prod. |
+| **Rate limiting (global)** | `slowapi` with default 120 req/min/IP, `X-RateLimit-*` headers; admin-tunable. |
 | **Security headers** | CSP, HSTS (prod only), X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy — all on every response. |
+| **Admin password storage** | PBKDF2-SHA256 (200k iters); HMAC-signed session cookie with `Secure` (prod) + `HttpOnly` + `SameSite=Strict`. |
+| **Audit log** | Every admin mutation recorded with actor + before/after value; surfaced in `/admin`. |
 | **Request IDs** | Every request stamped with `X-Request-ID`. Honored if inbound (load balancer / mesh propagation). |
 | **Error envelope** | All errors return `{"error": {code, message, request_id, path, details?}}` — no framework internals leak. |
 | **API versioning** | All routes under `/api/v1/`. Future v2 ships side-by-side without breaking clients. |
 | **CI security scans** | `pip-audit` (dependencies), `trivy` (filesystem + image), `bandit` (Python SAST). |
+| **Disclosure process** | See [`SECURITY.md`](SECURITY.md). |
 
 ### Performance & caching
 | Concern | How it's handled |

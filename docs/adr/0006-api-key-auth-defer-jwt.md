@@ -35,6 +35,10 @@ We **ship a static shared API key**, with the option to disable auth entirely in
 
 The implementation is in `api/auth.py`. Total surface: ~30 lines.
 
+### Admin credential endpoints
+
+`POST /api/v1/admin/login` and `POST /api/v1/admin/password` are protected by a stricter, dedicated rate limit (5 requests/minute/IP) layered on top of the global slowapi middleware. It's implemented as a small in-memory sliding-window FastAPI dependency (`strict_rate_limit` in `api/admin/routes.py`) — slowapi's decorator approach interfered with FastAPI body-model introspection on newer pydantic, so we keep the route signatures clean and cap requests via `Depends`. Per-process bound is fine for our replica count; promoting the counter to Redis is a one-function swap when we need cluster-wide enforcement.
+
 ## Consequences
 
 **Positive**

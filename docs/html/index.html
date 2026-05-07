@@ -515,6 +515,7 @@ python run_analysis.py --streaming --batch-size 1000
 alembic revision --autogenerate -m &quot;add foo column&quot;
 alembic downgrade -1           # roll back one
 </code></pre>
+<p>The Docker image runs <code>alembic upgrade head</code> on container start (entrypoint), so production-equivalent boots always apply pending migrations before <code>uvicorn</code> starts. Migrations are idempotent; Alembic's lock makes it safe under multi-replica boots.</p>
 <h2 id="architecture">Architecture<a class="anchor" href="#architecture" title="Permanent link">¶</a></h2>
 <div class="mermaid">flowchart LR
     Data[("Client sample<br/>(JSON · scales out via ADR 0008)")] --> Loader["data_loader<br/>typed DataFrames"]
@@ -748,19 +749,35 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 <tbody>
 <tr>
 <td><strong>API key auth</strong></td>
-<td><code>X-API-Key</code> header check on every <code>/api/v1/*</code> route. Disabled when <code>API_KEY</code> env unset (dev). Health probe stays public.</td>
+<td><code>X-API-Key</code> header check on every <code>/api/v1/*</code> route. Disabled when <code>auth.api_key</code> runtime setting is empty (dev). Health probe stays public.</td>
+</tr>
+<tr>
+<td><strong>Admin login brute-force guard</strong></td>
+<td>Stricter 5/min/IP rate limit on <code>/api/v1/admin/login</code> and <code>/api/v1/admin/password</code> via a dedicated FastAPI dependency (<code>strict_rate_limit</code>), layered on top of the global slowapi cap.</td>
+</tr>
+<tr>
+<td><strong>Body-size cap (DoS guard)</strong></td>
+<td><code>BodySizeLimitMiddleware</code> rejects requests &gt;1 MiB with a 413 envelope before any handler allocates buffers. Checks <code>Content-Length</code> first, then enforces the cap on streaming/chunked bodies.</td>
 </tr>
 <tr>
 <td><strong>CORS</strong></td>
-<td>Configurable origins (<code>CORS_ORIGINS</code> env). Tighten in prod.</td>
+<td>Configurable origins (runtime setting). Tighten in prod.</td>
 </tr>
 <tr>
-<td><strong>Rate limiting</strong></td>
-<td><code>slowapi</code> with default 120 req/min/IP, <code>X-RateLimit-*</code> headers.</td>
+<td><strong>Rate limiting (global)</strong></td>
+<td><code>slowapi</code> with default 120 req/min/IP, <code>X-RateLimit-*</code> headers; admin-tunable.</td>
 </tr>
 <tr>
 <td><strong>Security headers</strong></td>
 <td>CSP, HSTS (prod only), X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy — all on every response.</td>
+</tr>
+<tr>
+<td><strong>Admin password storage</strong></td>
+<td>PBKDF2-SHA256 (200k iters); HMAC-signed session cookie with <code>Secure</code> (prod) + <code>HttpOnly</code> + <code>SameSite=Strict</code>.</td>
+</tr>
+<tr>
+<td><strong>Audit log</strong></td>
+<td>Every admin mutation recorded with actor + before/after value; surfaced in <code>/admin</code>.</td>
 </tr>
 <tr>
 <td><strong>Request IDs</strong></td>
@@ -777,6 +794,10 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 <tr>
 <td><strong>CI security scans</strong></td>
 <td><code>pip-audit</code> (dependencies), <code>trivy</code> (filesystem + image), <code>bandit</code> (Python SAST).</td>
+</tr>
+<tr>
+<td><strong>Disclosure process</strong></td>
+<td>See <a href="SECURITY.md"><code>SECURITY.md</code></a>.</td>
 </tr>
 </tbody>
 </table>
