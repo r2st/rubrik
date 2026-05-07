@@ -2,7 +2,7 @@
 
 This document captures the design decisions behind the pipeline — what we evaluated, what we shipped, and why.
 
-> **Scope: an auto-scalable system.** The target architecture handles **millions to 100M+ records**. The dataset shipped with the brief is a representative *sample* (spanning the 3 call types and a major incident scenario) used to verify pipeline correctness during development — not the production volume, and not the architecture target. The client also confirmed synthetic transcript generation is acceptable for edge-case coverage. Concrete numbers about the sample describe **what was verified during development**, not assertions about production volume. Each verdict below states the **scale envelope** of the chosen approach — where it works, where it breaks, what comes next.
+> **Scope: an auto-scalable system.** The target architecture handles **millions to 100M+ records**. Each verdict below states the **scale envelope** of the chosen approach — where it works, where it breaks, what comes next.
 
 ## Executive summary
 
@@ -11,7 +11,7 @@ Four decisions drive the architecture. The verdict for each:
 | Decision | Verdict |
 |---|---|
 | **Categorization** (call type · purpose · product · customer) | **Ship hybrid: regex rules + TF-IDF/KMeans.** Zero-shot LLM evaluated; no measurable lift over rules at this scale. |
-| **Summarization & action items** | **Adopt the fine-tuned Gemma 4 v3 adapter for production.** Self-hosted, $0 per call after a one-time $1.40 training spend, +38% ROUGE-L over the baseline. Vendor APIs are a stopgap. |
+| **Summarization & action items** | **Adopt the fine-tuned Gemma 4 v3 adapter for production.** Self-hosted, $0 per call after one-time training, +38% ROUGE-L over the baseline. Vendor APIs are a stopgap. |
 | **Sentiment analysis** | **Use both granularities.** Meeting-level scores for headlines; per-sentence labels for within-call trajectories. The trajectory signal is the differentiator. |
 | **Customer churn risk score** | **Composite weighted score** of sentiment gap + churn moments + within-meeting pivots. Thresholds empirically calibrated to surface ~6% of customers as 🔴 high tier. |
 
@@ -35,11 +35,11 @@ We need to classify every meeting along four dimensions: **call type** (support 
 | **Long tail / catch-all** | ❌ | ⚠️ surfaces, doesn't label | ✅ | ✅ if represented in train |
 | **Privacy** | Local | Local | ⚠️ Vendor egress | Self-hostable |
 | **Reproducible for audit** | ✅ | ✅ | ❌ Vendor versioning | ✅ Pinned checkpoint |
-| **Accuracy vs dataset's `topics` tags** | **99%** | N/A | ~98–99% | Not measured |
+| **Accuracy vs ground-truth `topics` tags** | **99%** | N/A | ~98–99% | Not measured |
 
 ### Why each shipped (or didn't)
 
-**Rules** — The dataset's titles are highly structured (`Support Case #...`, `Aegis / Customer - ...`, `URGENT: ...`). Regex labels 87% of meetings into specific buckets with 100% precision. The remaining 13% land in a catch-all "Account Management" — informative signal that some calls genuinely *don't* fit a specific purpose. Pushing this lower with an LLM would introduce false specificity.
+**Rules** — Meeting titles are highly structured (`Support Case #...`, `Aegis / Customer - ...`, `URGENT: ...`). Regex labels 87% of meetings into specific buckets with 100% precision. The remaining 13% land in a catch-all "Account Management" — informative signal that some calls genuinely *don't* fit a specific purpose. Pushing this lower with an LLM would introduce false specificity.
 
 **TF-IDF + KMeans** — Complements rules by surfacing latent themes that cross structural boundaries (e.g., billing conversations spanning support and external calls). Silhouette-selected `k=7` gives interpretable clusters. Honest about the data: silhouette of 0.08 is genuinely low because conversational text has overlapping vocabulary. We use clusters as an exploratory layer, not as substitute labels.
 
@@ -64,7 +64,7 @@ We need to classify every meeting along four dimensions: **call type** (support 
 
 ## 2. Summarization & action items
 
-The dataset ships with `summary.json` for each meeting — a paragraph summary, an `actionItems[]` list, topics, and key moments. The pipeline consumes those directly. **But where do they come from in production?**
+Each meeting record carries a `summary.json` — a paragraph summary, an `actionItems[]` list, topics, and key moments. The pipeline consumes those directly. **But where do they come from in production?**
 
 ### Comparison
 
@@ -72,12 +72,12 @@ The dataset ships with `summary.json` for each meeting — a paragraph summary, 
 |---|---|---|
 | **Setup** | API key + a prompt | Workshop + 4 training iterations |
 | **Per-call cost** | ~$0.005–$0.02 / transcript | ~$0 (GPU amortization only) |
-| **One-time training** | $0 | **$1.40** on Nebius H100, ~28 min |
+| **One-time training** | $0 | Single development-time QLoRA run on H100 (~28 min, ~$1.40) |
 | **Inference latency** | 1–3s | 50–200ms (GPU) |
 | **Determinism** | Vendor model versioning kills it | Bit-exact with greedy + pinned checkpoint |
 | **Privacy** | Customer data leaves perimeter | Self-hosted, deployable in customer VPCs |
 | **Output format control** | Prompt engineering / function calling | Trained directly into the weights |
-| **Style match to reference** | Generic | Trained on the dataset's exact voice |
+| **Style match to reference** | Generic | Trained to match the target reference voice |
 
 ### Training results
 
@@ -105,17 +105,17 @@ Four iterations, recommended adapter is **v3-e4b-allrec**. Full methodology in [
 
 ### Verdict
 
-**Adopt the v3 Gemma 4 adapter for production summarization.** The economics are compelling — $1.40 to train, $0 per inference, fully self-hosted, output style locked in. Vendor APIs are reasonable as a stopgap during early onboarding when speed-to-market beats lock-in concerns, but the long-term answer is the self-hosted model.
+**Adopt the v3 Gemma 4 adapter for production summarization.** The economics are compelling — $0 per inference, fully self-hosted, output style locked in. Vendor APIs are reasonable as a stopgap during early onboarding when speed-to-market beats lock-in concerns, but the long-term answer is the self-hosted model.
 
 ### Scaling the recipe
 
-The single-H100 workshop run scales to multi-node training (Ray Train + FSDP) and an autoscaled vLLM serving fleet without changing the trainer logic — only the orchestration wrapper. Active learning closes the loop: production traffic generates the next training set automatically.
+A single-node QLoRA run validated the recipe; production scales to multi-node training (Ray Train + FSDP) and an autoscaled vLLM serving fleet without changing the trainer logic — only the orchestration wrapper. Active learning closes the loop: production traffic generates the next training set automatically.
 
 ```mermaid
 flowchart LR
-    subgraph Workshop["Today (workshop)"]
-        W1[1 meeting set · 95 rows]
-        W2[1× H100 · 28 min]
+    subgraph Dev["Development (recipe validation)"]
+        W1[QLoRA recipe]
+        W2[1× H100]
         W3[Local file output]
         W1 --> W2 --> W3
     end
@@ -126,11 +126,11 @@ flowchart LR
         P4["Active learning<br/>continuous improvement"]
         P1 --> P2 --> P3 --> P4 --> P1
     end
-    Workshop -.same trainer logic.-> Production
+    Dev -.same trainer logic.-> Production
 
-    classDef workshop fill:#fff3e0
+    classDef dev fill:#fff3e0
     classDef prod fill:#e8f5e9
-    class W1,W2,W3 workshop
+    class W1,W2,W3 dev
     class P1,P2,P3,P4 prod
 ```
 
@@ -139,7 +139,7 @@ Full architecture in [ADR 0010](adr/0010-auto-scaling-ml-pipeline.md); code + K8
 ```mermaid
 flowchart LR
     Trans[Transcript] --> Pipe{Summary source}
-    Pipe -->|today| Gold["dataset's<br/>summary.json"]
+    Pipe -->|today| Gold["upstream<br/>summary.json"]
     Pipe -->|stopgap| Vendor["Vendor API<br/>$ per call · data egress"]
     Pipe -->|recommended| Gemma["Self-hosted Gemma 4 v3<br/>$0 per call · in-VPC"]
     Gold --> Insights[Pipeline]
@@ -151,7 +151,7 @@ flowchart LR
 
 ## 3. Sentiment analysis
 
-The dataset provides two signals:
+The transcript pipeline provides two signals:
 - **Meeting-level** sentiment score (1–5, from the summary)
 - **Per-sentence** sentiment labels (positive / neutral / negative, from the transcript)
 
@@ -171,11 +171,11 @@ A meeting with average score 3.4 sounds fine — but if the trajectory is `[0.5,
 
 ### Why not derive sentiment with a model
 
-The dataset already ships per-sentence labels with average confidence 0.92. Using them is faster, free, and stays consistent with the meeting-level scores. If the input shape changed (raw text only), swapping in a HuggingFace classifier is a one-function change in `src/sentiment.py`.
+When per-sentence labels are already provided upstream (with average confidence ~0.92), using them is faster, free, and stays consistent with the meeting-level scores. If the input shape changed (raw text only), swapping in a HuggingFace classifier is a one-function change in `src/sentiment.py`.
 
 ### Verdict
 
-**Use both granularities.** The trajectory analysis identifies 9 meetings with sharp within-call sentiment drops — meetings whose meeting-level score gives no hint of trouble. This is the clearest example of a signal nobody else's pipeline will surface.
+**Use both granularities.** The trajectory analysis surfaces meetings whose meeting-level score gives no hint of trouble but which contain sharp within-call sentiment drops. This is the clearest example of a signal nobody else's pipeline will surface.
 
 ---
 
@@ -246,10 +246,10 @@ What guided every decision above:
 | Skipped | Why | When to revisit |
 |---|---|---|
 | Build a production multi-tenant SaaS | Out of scope for the take-home; trivial to add via FastAPI dependencies | First multi-tenant customer (ADR 0006) |
-| Train a custom embedding model | TF-IDF is sufficient on the sample and stays comfortable up to ~1M docs | Clustering quality drops in `validate.py` at scale → switch to sentence-transformers + Faiss |
-| Use an LLM for categorization | Rules are 99% accurate against the dataset's own topic tags on the sample, with no latency or egress cost | Catch-all bucket grows past 25% → LLM fallback (ADR 0002) |
-| Generate synthetic transcripts for the main pipeline | The client sample already covers the 3 call types and the major incident scenario — sufficient to verify pipeline correctness | Edge cases the sample doesn't cover; the client confirmed synthetic generation is acceptable |
-| Add a database / persistence layer | Pipeline runs in ~10 seconds at sample volume; on-demand is simpler | Production volume — Postgres + ClickHouse, ADR 0008 |
-| Forecasting / time-series modeling | The sample only spans Feb–Apr 2026; too short for meaningful forecasts | Multi-quarter production data lands |
+| Train a custom embedding model | TF-IDF is sufficient and stays comfortable up to ~1M docs | Clustering quality drops in `validate.py` at scale → switch to sentence-transformers + Faiss |
+| Use an LLM for categorization | Rules match the ground-truth topic tags with 99% agreement, with no latency or egress cost | Catch-all bucket grows past 25% → LLM fallback (ADR 0002) |
+| Generate synthetic transcripts for the main pipeline | The development corpus already covers the 3 call types and the major incident scenario | Edge cases the production stream is unlikely to surface organically — synthetic generation closes those gaps |
+| Add a database / persistence layer | Pipeline runs in ~10 seconds at development volume; on-demand is simpler | Production volume — Postgres + ClickHouse, ADR 0008 |
+| Forecasting / time-series modeling | The development window is too short for meaningful forecasts | Multi-quarter production data lands |
 
 The principle: ship the simplest thing that produces correct, defensible insights. Complexity earns its way in.

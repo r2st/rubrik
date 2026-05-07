@@ -85,7 +85,7 @@ If these tests ever fail, the streaming fold has diverged from in-memory and is 
 |---|---|
 | **Alembic migrations** (`alembic/`, `alembic.ini`) | Schema evolution discipline — no more relying on `Base.metadata.create_all()` magic. The current schema is captured in `alembic/versions/20260506_0001_initial_schema.py`. New migrations go through `alembic revision --autogenerate`. |
 | **Postgres connection pool tuning** (`src/db.py`) | Explicit `pool_size=5`, `max_overflow=10`, `pool_pre_ping=True`, `pool_recycle=1800`. Catches stale connections from PgBouncer / RDS failovers; rotates before LB idle timeouts. SQLite uses NullPool (no pooling — single-file DB doesn't benefit). |
-| **`run_analysis.py --streaming`** | New CLI mode runs the streaming pipeline end-to-end. Defaults preserve in-memory behavior (correct for sample volume); `--streaming --batch-size N` is the production path. |
+| **`run_analysis.py --streaming`** | New CLI mode runs the streaming pipeline end-to-end. Defaults preserve in-memory behavior (correct for development); `--streaming --batch-size N` is the production path. |
 | **`api/state.py` consumes the repository** | The API's pipeline-state cache builds via `default_repository().all()` instead of calling `data_loader.load_all_meetings()` directly. Tests can override the source via `state.set_repository(repo)`. Swapping the API to a `DatabaseRepository` is now a single-function change in `default_repository()`. |
 | **`alembic upgrade head` on container start** | Dockerfile entrypoint runs migrations before `uvicorn` execs. Idempotent and Alembic locks safely under multi-replica boots, so this is the production-path schema-bring-up. |
 
@@ -114,7 +114,7 @@ If these tests ever fail, the streaming fold has diverged from in-memory and is 
 
 ## Related
 
-- ADR 0005 — original "no database" verdict (still right at sample scale)
+- ADR 0005 — original "no database" verdict (still right below the in-memory envelope)
 - ADR 0008 — target tiered storage architecture (this ADR is the foundation)
 - ADR 0010 — auto-scaling ML pipeline (uses the same repository interface)
 - `src/repository.py` — Protocol + LocalDirectoryRepository

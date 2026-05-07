@@ -1,25 +1,23 @@
 # Edge Cases & Synthetic Test Data
 
-The system is designed to be auto-scalable to millions / 100M+ records. The dataset shipped with the brief is a representative *sample* — it demonstrates the three call types and the major incident scenario, but it doesn't reach into corners the pipeline will hit at production volume.
-
-This doc enumerates those corners, says **which ones need synthetic data** (vs which are better handled by unit tests or operational hardening), and links to the synthetic fixtures we ship.
+The system is designed to be auto-scalable to millions / 100M+ records. This doc enumerates corners the production stream is unlikely to surface organically, says **which ones need synthetic data** (vs which are better handled by unit tests or operational hardening), and links to the synthetic fixtures we ship.
 
 ---
 
 ## Edge cases we care about
 
-### Need synthetic data — the pipeline will see these in prod, the sample doesn't cover them
+### Need synthetic data — the pipeline will see these in prod, organic traffic is unlikely to surface them
 
-| # | Edge case | Why the sample misses it | Synthetic fixture |
+| # | Edge case | Why a production stream may not surface it organically | Synthetic fixture |
 |---|---|---|---|
-| 1 | **Title-format heterogeneity** — lowercase prefix, multi-word URGENT, no separator, multi-`/` (`Aegis / EMEA / Acme`) | Sample uses canonical formats only | [`title_variants.json`](../tests/fixtures/synthetic/title_variants/) |
-| 2 | **Edge-character customer names** — apostrophes, accents, hyphens, em-dashes (`L'Oreal`, `Müller GmbH`) | Sample has only ASCII names | [`customer_unicode.json`](../tests/fixtures/synthetic/customer_unicode/) |
-| 3 | **Net-new product references** — products outside the current keyword list (`DetectPlus`, `ComplyVault`) | Sample's products are fully covered | [`net_new_product/`](../tests/fixtures/synthetic/net_new_product/) |
-| 4 | **All-neutral long meeting** — 200-sentence status sync with zero sentiment variation | Sample meetings have natural variance | [`all_neutral/`](../tests/fixtures/synthetic/all_neutral/) |
-| 5 | **Single-sentence meeting** — degenerate input that breaks naive bucket math | Sample's shortest meetings are ~20 sentences | [`single_sentence/`](../tests/fixtures/synthetic/single_sentence/) |
-| 6 | **Multi-incident timeline** — two distinct outages referenced in the same meeting | Sample has one major incident | [`multi_incident/`](../tests/fixtures/synthetic/multi_incident/) |
-| 7 | **Past-tense incident reference** — outage discussed historically, not currently affecting | Sample's incidents are active | [`historical_incident/`](../tests/fixtures/synthetic/historical_incident/) |
-| 8 | **Internal-meeting + customer-name mention** — internal call that happens to discuss a customer | Sample keeps these clean | [`internal_mentions_customer/`](../tests/fixtures/synthetic/internal_mentions_customer/) |
+| 1 | **Title-format heterogeneity** — lowercase prefix, multi-word URGENT, no separator, multi-`/` (`Aegis / EMEA / Acme`) | Rare lowercase URGENT prefix from ad-hoc tickets; canonical formats dominate organic traffic | [`title_variants.json`](../tests/fixtures/synthetic/title_variants/) |
+| 2 | **Edge-character customer names** — apostrophes, accents, hyphens, em-dashes (`L'Oreal`, `Müller GmbH`) | Long-tail unicode names appear infrequently | [`customer_unicode.json`](../tests/fixtures/synthetic/customer_unicode/) |
+| 3 | **Net-new product references** — products outside the current keyword list (`DetectPlus`, `ComplyVault`) | New product launches come in bursts after the rules are updated | [`net_new_product/`](../tests/fixtures/synthetic/net_new_product/) |
+| 4 | **All-neutral long meeting** — 200-sentence status sync with zero sentiment variation | Real meetings almost always have some sentiment variance | [`all_neutral/`](../tests/fixtures/synthetic/all_neutral/) |
+| 5 | **Single-sentence meeting** — degenerate input that breaks naive bucket math | Production meetings are typically much longer | [`single_sentence/`](../tests/fixtures/synthetic/single_sentence/) |
+| 6 | **Multi-incident timeline** — two distinct outages referenced in the same meeting | Concurrent incidents on a single call are uncommon | [`multi_incident/`](../tests/fixtures/synthetic/multi_incident/) |
+| 7 | **Past-tense incident reference** — outage discussed historically, not currently affecting | Active incidents dominate live traffic | [`historical_incident/`](../tests/fixtures/synthetic/historical_incident/) |
+| 8 | **Internal-meeting + customer-name mention** — internal call that happens to discuss a customer | Internal calls rarely mention specific customer names by surface form | [`internal_mentions_customer/`](../tests/fixtures/synthetic/internal_mentions_customer/) |
 
 ### Don't need synthetic data — covered better elsewhere
 
@@ -61,7 +59,7 @@ tests/fixtures/synthetic/
 └── internal_mentions_customer/   # 1 meeting · classification ambiguity
 ```
 
-Each fixture is a directory in the same shape as the real dataset (one or more of `meeting-info.json`, `transcript.json`, `summary.json`, `speakers.json`). The generator (`gen_synthetic.py`) can produce additional fixtures from templates — useful when expanding coverage, or when a customer's title format prompts a new case.
+Each fixture is a directory in the same shape as a real meeting record (one or more of `meeting-info.json`, `transcript.json`, `summary.json`, `speakers.json`). The generator (`gen_synthetic.py`) can produce additional fixtures from templates — useful when expanding coverage, or when a customer's title format prompts a new case.
 
 ---
 
@@ -85,7 +83,7 @@ Add one when:
 - A real customer's data exposes a category miss → reproduce in a synthetic fixture before fixing the rule
 - A new product launches → add a fixture before the rules update so the test fails first, then passes after
 - An incident reveals an unhandled trajectory shape → fixture + trajectory-math fix together
-- Validation flags a coverage hole that's repeatable but not in the real sample
+- Validation flags a coverage hole that's repeatable in production but absent from organic traffic so far
 
 Don't add one for:
 - One-off curiosity ("what would happen if…?") — that's an exploration, not a fixture

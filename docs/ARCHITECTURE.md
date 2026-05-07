@@ -19,7 +19,7 @@ How the system is organized and how data flows through it.
 ```mermaid
 flowchart LR
     subgraph Sources["Data sources"]
-        Sample[("Client sample<br/>(JSON × 6 per meeting)")]
+        FsSrc[("Filesystem (JSON)<br/>local directory · 6 files per meeting")]
         DBSrc[("Postgres + Iceberg<br/>(production · ADR 0008)")]
         Stream[("Kafka stream<br/>(real-time · future)")]
     end
@@ -27,7 +27,7 @@ flowchart LR
     subgraph Ingest["Ingestion (src/)"]
         direction TB
         Repo{{"TranscriptRepository<br/>(Protocol)"}}
-        Local["LocalDirectoryRepository<br/>📂 sample / dev"]
+        Local["LocalDirectoryRepository<br/>📂 filesystem / dev"]
         DBRepo["DatabaseRepository<br/>🗄️ slot — ADR 0011"]
         KStream["KafkaStreamingRepository<br/>🌊 slot"]
         Loader["data_loader<br/>📄 JSON → Meeting"]
@@ -60,7 +60,7 @@ flowchart LR
         Out[("output/<br/>CSVs · JSON · PNGs")]
     end
 
-    Sample --> Local
+    FsSrc --> Local
     DBSrc -.-> DBRepo
     Stream -.-> KStream
 
@@ -91,7 +91,7 @@ flowchart LR
     class DBRepo,KStream slot
 ```
 
-Raw inputs enter on the left and pass through the **ingestion layer** — a `TranscriptRepository` Protocol with one concrete backend today (`LocalDirectoryRepository`, reading the client sample from disk) and two slots wired through the same interface (`DatabaseRepository` for ADR 0008's Postgres + Iceberg, `KafkaStreamingRepository` for real-time). `data_loader` parses each meeting into a typed `Meeting`, and `streaming.py` exposes a mergeable fold so the same pipeline runs at production volume. The core then enriches the data in three parallel passes (categorize · sentiment · cluster), insight modules consume the enriched frames, and four interfaces draw from the same insight functions — no logic duplicated across them.
+Raw inputs enter on the left and pass through the **ingestion layer** — a `TranscriptRepository` Protocol with one concrete backend today (`LocalDirectoryRepository`, reading JSON from a local directory) and two slots wired through the same interface (`DatabaseRepository` for ADR 0008's Postgres + Iceberg, `KafkaStreamingRepository` for real-time). `data_loader` parses each meeting into a typed `Meeting`, and `streaming.py` exposes a mergeable fold so the same pipeline runs at production volume. The core then enriches the data in three parallel passes (categorize · sentiment · cluster), insight modules consume the enriched frames, and four interfaces draw from the same insight functions — no logic duplicated across them.
 
 The next four diagrams unpack this picture along orthogonal axes: **layers** (what each tier owns), **per-meeting flow** (how a single record is enriched), **runtime topology** (what processes exist and what they share), and **control vs. data plane** (operator surfaces vs. analyst surfaces).
 
@@ -132,7 +132,7 @@ flowchart TB
         AdminDB[("admin DB<br/>settings · audit_log<br/>SQLite dev · Postgres prod")]
     end
     subgraph Ext["🔗 Upstream data sources (read only)"]
-        DataSrc[("client sample (JSON files)<br/>Postgres + Iceberg<br/>Kafka stream")]
+        DataSrc[("Local directory (JSON files)<br/>Postgres + Iceberg<br/>Kafka stream")]
     end
 
     L5 --> L4
@@ -333,11 +333,11 @@ flowchart LR
 |---|---|---|---|---|
 | **Rules** | Compiled regex + keyword bags, config-driven | `src/categorizer.py` (rules in `src/config.py`) | Call types and purposes follow strict prefixes (`Support Case #`, `Aegis /`, `URGENT:`) — rules cover ~90% with sub-ms inference and full auditability. | <1 ms · free · deterministic |
 | **Sentiment** | Per-sentence labels (from source data) + numpy trajectory math | `src/sentiment.py` | Trajectories surface mid-meeting pivots that an averaged score hides. Pure numeric work — no model needed. | <10 ms / meeting · free |
-| **Classical ML** | TF-IDF (sklearn) → KMeans, `k` chosen by silhouette over 4–10 | `src/clustering.py` | Catches latent cross-cutting themes (multi-product migrations, cost-driven renewals) that the rules' fixed taxonomy can't see. | seconds for sample; MiniBatchKMeans / Spark MLlib at 10M+ (ADR 0008) |
-| **LLM (fine-tuned)** | Gemma 4 E4B-it + QLoRA adapter (`v3-e4b-allrec`, ROUGE-L 0.394) | `gemma-finetune/` adapters; production path served via vLLM with multi-tenant LoRA hot-swap (ADR 0010) | Generative tasks where rules and clustering can't compete: meeting summary in client house style + structured action-item extraction. | ~150 ms / meeting on H100 vLLM; $1.40 to train v3 on the sample |
+| **Classical ML** | TF-IDF (sklearn) → KMeans, `k` chosen by silhouette over 4–10 | `src/clustering.py` | Catches latent cross-cutting themes (multi-product migrations, cost-driven renewals) that the rules' fixed taxonomy can't see. | seconds at development volume; MiniBatchKMeans / Spark MLlib at 10M+ (ADR 0008) |
+| **LLM (fine-tuned)** | Gemma 4 E4B-it + QLoRA adapter (`v3-e4b-allrec`, ROUGE-L 0.394) | `gemma-finetune/` adapters; production path served via vLLM with multi-tenant LoRA hot-swap (ADR 0010) | Generative tasks where rules and clustering can't compete: meeting summary in target house style + structured action-item extraction. | ~150 ms / meeting on H100 vLLM; QLoRA recipe validated end-to-end during development |
 | **Insights** | Pandas joins, weighted scoring, threshold logic | `src/insights.py` | Composes the four signal layers above into business-readable outputs (customer health, incident impact, competitive mentions, negative pivots). | <100 ms / meeting |
 
-**No LLM in the categorization path.** ADR 0002 documents the deliberate choice: zero-shot LLM matched the rules' accuracy at the sample's structure but added $1–$10/1k-doc cost, 0.5–3s latency, non-determinism, and a data-egress surface — none of which were worth paying for a problem rules already solve. The LLM earns its cost on the *generative* tasks (summaries + action items), not the classification ones.
+**No LLM in the categorization path.** ADR 0002 documents the deliberate choice: zero-shot LLM matched the rules' accuracy on highly-structured titles but added $1–$10/1k-doc cost, 0.5–3s latency, non-determinism, and a data-egress surface — none of which were worth paying for a problem rules already solve. The LLM earns its cost on the *generative* tasks (summaries + action items), not the classification ones.
 
 The training pipeline for the LLM tier (Ray Data dataset prep → multi-node FSDP fine-tune → adapter registry → vLLM serving with autoscaled GPU pools → active-learning feedback loop) is a separate auto-scaling architecture; see ADR 0010 and the "Auto-scaling ML pipeline" section below.
 
@@ -610,7 +610,7 @@ flowchart TD
     Strict -->|exceeded| Err429["429 + error envelope"]
     Strict --> PerT{"per_tenant_rate_limit_dep<br/>(routes that opt in, e.g. /meetings)"}
     PerT -->|exceeded| Err429
-    PerT --> OTel["OpenTelemetry<br/>(head sample + Collector tail sample)"]
+    PerT --> OTel["OpenTelemetry<br/>(head sampling + Collector tail sampling)"]
     OTel --> Auth{X-API-Key check<br/>(if API_KEY set)}
     Auth -->|invalid| Err401["401 + error envelope"]
     Auth -->|ok / disabled| ETag{If-None-Match<br/>matches ETag?}
@@ -659,7 +659,7 @@ Three probe endpoints are registered on a separate **public** router that bypass
 
 ## Scaling to 100M+ records
 
-**The architecture target is an auto-scalable system handling millions to 100M+ records.** The dataset shipped with the brief is a representative *sample* used to verify pipeline correctness end-to-end during development — the in-memory single-instance build is the verification path, not the production path. At production volume the substrate changes (the analytical layers run against a real data platform; the API tier auto-scales per [ADR 0013](adr/0013-api-tier-auto-scaling.md); the ML tier auto-scales per [ADR 0010](adr/0010-auto-scaling-ml-pipeline.md)) but the *application code shape* stays mostly the same.
+**The architecture target is an auto-scalable system handling millions to 100M+ records.** The in-memory single-instance build is the development path, not the production path. At production volume the substrate changes (the analytical layers run against a real data platform; the API tier auto-scales per [ADR 0013](adr/0013-api-tier-auto-scaling.md); the ML tier auto-scales per [ADR 0010](adr/0010-auto-scaling-ml-pipeline.md)) but the *application code shape* stays mostly the same.
 
 ### Scale envelopes per component
 
@@ -777,7 +777,7 @@ All 15 improvements ship in the codebase: cold-start snapshot (`api/snapshot.py`
 
 ## Auto-scaling ML pipeline (training + serving)
 
-The Gemma 4 fine-tune in [ADR 0003](adr/0003-self-host-summarization-with-gemma-4.md) was a deliberate proof-of-concept on the client sample (~95 train meetings on a single H100, $1.40 wall-clock cost) — sufficient to demonstrate the recipe works and the economics close. **Production scales every layer independently** without changing the trainer logic:
+The Gemma 4 fine-tune in [ADR 0003](adr/0003-self-host-summarization-with-gemma-4.md) was a deliberate development-time validation of the QLoRA recipe and cost economics on a single H100. **Production scales every layer independently** without changing the trainer logic:
 
 ```mermaid
 flowchart LR
@@ -937,7 +937,7 @@ flowchart LR
     Refresh --> Ready([uvicorn ready])
 ```
 
-Schema evolution flows through Alembic — `db.init_db()`'s create-all is now an idempotent fallback for sample-volume tests; production-equivalent containers always run migrations on boot.
+Schema evolution flows through Alembic — `db.init_db()`'s create-all is now an idempotent fallback for low-volume tests; production-equivalent containers always run migrations on boot.
 
 ---
 
@@ -949,7 +949,7 @@ Schema evolution flows through Alembic — `db.init_db()`'s create-all is now an
 | Notebook | None | Re-running cells is the user's intent |
 | CLI | None | Designed for one-shot batch |
 
-End-to-end runtime: ~10s on the client's sample dataset. The bottleneck is silhouette-based `k` selection (fits 7 KMeans models). At ~10× the sample size the silhouette sweep should run on a sample, not the full set; at ~100× MiniBatchKMeans replaces KMeans; beyond that the clustering is out-of-process via Spark MLlib (see ADR 0008's analytical tier).
+End-to-end runtime: ~10s at development volume. The bottleneck is silhouette-based `k` selection (fits 7 KMeans models). At ~10× that volume the silhouette sweep should run on a subset, not the full set; at ~100× MiniBatchKMeans replaces KMeans; beyond that the clustering is out-of-process via Spark MLlib (see ADR 0008's analytical tier).
 
 ---
 

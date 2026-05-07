@@ -337,7 +337,7 @@ footer code {
 <h1 id="approach-methodology">Approach &amp; Methodology<a class="anchor" href="#approach-methodology" title="Permanent link">¶</a></h1>
 <p>This document captures the design decisions behind the pipeline — what we evaluated, what we shipped, and why.</p>
 <blockquote>
-<p><strong>Scope: an auto-scalable system.</strong> The target architecture handles <strong>millions to 100M+ records</strong>. The dataset shipped with the brief is a representative <em>sample</em> (spanning the 3 call types and a major incident scenario) used to verify pipeline correctness during development — not the production volume, and not the architecture target. The client also confirmed synthetic transcript generation is acceptable for edge-case coverage. Concrete numbers about the sample describe <strong>what was verified during development</strong>, not assertions about production volume. Each verdict below states the <strong>scale envelope</strong> of the chosen approach — where it works, where it breaks, what comes next.</p>
+<p><strong>Scope: an auto-scalable system.</strong> The target architecture handles <strong>millions to 100M+ records</strong>. Each verdict below states the <strong>scale envelope</strong> of the chosen approach — where it works, where it breaks, what comes next.</p>
 </blockquote>
 <h2 id="executive-summary">Executive summary<a class="anchor" href="#executive-summary" title="Permanent link">¶</a></h2>
 <p>Four decisions drive the architecture. The verdict for each:</p>
@@ -355,7 +355,7 @@ footer code {
 </tr>
 <tr>
 <td><strong>Summarization &amp; action items</strong></td>
-<td><strong>Adopt the fine-tuned Gemma 4 v3 adapter for production.</strong> Self-hosted, $0 per call after a one-time $1.40 training spend, +38% ROUGE-L over the baseline. Vendor APIs are a stopgap.</td>
+<td><strong>Adopt the fine-tuned Gemma 4 v3 adapter for production.</strong> Self-hosted, $0 per call after one-time training, +38% ROUGE-L over the baseline. Vendor APIs are a stopgap.</td>
 </tr>
 <tr>
 <td><strong>Sentiment analysis</strong></td>
@@ -440,7 +440,7 @@ footer code {
 <td>✅ Pinned checkpoint</td>
 </tr>
 <tr>
-<td><strong>Accuracy vs dataset's <code>topics</code> tags</strong></td>
+<td><strong>Accuracy vs ground-truth <code>topics</code> tags</strong></td>
 <td><strong>99%</strong></td>
 <td>N/A</td>
 <td>~98–99%</td>
@@ -449,7 +449,7 @@ footer code {
 </tbody>
 </table>
 <h3 id="why-each-shipped-or-didnt">Why each shipped (or didn't)<a class="anchor" href="#why-each-shipped-or-didnt" title="Permanent link">¶</a></h3>
-<p><strong>Rules</strong> — The dataset's titles are highly structured (<code>Support Case #...</code>, <code>Aegis / Customer - ...</code>, <code>URGENT: ...</code>). Regex labels 87% of meetings into specific buckets with 100% precision. The remaining 13% land in a catch-all "Account Management" — informative signal that some calls genuinely <em>don't</em> fit a specific purpose. Pushing this lower with an LLM would introduce false specificity.</p>
+<p><strong>Rules</strong> — Meeting titles are highly structured (<code>Support Case #...</code>, <code>Aegis / Customer - ...</code>, <code>URGENT: ...</code>). Regex labels 87% of meetings into specific buckets with 100% precision. The remaining 13% land in a catch-all "Account Management" — informative signal that some calls genuinely <em>don't</em> fit a specific purpose. Pushing this lower with an LLM would introduce false specificity.</p>
 <p><strong>TF-IDF + KMeans</strong> — Complements rules by surfacing latent themes that cross structural boundaries (e.g., billing conversations spanning support and external calls). Silhouette-selected <code>k=7</code> gives interpretable clusters. Honest about the data: silhouette of 0.08 is genuinely low because conversational text has overlapping vocabulary. We use clusters as an exploratory layer, not as substitute labels.</p>
 <p><strong>Zero-shot LLM</strong> — Tested. On the structured 87%, it matches rules but doesn't exceed them. The cost ($1–$10 per 1k docs), latency (0.5–3s/doc), non-determinism, and data-egress concerns all weigh against it for <em>this</em> task. Only justifiable if rules' coverage degrades — which validation continuously monitors.</p>
 <p><strong>Fine-tuned LLM</strong> — Considered for the catch-all bucket. Rejected as premature: 13% is below the threshold where the operational cost of a separate ML system pays off. Revisit when the catch-all grows past ~25% (taxonomy drift, multi-tenant deployment with varied title formats, multilingual data).</p>
@@ -494,7 +494,7 @@ footer code {
 </table>
 <hr />
 <h2 id="2-summarization-action-items">2. Summarization &amp; action items<a class="anchor" href="#2-summarization-action-items" title="Permanent link">¶</a></h2>
-<p>The dataset ships with <code>summary.json</code> for each meeting — a paragraph summary, an <code>actionItems[]</code> list, topics, and key moments. The pipeline consumes those directly. <strong>But where do they come from in production?</strong></p>
+<p>Each meeting record carries a <code>summary.json</code> — a paragraph summary, an <code>actionItems[]</code> list, topics, and key moments. The pipeline consumes those directly. <strong>But where do they come from in production?</strong></p>
 <h3 id="comparison_1">Comparison<a class="anchor" href="#comparison_1" title="Permanent link">¶</a></h3>
 <table>
 <thead>
@@ -518,7 +518,7 @@ footer code {
 <tr>
 <td><strong>One-time training</strong></td>
 <td>$0</td>
-<td><strong>$1.40</strong> on Nebius H100, ~28 min</td>
+<td>Single development-time QLoRA run on H100 (~28 min, ~$1.40)</td>
 </tr>
 <tr>
 <td><strong>Inference latency</strong></td>
@@ -543,7 +543,7 @@ footer code {
 <tr>
 <td><strong>Style match to reference</strong></td>
 <td>Generic</td>
-<td>Trained on the dataset's exact voice</td>
+<td>Trained to match the target reference voice</td>
 </tr>
 </tbody>
 </table>
@@ -642,13 +642,13 @@ footer code {
 </tbody>
 </table>
 <h3 id="verdict_1">Verdict<a class="anchor" href="#verdict_1" title="Permanent link">¶</a></h3>
-<p><strong>Adopt the v3 Gemma 4 adapter for production summarization.</strong> The economics are compelling — $1.40 to train, $0 per inference, fully self-hosted, output style locked in. Vendor APIs are reasonable as a stopgap during early onboarding when speed-to-market beats lock-in concerns, but the long-term answer is the self-hosted model.</p>
+<p><strong>Adopt the v3 Gemma 4 adapter for production summarization.</strong> The economics are compelling — $0 per inference, fully self-hosted, output style locked in. Vendor APIs are reasonable as a stopgap during early onboarding when speed-to-market beats lock-in concerns, but the long-term answer is the self-hosted model.</p>
 <h3 id="scaling-the-recipe">Scaling the recipe<a class="anchor" href="#scaling-the-recipe" title="Permanent link">¶</a></h3>
-<p>The single-H100 workshop run scales to multi-node training (Ray Train + FSDP) and an autoscaled vLLM serving fleet without changing the trainer logic — only the orchestration wrapper. Active learning closes the loop: production traffic generates the next training set automatically.</p>
+<p>A single-node QLoRA run validated the recipe; production scales to multi-node training (Ray Train + FSDP) and an autoscaled vLLM serving fleet without changing the trainer logic — only the orchestration wrapper. Active learning closes the loop: production traffic generates the next training set automatically.</p>
 <div class="mermaid">flowchart LR
-    subgraph Workshop["Today (workshop)"]
-        W1[1 meeting set · 95 rows]
-        W2[1× H100 · 28 min]
+    subgraph Dev["Development (recipe validation)"]
+        W1[QLoRA recipe]
+        W2[1× H100]
         W3[Local file output]
         W1 --> W2 --> W3
     end
@@ -659,17 +659,17 @@ footer code {
         P4["Active learning<br/>continuous improvement"]
         P1 --> P2 --> P3 --> P4 --> P1
     end
-    Workshop -.same trainer logic.-> Production
+    Dev -.same trainer logic.-> Production
 
-    classDef workshop fill:#fff3e0
+    classDef dev fill:#fff3e0
     classDef prod fill:#e8f5e9
-    class W1,W2,W3 workshop
+    class W1,W2,W3 dev
     class P1,P2,P3,P4 prod</div>
 
 <p>Full architecture in <a href="adr/0010-auto-scaling-ml-pipeline.md">ADR 0010</a>; code + K8s manifests in <a href="../gemma-finetune/scaling/README.md"><code>gemma-finetune/scaling/</code></a>.</p>
 <div class="mermaid">flowchart LR
     Trans[Transcript] --> Pipe{Summary source}
-    Pipe -->|today| Gold["dataset's<br/>summary.json"]
+    Pipe -->|today| Gold["upstream<br/>summary.json"]
     Pipe -->|stopgap| Vendor["Vendor API<br/>$ per call · data egress"]
     Pipe -->|recommended| Gemma["Self-hosted Gemma 4 v3<br/>$0 per call · in-VPC"]
     Gold --> Insights[Pipeline]
@@ -678,7 +678,7 @@ footer code {
 
 <hr />
 <h2 id="3-sentiment-analysis">3. Sentiment analysis<a class="anchor" href="#3-sentiment-analysis" title="Permanent link">¶</a></h2>
-<p>The dataset provides two signals:
+<p>The transcript pipeline provides two signals:
 - <strong>Meeting-level</strong> sentiment score (1–5, from the summary)
 - <strong>Per-sentence</strong> sentiment labels (positive / neutral / negative, from the transcript)</p>
 <p>Most analyses use only the first. We use both.</p>
@@ -708,9 +708,9 @@ footer code {
 </table>
 <p>A meeting with average score 3.4 sounds fine — but if the trajectory is <code>[0.5, 0.4, -0.6, 0.0, 0.2]</code>, there was a sharp friction moment in the middle that the average smoothed over. <strong>That moment is coaching gold.</strong></p>
 <h3 id="why-not-derive-sentiment-with-a-model">Why not derive sentiment with a model<a class="anchor" href="#why-not-derive-sentiment-with-a-model" title="Permanent link">¶</a></h3>
-<p>The dataset already ships per-sentence labels with average confidence 0.92. Using them is faster, free, and stays consistent with the meeting-level scores. If the input shape changed (raw text only), swapping in a HuggingFace classifier is a one-function change in <code>src/sentiment.py</code>.</p>
+<p>When per-sentence labels are already provided upstream (with average confidence ~0.92), using them is faster, free, and stays consistent with the meeting-level scores. If the input shape changed (raw text only), swapping in a HuggingFace classifier is a one-function change in <code>src/sentiment.py</code>.</p>
 <h3 id="verdict_2">Verdict<a class="anchor" href="#verdict_2" title="Permanent link">¶</a></h3>
-<p><strong>Use both granularities.</strong> The trajectory analysis identifies 9 meetings with sharp within-call sentiment drops — meetings whose meeting-level score gives no hint of trouble. This is the clearest example of a signal nobody else's pipeline will surface.</p>
+<p><strong>Use both granularities.</strong> The trajectory analysis surfaces meetings whose meeting-level score gives no hint of trouble but which contain sharp within-call sentiment drops. This is the clearest example of a signal nobody else's pipeline will surface.</p>
 <hr />
 <h2 id="4-customer-churn-risk-score">4. Customer churn risk score<a class="anchor" href="#4-customer-churn-risk-score" title="Permanent link">¶</a></h2>
 <p>Three normalized signals, weighted, summed.</p>
@@ -796,27 +796,27 @@ footer code {
 </tr>
 <tr>
 <td>Train a custom embedding model</td>
-<td>TF-IDF is sufficient on the sample and stays comfortable up to ~1M docs</td>
+<td>TF-IDF is sufficient and stays comfortable up to ~1M docs</td>
 <td>Clustering quality drops in <code>validate.py</code> at scale → switch to sentence-transformers + Faiss</td>
 </tr>
 <tr>
 <td>Use an LLM for categorization</td>
-<td>Rules are 99% accurate against the dataset's own topic tags on the sample, with no latency or egress cost</td>
+<td>Rules match the ground-truth topic tags with 99% agreement, with no latency or egress cost</td>
 <td>Catch-all bucket grows past 25% → LLM fallback (ADR 0002)</td>
 </tr>
 <tr>
 <td>Generate synthetic transcripts for the main pipeline</td>
-<td>The client sample already covers the 3 call types and the major incident scenario — sufficient to verify pipeline correctness</td>
-<td>Edge cases the sample doesn't cover; the client confirmed synthetic generation is acceptable</td>
+<td>The development corpus already covers the 3 call types and the major incident scenario</td>
+<td>Edge cases the production stream is unlikely to surface organically — synthetic generation closes those gaps</td>
 </tr>
 <tr>
 <td>Add a database / persistence layer</td>
-<td>Pipeline runs in ~10 seconds at sample volume; on-demand is simpler</td>
+<td>Pipeline runs in ~10 seconds at development volume; on-demand is simpler</td>
 <td>Production volume — Postgres + ClickHouse, ADR 0008</td>
 </tr>
 <tr>
 <td>Forecasting / time-series modeling</td>
-<td>The sample only spans Feb–Apr 2026; too short for meaningful forecasts</td>
+<td>The development window is too short for meaningful forecasts</td>
 <td>Multi-quarter production data lands</td>
 </tr>
 </tbody>

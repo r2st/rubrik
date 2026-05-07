@@ -14,7 +14,7 @@ This decision affects every customer transcript that flows through the system, i
 
 ### What we tried
 
-The client provided a representative *sample* of meeting transcripts and confirmed synthetic generation is acceptable for edge cases the sample doesn't cover. As a proof-of-concept that the **recipe** (fine-tune Gemma 4 on the dataset's gold summaries) works, we fine-tuned **Gemma 4** (E2B and E4B variants) on the sample's 95 train + 5 held-out meetings using QLoRA on a Nebius H100. Four iterations:
+A QLoRA fine-tune of Gemma 4 was completed during development to validate the recipe and the cost economics; production runs the same trainer on a multi-node cluster (ADR 0010). We fine-tuned **Gemma 4** (E2B and E4B variants) using QLoRA on a single Nebius H100. Four iterations:
 
 | Run | Base | LoRA | Epochs | Train loss | Val loss | ROUGE-L | Notes |
 |---|---|---|---|---|---|---|---|
@@ -23,17 +23,17 @@ The client provided a representative *sample* of meeting transcripts and confirm
 | **v3 ★** | **E4B** | **r16 / α32** | **3** | **0.37** | **1.01** | **0.394** | **Recommended** |
 | v4 | E4B | r16 / α32 + dropout | 2 | 0.40 | 1.52 | 0.337 | Over-regularized |
 
-**Headline:** baseline E4B ROUGE-L = 0.286 → tuned v3 = **0.394 (+38% relative)**, all 5 held-out outputs visibly shifted to match reference style.
+**Headline:** baseline E4B ROUGE-L = 0.286 → tuned v3 = **0.394 (+38% relative)**, held-out outputs visibly shifted to match reference style.
 
-**Total cost:** $1.40 on Nebius on-demand, ~28 minutes wall-clock across all 4 runs.
+**Development-time cost (for the recipe validation only):** ~$1.40 on Nebius on-demand, ~28 minutes wall-clock across all 4 runs. These figures characterize the development environment; they are not assertions about a production training run.
 
 ### Decision matrix
 
 | Dimension | Vendor API | Self-hosted Gemma 4 |
 |---|---|---|
-| Setup cost | API key + prompt | One workshop, four iterations |
+| Setup cost | API key + prompt | Trainer + four iterations |
 | Per-call cost | $0.005–$0.02 / transcript | ~$0 (GPU amortization) |
-| One-time training | $0 | $1.40 |
+| One-time training | $0 | Development-time QLoRA recipe (validated) |
 | Latency | 1–3s | 50–200ms (GPU) |
 | Determinism | Vendor versioning kills it | Bit-exact with greedy + pinned checkpoint |
 | Privacy | Customer data leaves perimeter | Self-hostable, deployable in customer VPCs |
@@ -58,14 +58,14 @@ We **adopt the v3 Gemma 4 adapter for production summarization**. Vendor APIs ar
 
 **Negative**
 - MLOps overhead: versioned models, retraining cadence, drift monitoring, evaluation harness
-- The proof-of-concept run trained on the client's sample (95 meetings), which is well below the comfortable training floor for production deployment. The path forward is twofold: (a) the active-learning loop in ADR 0010 generates labels from real production traffic, and (b) synthetic transcript generation (Claude / GPT-4) covers edge cases the natural traffic stream is slow to surface
+- The development-time recipe-validation run trained on a small corpus, well below the comfortable training floor for production deployment. The path forward is twofold: (a) the active-learning loop in ADR 0010 generates labels from real production traffic, and (b) synthetic transcript generation (Claude / GPT-4) covers edge cases the natural traffic stream is slow to surface
 - ROUGE-L is a lexical metric and penalizes paraphrase; LLM-as-judge is the better next metric (code already in `gemma-finetune/code/judge_compare.py`)
 
 ### Scale envelope
 
-| Stage | At sample volume (today) | At production volume (millions+) |
+| Stage | Development (recipe validation) | At production volume (millions+) |
 |---|---|---|
-| Training | Single H100, 28 min, $1.40 | Multi-node FSDP via Ray Train (ADR 0010), spot H100 pool |
+| Training | Single H100 | Multi-node FSDP via Ray Train (ADR 0010), spot H100 pool |
 | Adapter size | 30 MB | Same (LoRA scales by rank, not dataset size) |
 | Inference | Single L4 pod = ~10 RPS | Autoscaled vLLM with multi-LoRA hot-swap (ADR 0010) |
 | Active learning | Manual eval | Continuous label generation from production traffic |

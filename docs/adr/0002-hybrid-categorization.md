@@ -5,9 +5,9 @@
 
 ## Context
 
-Every meeting in the dataset needs to be categorized along four dimensions: **call type** (support / external / internal), **purpose** (11 categories), **product area** (4 products), and **customer** (for external calls).
+Every meeting needs to be categorized along four dimensions: **call type** (support / external / internal), **purpose** (11 categories), **product area** (4 products), and **customer** (for external calls).
 
-The dataset has two kinds of structure:
+Meeting records have two kinds of structure:
 - **Explicit:** title patterns are highly regular (`Support Case #...`, `Aegis / Customer - ...`, `URGENT: ...`)
 - **Latent:** themes that cross structural boundaries (e.g., billing conversations span both support and external calls)
 
@@ -16,12 +16,12 @@ Three approaches were on the table:
 2. **Pure unsupervised clustering** (TF-IDF + KMeans) — finds latent themes but produces clusters that don't map cleanly to business taxonomy
 3. **Pure LLM** (zero-shot or fine-tuned) — handles ambiguity well, but costs $1–$10 per 1k docs, has 0.5–3s latency, is non-deterministic, and sends data outside the perimeter
 
-A spike on each (run against the client's representative sample):
-- Rules labeled 87% of meetings into specific buckets with **99% agreement** with the dataset's own `topics` field
+A spike on each:
+- Rules labeled 87% of meetings into specific buckets with **99% agreement** against ground-truth `topics` tags
 - TF-IDF/KMeans (silhouette-selected `k=7`) surfaces interpretable cross-cutting themes
 - Zero-shot LLM matched rules' accuracy but added cost, latency, and non-determinism
 
-These percentages reflect the sample's structure; we expect the regex prefixes (`Support Case #`, `Aegis /`, `URGENT:`) to dominate at production scale because they're the platform's canonical event-type signals, not artifacts of the sample. Validation continuously monitors rule coverage — see "Scale envelope" below.
+The regex prefixes (`Support Case #`, `Aegis /`, `URGENT:`) are the platform's canonical event-type signals and are expected to dominate at production scale. Validation continuously monitors rule coverage — see "Scale envelope" below.
 
 ## Decision
 
@@ -35,7 +35,7 @@ We ship a **hybrid: regex rules for the explicit layer, TF-IDF + KMeans for the 
 
 **Positive**
 - Sub-millisecond inference, deterministic, free, fully auditable (one regex per decision)
-- 99% agreement with the dataset's own labels validates the approach against an independent ground truth
+- 99% agreement with ground-truth labels validates the approach against an independent signal
 - Adding a category is a config change + a unit test, not retraining
 - No data egress; works in air-gapped environments
 

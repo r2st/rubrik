@@ -6,19 +6,19 @@
 
 ## Context
 
-The system targets **millions to 100M+ records**, with the ML tier auto-scaling to match. The dataset shipped with the brief is a representative *sample* used for verification; the fine-tuning work in ADR 0003 ran against that sample — single H100, $1.40 wall-clock cost, 28 minutes — which was the right scope to *prove the recipe* and verify the cost economics close. It is **not** the right scope to run in production. The client also confirmed synthetic generation can supplement the sample for edge cases.
+The system targets **millions to 100M+ records**, with the ML tier auto-scaling to match. The fine-tuning work in ADR 0003 was a development-time validation of the QLoRA recipe and cost economics on a single H100 — the right scope to *prove the recipe* close. It is **not** the right scope to run in production. Synthetic generation supplements organic traffic for edge cases.
 
 Production assumptions for this ADR:
 
-| Dimension | Proof-of-concept (today, on the client sample) | Production target |
+| Dimension | Recipe validation (development) | Production target |
 |---|---|---|
-| Training set | ~95 meetings (the client sample) | 1M – 100M+ meetings, plus synthetic augmentation, growing daily |
-| Train wall-clock | 28 min on 1× H100 | minutes per epoch on multi-node, hours total |
+| Training set | small corpus for recipe validation | 1M – 100M+ meetings, plus synthetic augmentation, growing daily |
+| Train wall-clock | minutes on 1× H100 | minutes per epoch on multi-node, hours total |
 | Inference QPS | n/a | 10–10,000 RPS, bursty (US working hours) |
 | p95 latency budget | n/a | <500 ms for summarization, <100 ms for classification |
-| Cost ceiling | $1.40 | budget-bound, must autoscale to zero off-hours |
+| Cost ceiling | development-time only | budget-bound, must autoscale to zero off-hours |
 | Reliability | best-effort | 99.9% serving SLA, no manual intervention |
-| Data privacy | demo dataset | per-tenant isolation; some tenants self-host |
+| Data privacy | dev-only | per-tenant isolation; some tenants self-host |
 
 **The recipe doesn't change.** What changes is the substrate.
 

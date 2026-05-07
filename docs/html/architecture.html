@@ -371,7 +371,7 @@ footer code {
 <h2 id="system-overview">System overview<a class="anchor" href="#system-overview" title="Permanent link">¶</a></h2>
 <div class="mermaid">flowchart LR
     subgraph Sources["Data sources"]
-        Sample[("Client sample<br/>(JSON × 6 per meeting)")]
+        FsSrc[("Filesystem (JSON)<br/>local directory · 6 files per meeting")]
         DBSrc[("Postgres + Iceberg<br/>(production · ADR 0008)")]
         Stream[("Kafka stream<br/>(real-time · future)")]
     end
@@ -379,7 +379,7 @@ footer code {
     subgraph Ingest["Ingestion (src/)"]
         direction TB
         Repo{{"TranscriptRepository<br/>(Protocol)"}}
-        Local["LocalDirectoryRepository<br/>📂 sample / dev"]
+        Local["LocalDirectoryRepository<br/>📂 filesystem / dev"]
         DBRepo["DatabaseRepository<br/>🗄️ slot — ADR 0011"]
         KStream["KafkaStreamingRepository<br/>🌊 slot"]
         Loader["data_loader<br/>📄 JSON → Meeting"]
@@ -412,7 +412,7 @@ footer code {
         Out[("output/<br/>CSVs · JSON · PNGs")]
     end
 
-    Sample --> Local
+    FsSrc --> Local
     DBSrc -.-> DBRepo
     Stream -.-> KStream
 
@@ -442,7 +442,7 @@ footer code {
     classDef slot stroke-dasharray: 5 5,fill:#f5f7fa,color:#0d2235
     class DBRepo,KStream slot</div>
 
-<p>Raw inputs enter on the left and pass through the <strong>ingestion layer</strong> — a <code>TranscriptRepository</code> Protocol with one concrete backend today (<code>LocalDirectoryRepository</code>, reading the client sample from disk) and two slots wired through the same interface (<code>DatabaseRepository</code> for ADR 0008's Postgres + Iceberg, <code>KafkaStreamingRepository</code> for real-time). <code>data_loader</code> parses each meeting into a typed <code>Meeting</code>, and <code>streaming.py</code> exposes a mergeable fold so the same pipeline runs at production volume. The core then enriches the data in three parallel passes (categorize · sentiment · cluster), insight modules consume the enriched frames, and four interfaces draw from the same insight functions — no logic duplicated across them.</p>
+<p>Raw inputs enter on the left and pass through the <strong>ingestion layer</strong> — a <code>TranscriptRepository</code> Protocol with one concrete backend today (<code>LocalDirectoryRepository</code>, reading JSON from a local directory) and two slots wired through the same interface (<code>DatabaseRepository</code> for ADR 0008's Postgres + Iceberg, <code>KafkaStreamingRepository</code> for real-time). <code>data_loader</code> parses each meeting into a typed <code>Meeting</code>, and <code>streaming.py</code> exposes a mergeable fold so the same pipeline runs at production volume. The core then enriches the data in three parallel passes (categorize · sentiment · cluster), insight modules consume the enriched frames, and four interfaces draw from the same insight functions — no logic duplicated across them.</p>
 <p>The next four diagrams unpack this picture along orthogonal axes: <strong>layers</strong> (what each tier owns), <strong>per-meeting flow</strong> (how a single record is enriched), <strong>runtime topology</strong> (what processes exist and what they share), and <strong>control vs. data plane</strong> (operator surfaces vs. analyst surfaces).</p>
 <h3 id="layered-view-what-lives-at-each-tier">Layered view — what lives at each tier<a class="anchor" href="#layered-view-what-lives-at-each-tier" title="Permanent link">¶</a></h3>
 <p>The system is a five-tier stack. Each tier has one job and depends only on the tiers below it. Two cross-cutting capabilities (configuration + observability) thread through every tier.</p>
@@ -478,7 +478,7 @@ footer code {
         AdminDB[("admin DB<br/>settings · audit_log<br/>SQLite dev · Postgres prod")]
     end
     subgraph Ext["🔗 Upstream data sources (read only)"]
-        DataSrc[("client sample (JSON files)<br/>Postgres + Iceberg<br/>Kafka stream")]
+        DataSrc[("Local directory (JSON files)<br/>Postgres + Iceberg<br/>Kafka stream")]
     end
 
     L5 --> L4
@@ -684,14 +684,14 @@ footer code {
 <td>TF-IDF (sklearn) → KMeans, <code>k</code> chosen by silhouette over 4–10</td>
 <td><code>src/clustering.py</code></td>
 <td>Catches latent cross-cutting themes (multi-product migrations, cost-driven renewals) that the rules' fixed taxonomy can't see.</td>
-<td>seconds for sample; MiniBatchKMeans / Spark MLlib at 10M+ (ADR 0008)</td>
+<td>seconds at development volume; MiniBatchKMeans / Spark MLlib at 10M+ (ADR 0008)</td>
 </tr>
 <tr>
 <td><strong>LLM (fine-tuned)</strong></td>
 <td>Gemma 4 E4B-it + QLoRA adapter (<code>v3-e4b-allrec</code>, ROUGE-L 0.394)</td>
 <td><code>gemma-finetune/</code> adapters; production path served via vLLM with multi-tenant LoRA hot-swap (ADR 0010)</td>
-<td>Generative tasks where rules and clustering can't compete: meeting summary in client house style + structured action-item extraction.</td>
-<td>~150 ms / meeting on H100 vLLM; $1.40 to train v3 on the sample</td>
+<td>Generative tasks where rules and clustering can't compete: meeting summary in target house style + structured action-item extraction.</td>
+<td>~150 ms / meeting on H100 vLLM; QLoRA recipe validated end-to-end during development</td>
 </tr>
 <tr>
 <td><strong>Insights</strong></td>
@@ -702,7 +702,7 @@ footer code {
 </tr>
 </tbody>
 </table>
-<p><strong>No LLM in the categorization path.</strong> ADR 0002 documents the deliberate choice: zero-shot LLM matched the rules' accuracy at the sample's structure but added $1–$10/1k-doc cost, 0.5–3s latency, non-determinism, and a data-egress surface — none of which were worth paying for a problem rules already solve. The LLM earns its cost on the <em>generative</em> tasks (summaries + action items), not the classification ones.</p>
+<p><strong>No LLM in the categorization path.</strong> ADR 0002 documents the deliberate choice: zero-shot LLM matched the rules' accuracy on highly-structured titles but added $1–$10/1k-doc cost, 0.5–3s latency, non-determinism, and a data-egress surface — none of which were worth paying for a problem rules already solve. The LLM earns its cost on the <em>generative</em> tasks (summaries + action items), not the classification ones.</p>
 <p>The training pipeline for the LLM tier (Ray Data dataset prep → multi-node FSDP fine-tune → adapter registry → vLLM serving with autoscaled GPU pools → active-learning feedback loop) is a separate auto-scaling architecture; see ADR 0010 and the "Auto-scaling ML pipeline" section below.</p>
 <h4 id="llm-cascade-fine-tuned-for-bulk-frontier-model-for-edge-cases">LLM cascade — fine-tuned for bulk, frontier model for edge cases<a class="anchor" href="#llm-cascade-fine-tuned-for-bulk-frontier-model-for-edge-cases" title="Permanent link">¶</a></h4>
 <p>The fine-tuned Gemma 4 adapter is the right tool for the <strong>bulk</strong> of generative work — in-distribution summaries and action items where it's cheap, fast, and self-hosted. It's the wrong tool for <strong>edge cases</strong>: out-of-distribution meetings (new product domains, languages), long-context reasoning across an account's history, world-knowledge-dependent comparisons, and high-stakes outputs that warrant a second opinion. For those, we route to a frontier model (Claude / GPT-4 / Gemini Pro) as Tier 2.</p>
@@ -936,7 +936,7 @@ footer code {
     Strict -->|exceeded| Err429["429 + error envelope"]
     Strict --> PerT{"per_tenant_rate_limit_dep<br/>(routes that opt in, e.g. /meetings)"}
     PerT -->|exceeded| Err429
-    PerT --> OTel["OpenTelemetry<br/>(head sample + Collector tail sample)"]
+    PerT --> OTel["OpenTelemetry<br/>(head sampling + Collector tail sampling)"]
     OTel --> Auth{X-API-Key check<br/>(if API_KEY set)}
     Auth -->|invalid| Err401["401 + error envelope"]
     Auth -->|ok / disabled| ETag{If-None-Match<br/>matches ETag?}
@@ -979,7 +979,7 @@ footer code {
 </ul>
 <hr />
 <h2 id="scaling-to-100m-records">Scaling to 100M+ records<a class="anchor" href="#scaling-to-100m-records" title="Permanent link">¶</a></h2>
-<p><strong>The architecture target is an auto-scalable system handling millions to 100M+ records.</strong> The dataset shipped with the brief is a representative <em>sample</em> used to verify pipeline correctness end-to-end during development — the in-memory single-instance build is the verification path, not the production path. At production volume the substrate changes (the analytical layers run against a real data platform; the API tier auto-scales per <a href="adr/0013-api-tier-auto-scaling.md">ADR 0013</a>; the ML tier auto-scales per <a href="adr/0010-auto-scaling-ml-pipeline.md">ADR 0010</a>) but the <em>application code shape</em> stays mostly the same.</p>
+<p><strong>The architecture target is an auto-scalable system handling millions to 100M+ records.</strong> The in-memory single-instance build is the development path, not the production path. At production volume the substrate changes (the analytical layers run against a real data platform; the API tier auto-scales per <a href="adr/0013-api-tier-auto-scaling.md">ADR 0013</a>; the ML tier auto-scales per <a href="adr/0010-auto-scaling-ml-pipeline.md">ADR 0010</a>) but the <em>application code shape</em> stays mostly the same.</p>
 <h3 id="scale-envelopes-per-component">Scale envelopes per component<a class="anchor" href="#scale-envelopes-per-component" title="Permanent link">¶</a></h3>
 <table>
 <thead>
@@ -1135,7 +1135,7 @@ footer code {
 <p>All 15 improvements ship in the codebase: cold-start snapshot (<code>api/snapshot.py</code>), singleton refresh (<code>api/snapshot_writer.py</code> + the snapshot CronJob manifest), Redis-backed slowapi limiter and strict admin limiter, HPA on RPS + p95, alembic-as-Job (entrypoint flag + Helm Job), PgBouncer-aware DB pool, backpressure middleware, circuit breakers, Postgres <code>LISTEN/NOTIFY</code> settings invalidation, split liveness/readiness, Arq workers (<code>api/jobs.py</code>), CDN runbook, per-tenant rate-limit dependency on <code>/meetings</code>, OTel <code>TraceIdRatioBased</code> + Collector tail-sampling, and explicit lifespan shutdown drain. K8s manifests live under <code>deploy/k8s/</code>; the CDN runbook is at <code>deploy/cdn-runbook.md</code>. ADR 0013 has the per-item rationale.</p>
 <hr />
 <h2 id="auto-scaling-ml-pipeline-training-serving">Auto-scaling ML pipeline (training + serving)<a class="anchor" href="#auto-scaling-ml-pipeline-training-serving" title="Permanent link">¶</a></h2>
-<p>The Gemma 4 fine-tune in <a href="adr/0003-self-host-summarization-with-gemma-4.md">ADR 0003</a> was a deliberate proof-of-concept on the client sample (~95 train meetings on a single H100, $1.40 wall-clock cost) — sufficient to demonstrate the recipe works and the economics close. <strong>Production scales every layer independently</strong> without changing the trainer logic:</p>
+<p>The Gemma 4 fine-tune in <a href="adr/0003-self-host-summarization-with-gemma-4.md">ADR 0003</a> was a deliberate development-time validation of the QLoRA recipe and cost economics on a single H100. <strong>Production scales every layer independently</strong> without changing the trainer logic:</p>
 <div class="mermaid">flowchart LR
     subgraph Data["DATA — Ray Data on KubeRay (autoscale 0..N CPU)"]
         Kafka[Kafka stream] --> Prep[Streaming dedup,<br/>quality, multi-task]
@@ -1350,7 +1350,7 @@ footer code {
     Warm --> Refresh["start refresh task<br/>(if interval > 0)"]
     Refresh --> Ready([uvicorn ready])</div>
 
-<p>Schema evolution flows through Alembic — <code>db.init_db()</code>'s create-all is now an idempotent fallback for sample-volume tests; production-equivalent containers always run migrations on boot.</p>
+<p>Schema evolution flows through Alembic — <code>db.init_db()</code>'s create-all is now an idempotent fallback for low-volume tests; production-equivalent containers always run migrations on boot.</p>
 <hr />
 <h2 id="performance-caching">Performance &amp; caching<a class="anchor" href="#performance-caching" title="Permanent link">¶</a></h2>
 <table>
@@ -1379,7 +1379,7 @@ footer code {
 </tr>
 </tbody>
 </table>
-<p>End-to-end runtime: ~10s on the client's sample dataset. The bottleneck is silhouette-based <code>k</code> selection (fits 7 KMeans models). At ~10× the sample size the silhouette sweep should run on a sample, not the full set; at ~100× MiniBatchKMeans replaces KMeans; beyond that the clustering is out-of-process via Spark MLlib (see ADR 0008's analytical tier).</p>
+<p>End-to-end runtime: ~10s at development volume. The bottleneck is silhouette-based <code>k</code> selection (fits 7 KMeans models). At ~10× that volume the silhouette sweep should run on a subset, not the full set; at ~100× MiniBatchKMeans replaces KMeans; beyond that the clustering is out-of-process via Spark MLlib (see ADR 0008's analytical tier).</p>
 <hr />
 <h2 id="extensibility">Extensibility<a class="anchor" href="#extensibility" title="Permanent link">¶</a></h2>
 <p>How to add new things without touching unrelated code:</p>

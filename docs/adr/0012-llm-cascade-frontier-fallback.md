@@ -65,7 +65,7 @@ The cascade is the only design that gives us **frontier-quality on the cases tha
 | Option | Verdict |
 |---|---|
 | **Frontier-only.** No fine-tune, just call Claude/GPT-4 on every meeting. | Rejected. Cost, latency, third-party dependency on the hot path. |
-| **Fine-tune-only.** Ship the cascade later. | Rejected for production. Edge-case quality drops silently and we have no detection layer. Acceptable for the take-home / sample-volume current state — Tier 2 is documented but not yet shipped. |
+| **Fine-tune-only.** Ship the cascade later. | Rejected for production. Edge-case quality drops silently and we have no detection layer. Acceptable for the current development state — Tier 2 is documented but not yet shipped. |
 | **Bigger fine-tune (E27B).** Train a larger Gemma to absorb the edge cases. | Rejected as a *replacement*. The training data we'd need to cover the edge cases doesn't exist yet — that's the active-learning loop's job. A larger model amplifies the problem we don't yet have the data for. We may revisit when active-learning has produced enough Tier-2 samples to justify it. |
 | **Multiple specialized fine-tunes** (one per product/language). | Defer. Multi-tenant LoRA hot-swap (ADR 0010) makes this cheap when needed, but it still doesn't solve world-knowledge or long-context cases. |
 

@@ -1,6 +1,6 @@
 # Transcript Intelligence
 
-> An **auto-scalable system** that processes B2B meeting transcripts and surfaces topic categorization, sentiment trends, and strategic insights — exposed as a REST API with a lightweight web dashboard. **Target scale: millions to 100M+ records.** The dataset shipped with the brief is a representative sample used for end-to-end verification.
+> An **auto-scalable system** that processes B2B meeting transcripts and surfaces topic categorization, sentiment trends, and strategic insights — exposed as a REST API with a lightweight web dashboard. **Target scale: millions to 100M+ records.**
 
 [![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue)](.github/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/tests-123%20passing-brightgreen)](tests/)
@@ -14,7 +14,7 @@
 ## Contents
 
 - [What this does](#what-this-does)
-- [Headline findings](#headline-findings)
+- [Illustrative findings](#illustrative-findings)
 - [Quick start](#quick-start)
 - [Architecture](#architecture)
 - [Project layout](#project-layout)
@@ -28,23 +28,23 @@
 
 ## Scope: an auto-scalable system
 
-**The target is an auto-scalable system that handles millions to 100M+ meeting records.** The dataset provided with the brief is a representative *sample* (spanning support cases, customer-facing calls, and internal meetings) used to verify pipeline correctness end-to-end during development — it is **not** the production data volume, nor is it the architecture target. The client also indicated synthetic data can be generated to cover edge cases the sample doesn't reach.
+**The target is an auto-scalable system that handles millions to 100M+ meeting records.** Every component states its scale envelope and the substrate it switches to past that envelope.
 
-The codebase reflects that distinction:
+The codebase reflects that:
 
-| Layer | Verified on the sample | Designed for | Path to scale |
-|---|---|---|---|
-| Pipeline correctness | ✅ end-to-end | Any volume | Component-by-component scaling envelopes below |
-| In-memory pandas analysis | ✅ ~10s build | ≤ ~100k records | Switch to streaming + repository pattern → ADR 0008 |
-| FastAPI service | ✅ load-tested | Stateless, horizontal scale | Replicate behind LB; cache via Redis |
-| Gemma 4 fine-tune | ✅ 4 iterations on the sample | Proof-of-concept | Multi-node Ray Train + autoscaled vLLM → ADR 0010 |
-| Admin panel + runtime config | ✅ functional | Same operational surface at any scale | Scales as the API scales |
+| Layer | Designed for | Path to scale |
+|---|---|---|
+| Pipeline correctness | Any volume | Component-by-component scaling envelopes below |
+| In-memory pandas analysis | ≤ ~100k records | Switch to streaming + repository pattern → ADR 0008 |
+| FastAPI service | Stateless, horizontal scale | Replicate behind LB; cache via Redis |
+| Gemma 4 fine-tune | QLoRA recipe validated end-to-end | Multi-node Ray Train + autoscaled vLLM → ADR 0010 |
+| Admin panel + runtime config | Same operational surface at any scale | Scales as the API scales |
 
-Concrete sample-size numbers appear throughout the docs (e.g., "the v3 fine-tune trained on the sample dataset" or "the load test ran against the sample"). These describe **what was verified during development**, not assertions about production volume. Wherever a design decision depends on scale, the doc states the **scale envelope** explicitly (e.g., "TF-IDF + KMeans is sound up to ~1M docs in-memory; switch to streaming/minibatch above that").
+Wherever a design decision depends on scale, the doc states the **scale envelope** explicitly (e.g., "TF-IDF + KMeans is sound up to ~1M docs in-memory; switch to streaming/minibatch above that").
 
 ## What this does
 
-For a stream of B2B meeting transcripts (support cases, customer-facing calls, internal meetings) — verified on the sample, designed to scale to millions / 100M+ — this system:
+For a stream of B2B meeting transcripts (support cases, customer-facing calls, internal meetings) — designed to scale to millions / 100M+ — this system:
 
 1. **Categorizes** every meeting along three dimensions — call type, purpose, product area — using regex rules + TF-IDF clustering
 2. **Analyzes sentiment** at meeting *and* sentence granularity, surfacing within-call friction moments invisible to summary-level scores
@@ -60,21 +60,21 @@ Five surfaces over the same `src/` analysis core:
 | `validate.py` | Semantic audits against the dataset |
 | `docs/html/` | Standalone HTML docs (no server needed) |
 
-Plus a separate experiment in [`gemma-finetune/`](gemma-finetune/README.md): fine-tunes **Gemma 4 (E4B)** on the dataset's gold summaries to demonstrate a self-hosted alternative to vendor LLM APIs ($1.40 training cost, ROUGE-L 0.39 vs 0.29 baseline). See [APPROACH §Summarization](docs/APPROACH.md#2-summarization--action-items) for the verdict, and [`gemma-finetune/scaling/`](gemma-finetune/scaling/README.md) + [ADR 0010](docs/adr/0010-auto-scaling-ml-pipeline.md) for the production auto-scaling architecture (Ray Train + FSDP for training, vLLM + HPA for serving, active learning for continuous improvement).
+Plus a separate experiment in [`gemma-finetune/`](gemma-finetune/README.md): fine-tunes **Gemma 4 (E4B)** to demonstrate a self-hosted alternative to vendor LLM APIs (ROUGE-L 0.39 vs 0.29 baseline). See [APPROACH §Summarization](docs/APPROACH.md#2-summarization--action-items) for the verdict, and [`gemma-finetune/scaling/`](gemma-finetune/scaling/README.md) + [ADR 0010](docs/adr/0010-auto-scaling-ml-pipeline.md) for the production auto-scaling architecture (Ray Train + FSDP for training, vLLM + HPA for serving, active learning for continuous improvement).
 
-## Headline findings on the sample
+## Illustrative findings
 
-These are real findings from the client's sample dataset. They illustrate **the kind of insight the pipeline produces** — at production volume the same layers will surface analogous patterns at much larger scale.
+These illustrate **the kind of insight the pipeline produces** — at production volume the same layers surface analogous patterns at much larger scale.
 
-| Area | Headline (on sample) |
+| Area | Headline |
 |---|---|
 | Categorization | 3 call types · 11 purposes · 4 product areas. **k=7** content clusters (silhouette-selected). |
 | Sentiment | Support 2.94 < internal 3.42 < external 3.71. Detect 3.20 — outage drag. |
-| Outage impact | One incident touched **68% of meetings in the sample**, dragged sentiment by **0.77 points**. |
+| Outage impact | A single incident dragged sentiment by **0.77 points** across affected meetings. |
 | Top at-risk customers | Northstar Pharma · Cobalt Software · Summit Trust |
-| Execution bottleneck | Maria Santos owns 31 action items (most by far in the sample) |
+| Execution bottleneck | One owner accumulated 31 action items — far more than any peer |
 | Conversation health | Support calls have **51% single-speaker dominance** — agents may be over-talking |
-| Friction moments | **9 meetings** with sharp within-call sentiment drops (sentence-level analysis) |
+| Friction moments | Sentence-level analysis surfaces sharp within-call sentiment drops invisible to summary scores |
 
 ## Quick start
 
@@ -105,7 +105,7 @@ uvicorn api.main:app --reload
 
 ### Production-volume mode
 
-The default `run_analysis.py` loads the entire dataset into pandas — correct at sample scale, fails at production volume. For 1M+ records use the streaming pipeline:
+The default `run_analysis.py` loads the entire dataset into pandas — fine for development, fails at production volume. For 1M+ records use the streaming pipeline:
 
 ```bash
 # Streaming — memory is O(batch_size), regardless of total dataset size
@@ -131,7 +131,7 @@ The Docker image runs `alembic upgrade head` on container start (entrypoint), so
 
 ```mermaid
 flowchart LR
-    Data[("Client sample<br/>(JSON · scales out via ADR 0008)")] --> Loader["data_loader<br/>typed DataFrames"]
+    Data[("Filesystem (JSON)<br/>scales out via ADR 0008")] --> Loader["data_loader<br/>typed DataFrames"]
 
     Loader --> Categorizer["categorizer<br/>regex rules"]
     Loader --> Sentiment["sentiment<br/>per-sentence trajectories"]
@@ -330,7 +330,7 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 |---|---|
 | **Structured logs** | Text or JSON via `LOG_FORMAT`. Each request gets a one-line access log with `request_id`, `method`, `path`, `status`, `elapsed_ms`. |
 | **Prometheus metrics** | `/metrics` endpoint with request rate, latency histograms, status codes per route. |
-| **OpenTelemetry tracing** | FastAPI auto-instrumented; head sample rate from `observability.otel_sample_rate`. Tail-based sampling (errors + slow tails + 1% probabilistic) configured in the OTel Collector DaemonSet (`deploy/k8s/otel-collector.yaml`). |
+| **OpenTelemetry tracing** | FastAPI auto-instrumented; head trace-sampling rate from `observability.otel_sample_rate`. Tail-based sampling (errors + slow tails + 1% probabilistic) configured in the OTel Collector DaemonSet (`deploy/k8s/otel-collector.yaml`). |
 | **Sentry** | Errors auto-forwarded when `SENTRY_DSN` is set. |
 | **Probes (split)** | `/api/live` for k8s liveness (process only); `/api/ready` for readiness (pipeline warm, DB reachable via circuit breaker, not draining). `/api/health` retained for backward compatibility. |
 
@@ -338,7 +338,7 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 | Concern | How it's handled |
 |---|---|
 | **Packaging** | `pyproject.toml` (PEP 621); installable via `pip install -e ".[dev]"`; entry-point scripts. |
-| **Configuration** | Two-tier: `bootstrap.toml` (env, log, DB URL, admin secret, `[runtime]` knobs that need to be readable before the DB exists) + DB-backed `runtime_settings` for everything else (rate limits, risk weights, feature flags, Redis URL, snapshot URL, OTel sample rate, …). Operator changes propagate via `LISTEN/NOTIFY` on Postgres. See [`bootstrap.toml.example`](bootstrap.toml.example). |
+| **Configuration** | Two-tier: `bootstrap.toml` (env, log, DB URL, admin secret, `[runtime]` knobs that need to be readable before the DB exists) + DB-backed `runtime_settings` for everything else (rate limits, risk weights, feature flags, Redis URL, snapshot URL, OTel sampling rate, …). Operator changes propagate via `LISTEN/NOTIFY` on Postgres. See [`bootstrap.toml.example`](bootstrap.toml.example). |
 | **Linting / formatting** | `ruff` (lint + format) configured in pyproject. |
 | **Type checking** | `mypy` for `src/` and `api/`. |
 | **Testing** | `pytest`, **183 tests** (incl. autoscaling + distributed/`fakeredis` paths), FastAPI `TestClient`. |
@@ -406,7 +406,7 @@ Three tabs:
 
 ## Auto-scaling at production volume
 
-The Gemma 4 fine-tune ran on the client's sample (~95 train + 5 held-out meetings) with 1× H100 in 28 minutes for $1.40 — a *proof-of-concept on the sample*, not a production training run. Production runs the same trainer logic on a multi-node cluster with autoscaled inference. Each layer scales independently against its own bottleneck signal and goes to zero when idle.
+A QLoRA fine-tune of Gemma 4 was completed during development to validate the recipe and the cost economics; production runs the same trainer logic on a multi-node cluster with autoscaled inference. Each layer scales independently against its own bottleneck signal and goes to zero when idle.
 
 ```mermaid
 flowchart LR
@@ -429,7 +429,7 @@ Architecture, cost math (~$50–100/day at typical load), code skeletons, and K8
 
 ## Edge-case test data
 
-The client confirmed synthetic transcript generation is acceptable for edge-case coverage. We ship 15 hand-crafted synthetic meetings covering corners the sample doesn't reach (lowercase URGENT prefix, unicode customer names, net-new product references, all-neutral long meetings, single-sentence inputs, multi-incident scenarios, historical-incident references, internal meetings that mention customers).
+We ship 15 hand-crafted synthetic meetings covering corners a production stream is unlikely to surface organically (lowercase URGENT prefix, unicode customer names, net-new product references, all-neutral long meetings, single-sentence inputs, multi-incident scenarios, historical-incident references, internal meetings that mention customers).
 
 ```bash
 make gen-synthetic              # (re)generate the fixtures

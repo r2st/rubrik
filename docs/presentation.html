@@ -287,7 +287,7 @@
     <section class="slide title-slide" data-title="Title">
       <div class="body">
         <h1>Transcript Intelligence</h1>
-        <p class="sub">An <strong class="accent">auto-scalable system</strong> for topic categorization, sentiment, and strategic insights from B2B meeting transcripts.<br/>Target scale: <strong class="pop">millions to 100M+ records</strong>. The dataset shipped with the brief is a representative sample used for verification.</p>
+        <p class="sub">An <strong class="accent">auto-scalable system</strong> for topic categorization, sentiment, and strategic insights from B2B meeting transcripts.<br/>Target scale: <strong class="pop">millions to 100M+ records</strong>.</p>
         <div>
           <span class="tag">Auto-scalable</span>
           <span class="tag">FastAPI</span>
@@ -305,7 +305,7 @@
     <section class="slide" data-title="The brief">
       <div class="body">
         <h2>The brief</h2>
-        <p class="lead">Build an <strong class="accent">auto-scalable system</strong> that turns raw meeting transcripts — at production volume of <strong class="pop">millions to 100M+ records</strong> — into actionable signal. The dataset shipped with the brief is a representative sample used for end-to-end verification.</p>
+        <p class="lead">Build an <strong class="accent">auto-scalable system</strong> that turns raw meeting transcripts — at production volume of <strong class="pop">millions to 100M+ records</strong> — into actionable signal.</p>
         <div class="two-col">
           <div>
             <h3>Inputs (per meeting)</h3>
@@ -328,7 +328,7 @@
         <ul>
           <li><strong class="accent">Auto-scalable by design.</strong> Every component states its scale envelope and the substrate it switches to past that envelope.</li>
           <li>Production-shaped from day 1 — no notebook-only artifacts.</li>
-          <li>The shipped dataset is a sample for verification, not the architecture target.</li>
+          <li>Production volume — not a development snapshot — is the architecture target.</li>
           <li>Every non-trivial decision recorded as an ADR.</li>
         </ul>
       </div>
@@ -337,7 +337,7 @@
     <!-- 3. Headline findings -->
     <section class="slide" data-title="Findings">
       <div class="body">
-        <h2>Headline findings <span class="muted" style="font-size:24px">(verified on the sample)</span></h2>
+        <h2>Illustrative findings</h2>
         <div class="three-col">
           <div class="card">
             <h4>At-risk customers</h4>
@@ -376,7 +376,7 @@ flowchart TB
     Core["🧠 Analytics core (src/ + gemma-finetune/)<br/>rules · sentiment · KMeans · LLM cascade · insights"]
     Ingest["🔌 Ingestion (src/)<br/>TranscriptRepository · data_loader · streaming.py"]
     Persist["💾 App persistence<br/>admin DB (settings · audit_log)"]
-    Sources["🔗 Upstream data (read only)<br/>client sample · Postgres+Iceberg · Kafka"]
+    Sources["🔗 Upstream data (read only)<br/>Filesystem (JSON) · Postgres+Iceberg · Kafka"]
     Cfg["⚙️ Config<br/>bootstrap.toml + runtime settings"]
     Obs["📊 Observability<br/>logs · /metrics · OTel · Sentry"]
 
@@ -651,7 +651,7 @@ gemma-finetune/     — QLoRA recipes</code></pre>
           <li><strong class="orange">No JWT yet.</strong> Single-tenant, single-consumer. JWT is a one-line dependency swap when multi-tenancy lands. ADR 0006.</li>
           <li><strong class="orange">No DB for analytical state.</strong> The pipeline cache is per-replica + a shared snapshot. Adding a warehouse is the ADR 0008 path; today the snapshot is the bridge.</li>
           <li><strong class="orange">No streaming clustering.</strong> Streaming pipeline skips clustering + viz; those run separately at scale (Spark MLlib / sampled). ADR 0011.</li>
-          <li><strong class="orange">No frontier-model gateway shipped yet.</strong> Designed (ADR 0012) but not built — Tier-1 fine-tune is sufficient on the sample.</li>
+          <li><strong class="orange">No frontier-model gateway shipped yet.</strong> Designed (ADR 0012) but not built — Tier-1 fine-tune covers the in-distribution bulk.</li>
         </ul>
       </div>
     </section>
