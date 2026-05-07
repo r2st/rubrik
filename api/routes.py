@@ -9,6 +9,7 @@ which is a no-op when `Settings.api_key` is unset (dev convenience).
 """
 from __future__ import annotations
 
+import asyncio
 from collections import Counter
 from datetime import date
 from typing import Optional
@@ -110,7 +111,7 @@ def liveness() -> dict:
 
 
 @public_router.get("/ready", tags=["meta"])
-def readiness(request: Request) -> JSONResponse:
+async def readiness(request: Request) -> JSONResponse:
     """Readiness probe — true iff this replica can serve real traffic.
 
     Returns 200 only when:
@@ -122,18 +123,29 @@ def readiness(request: Request) -> JSONResponse:
     flap during refresh briefly drains the replica, which is correct.
     """
     from .backpressure import current_inflight, current_rejected
-    from .circuit_breaker import all_breakers
+    from .circuit_breaker import CircuitOpenError, all_breakers, get_breaker
 
     draining = bool(getattr(request.app.state, "shutting_down", False))
     state_ok = state.is_warm()
 
-    db_ok = True
-    try:
+    # The DB probe is wrapped in a circuit breaker — if Postgres is sick we
+    # stop hammering it from every replica's readiness loop and degrade fast.
+    db_breaker = get_breaker("readiness_db_probe", failure_threshold=3,
+                             recovery_timeout_s=10.0)
+
+    async def _probe_db():
         from src.db import session_scope
         from src.models_db import Setting
-        with session_scope() as s:
-            s.query(Setting).limit(1).all()
-    except Exception:  # noqa: BLE001
+
+        def _sync():
+            with session_scope() as s:
+                s.query(Setting).limit(1).all()
+        await asyncio.to_thread(_sync)
+
+    db_ok = True
+    try:
+        await db_breaker.call(_probe_db)
+    except (CircuitOpenError, Exception):  # noqa: BLE001
         db_ok = False
 
     breakers = {n: b.state.value for n, b in all_breakers().items()}

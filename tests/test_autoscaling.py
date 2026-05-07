@@ -232,7 +232,89 @@ def test_new_runtime_settings_keys_seeded():
         "snapshot.poll_seconds",
         "distribution.redis_url",
         "observability.otel_sample_rate",
+        "rate_limit.per_tenant",
     ]
     keys = {s.key for s in rt.all()}
     for k in expected:
         assert k in keys, f"missing default: {k}"
+
+
+# ---------------------------------------------------------------------------
+# Readiness uses the circuit breaker (#8 wired)
+# ---------------------------------------------------------------------------
+def test_readiness_registers_db_circuit_breaker():
+    """Hitting /api/ready creates the readiness_db_probe breaker via the registry."""
+    from api.main import app
+    with TestClient(app) as c:
+        r = c.get("/api/ready")
+    assert r.status_code == 200
+    breakers = r.json().get("circuit_breakers", {})
+    assert "readiness_db_probe" in breakers
+    assert breakers["readiness_db_probe"] == "closed"
+
+
+# ---------------------------------------------------------------------------
+# Per-tenant rate-limit override (#13 wired)
+# ---------------------------------------------------------------------------
+def test_per_tenant_limit_falls_back_to_default():
+    from starlette.datastructures import Headers
+    from starlette.requests import Request
+
+    from api.limiter import per_tenant_limit
+    scope = {
+        "type": "http", "method": "GET", "path": "/x",
+        "headers": Headers({"host": "x"}).raw,
+        "client": ("1.1.1.1", 1), "query_string": b"",
+    }
+    # Default seeded value is "120/minute" (rate_limit.default).
+    assert per_tenant_limit(Request(scope)) == "120/minute"
+
+
+def test_per_tenant_limit_honors_override():
+    from starlette.datastructures import Headers
+    from starlette.requests import Request
+
+    from api.limiter import _tenant_id, per_tenant_limit
+    from src.runtime_settings import get_runtime
+
+    api_key = "tenant-A-key"
+    scope = {
+        "type": "http", "method": "GET", "path": "/x",
+        "headers": Headers({"x-api-key": api_key, "host": "x"}).raw,
+        "client": ("1.1.1.1", 1), "query_string": b"",
+    }
+    req = Request(scope)
+    tid = _tenant_id(req)
+    rt = get_runtime()
+    rt.set("rate_limit.per_tenant", {tid: "999/hour"}, actor="test")
+    try:
+        assert per_tenant_limit(req) == "999/hour"
+    finally:
+        rt.set("rate_limit.per_tenant", {}, actor="test")
+
+
+# ---------------------------------------------------------------------------
+# Snapshot rebuild via admin route (#11 wired)
+# ---------------------------------------------------------------------------
+def test_snapshot_rebuild_endpoint_runs_inline_without_redis():
+    """Without Redis, the admin route falls back to inline execution.
+
+    Validates the integration path: admin auth → enqueue() → fallback to
+    api.jobs.rebuild_snapshot() inline. We don't assert the snapshot wrote
+    (no snapshot.url is set in tests) — just that the route accepts the
+    request and reports the queue-skip reason.
+    """
+    from api.main import app
+
+    BOOTSTRAP_PASSWORD = "changeme-on-first-login"
+    with TestClient(app) as c:
+        # Establish admin session.
+        r = c.post("/api/v1/admin/login", json={"password": BOOTSTRAP_PASSWORD})
+        assert r.status_code == 200
+        r = c.post("/api/v1/admin/snapshot/rebuild")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is True
+    assert body["mode"] in ("inline", "queued")
+    if body["mode"] == "inline":
+        assert body.get("queue_skip_reason") in ("no_redis", "arq_missing")

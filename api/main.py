@@ -138,6 +138,9 @@ def _default_rate_limits() -> list[str]:
     return [get_runtime_view().rate_limit_default]
 
 
+# Static default applies cluster-wide. Routes that need per-tenant overrides
+# decorate with `@limiter.limit(limiter_mod.per_tenant_limit)` — slowapi
+# resolves the callable per request and consults rate_limit.per_tenant.
 limiter = limiter_mod.build_limiter(
     redis_url=settings.redis_url,
     default_limits=_default_rate_limits(),

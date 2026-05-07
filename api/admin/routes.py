@@ -239,3 +239,26 @@ def get_audit(
         )
         for r in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Snapshot — manually trigger a rebuild (off-path via Arq when available)
+# ---------------------------------------------------------------------------
+@router.post("/snapshot/rebuild")
+async def rebuild_snapshot_endpoint(actor: str = Depends(require_admin)) -> dict:
+    """Kick a snapshot rebuild.
+
+    Tries to enqueue an Arq job (off-path; worker pool runs it) so the API
+    process isn't blocked. Falls back to inline execution when Redis / Arq
+    aren't configured — useful for single-replica dev.
+    """
+    from api.jobs import enqueue
+    result = await enqueue("rebuild_snapshot")
+    if result.enqueued:
+        return {"ok": True, "mode": "queued", "job_id": result.job_id}
+
+    # No queue available — run inline (this is the dev fallback).
+    from api import jobs
+    payload = await jobs.rebuild_snapshot({}, url=None)
+    return {"ok": True, "mode": "inline", "result": payload, "actor": actor,
+            "queue_skip_reason": result.reason}

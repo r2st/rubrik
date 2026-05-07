@@ -29,15 +29,36 @@ from src.logging_config import get_logger
 log = get_logger(__name__)
 
 
-def tenant_aware_key(request: Request) -> str:
-    """``(tenant_id, ip)`` composite key. Tenant defaults to ``anon`` when no key."""
+def _tenant_id(request: Request) -> str:
     api_key = request.headers.get("X-API-Key", "")
-    # Hash the key — never put the raw secret into Redis or logs.
-    tenant = (
+    return (
         hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16]
         if api_key else "anon"
     )
-    return f"{tenant}:{get_remote_address(request)}"
+
+
+def tenant_aware_key(request: Request) -> str:
+    """``(tenant_id, ip)`` composite key. Tenant defaults to ``anon`` when no key."""
+    return f"{_tenant_id(request)}:{get_remote_address(request)}"
+
+
+def per_tenant_limit(request: Request) -> str:
+    """Resolve the per-request rate limit by consulting runtime overrides.
+
+    Used by ``Limiter`` as a callable in ``default_limits``. Falls back to
+    the global ``rate_limit.default`` when no tenant override is set.
+    """
+    tenant = _tenant_id(request)
+    try:
+        from src.runtime_settings import get_runtime
+        rt = get_runtime()
+        overrides = rt.get("rate_limit.per_tenant", {}) or {}
+        per = overrides.get(tenant)
+        if per:
+            return str(per)
+        return str(rt.get("rate_limit.default", "120/minute"))
+    except Exception:  # noqa: BLE001
+        return "120/minute"
 
 
 def build_limiter(

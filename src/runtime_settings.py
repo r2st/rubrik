@@ -57,6 +57,9 @@ DEFAULTS: list[SettingDefault] = [
         "Default per-IP rate limit (slowapi syntax)."),
     SettingDefault("rate_limit.strict", "30/minute", "str", "rate_limit",
         "Stricter limit for expensive endpoints."),
+    SettingDefault("rate_limit.per_tenant", {}, "json", "rate_limit",
+        "Per-tenant overrides keyed by hashed API key prefix (16 hex chars). "
+        "Example: {\"a3f4...\": \"500/minute\"}. Empty means use the default."),
 
     # ---- pipeline lifecycle ----
     SettingDefault("pipeline.refresh_minutes", 0, "int", "pipeline",
@@ -352,6 +355,11 @@ def _coerce(value: Any, type_: str) -> Any:
                 return json.loads(v)
             return [s.strip() for s in v.split(",") if s.strip()]
         return list(value)
+    if type_ == "json":
+        if isinstance(value, str):
+            import json
+            return json.loads(value) if value.strip() else {}
+        return value
     return str(value)
 
 

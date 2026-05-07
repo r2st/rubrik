@@ -65,17 +65,35 @@ def get_engine() -> Engine:
                     kwargs["poolclass"] = NullPool
                     kwargs["connect_args"] = {"check_same_thread": False}
                 else:
-                    # Postgres / MySQL — production-friendly defaults.
-                    # `pool_pre_ping` catches stale connections from PgBouncer
-                    # restarts or RDS failovers; `pool_recycle=1800s` rotates
-                    # before most LB / proxy idle timeouts (typically 1h).
-                    kwargs.update({
-                        "pool_size": 5,
-                        "max_overflow": 10,
-                        "pool_pre_ping": True,
-                        "pool_recycle": 1800,
-                        "pool_timeout": 30,
-                    })
+                    # When pointing at PgBouncer in transaction mode, keep
+                    # the client pool tiny (PgBouncer multiplexes onto its
+                    # server pool) and disable pre-ping — the probe holds a
+                    # server connection and defeats multiplexing. Detect
+                    # PgBouncer via the default port (6432) or an explicit
+                    # hostname hint.
+                    behind_pgbouncer = (
+                        ":6432/" in url or "pgbouncer" in url.lower()
+                    )
+                    if behind_pgbouncer:
+                        kwargs.update({
+                            "pool_size": 2,
+                            "max_overflow": 0,
+                            "pool_pre_ping": False,
+                            "pool_recycle": 1800,
+                            "pool_timeout": 5,
+                        })
+                    else:
+                        # Direct Postgres / MySQL: production-friendly
+                        # defaults. `pool_pre_ping` catches stale conns from
+                        # RDS failovers; `pool_recycle=1800s` rotates before
+                        # most LB / proxy idle timeouts (~1h).
+                        kwargs.update({
+                            "pool_size": 5,
+                            "max_overflow": 10,
+                            "pool_pre_ping": True,
+                            "pool_recycle": 1800,
+                            "pool_timeout": 30,
+                        })
                 _engine = create_engine(url, **kwargs)
                 _session_factory = sessionmaker(
                     bind=_engine, expire_on_commit=False, class_=Session,
