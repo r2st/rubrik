@@ -599,14 +599,18 @@ A request to a `/api/v1/*` endpoint flows through this middleware stack:
 flowchart TD
     Req[Incoming request] --> Body["BodySizeLimitMiddleware<br/>reject >1 MiB up front (DoS guard)"]
     Body -->|too large| Err413["413 + error envelope"]
-    Body -->|ok| RID["RequestIDMiddleware<br/>mint or honor X-Request-ID<br/>start latency timer"]
+    Body -->|ok| BP["BackpressureMiddleware<br/>cap inflight; 503 + Retry-After when full"]
+    BP -->|saturated| Err503["503 + Retry-After"]
+    BP -->|ok| RID["RequestIDMiddleware<br/>mint or honor X-Request-ID"]
     RID --> Sec["SecurityHeadersMiddleware<br/>CSP · HSTS · X-Frame-Options · …"]
     Sec --> CORS["CORSMiddleware<br/>configurable origins"]
     CORS --> GZ["GZipMiddleware<br/>compresses payloads >500B"]
-    GZ --> RL["SlowAPI rate limiter<br/>X-RateLimit-* headers"]
-    RL --> Strict{"strict_rate_limit dep<br/>(admin login + password only)<br/>5/min/IP"}
+    GZ --> RL["SlowAPI<br/>(Redis-backed when configured)<br/>tenant_aware_key + X-RateLimit-*"]
+    RL --> Strict{"strict_rate_limit dep<br/>(admin login + password)<br/>5/min/IP"}
     Strict -->|exceeded| Err429["429 + error envelope"]
-    Strict -->|ok| OTel["OpenTelemetry<br/>(if OTEL_ENDPOINT set)"]
+    Strict --> PerT{"per_tenant_rate_limit_dep<br/>(routes that opt in, e.g. /meetings)"}
+    PerT -->|exceeded| Err429
+    PerT --> OTel["OpenTelemetry<br/>(head sample + Collector tail sample)"]
     OTel --> Auth{X-API-Key check<br/>(if API_KEY set)}
     Auth -->|invalid| Err401["401 + error envelope"]
     Auth -->|ok / disabled| ETag{If-None-Match<br/>matches ETag?}
@@ -617,11 +621,14 @@ flowchart TD
 
     style Body fill:#fff3e0
     style Err413 fill:#ffcdd2
+    style BP fill:#fff3e0
+    style Err503 fill:#ffcdd2
     style RID fill:#e3f2fd
     style Sec fill:#e3f2fd
     style GZ fill:#e8f5e9
     style RL fill:#fff3e0
     style Strict fill:#fff3e0
+    style PerT fill:#fff3e0
     style Err429 fill:#ffcdd2
     style Auth fill:#ffebee
     style Err401 fill:#ffcdd2
@@ -642,7 +649,11 @@ All errors — `HTTPException`, `RequestValidationError`, unhandled — funnel t
 }
 ```
 
-The `/api/health` endpoint is registered on a separate **public** router that bypasses the auth dependency — load balancers and k8s probes need to hit it without credentials.
+Three probe endpoints are registered on a separate **public** router that bypasses both the auth dependency and the backpressure cap:
+
+- `/api/live` — process up + event loop responsive. k8s liveness probe.
+- `/api/ready` — pipeline cache warm, admin DB reachable (via the `readiness_db_probe` circuit breaker), and the replica isn't draining. k8s readiness probe.
+- `/api/health` — combined probe kept for backward compatibility.
 
 ---
 
@@ -701,7 +712,7 @@ Migration is incremental: each step in [ADR 0008](adr/0008-data-layer-for-scale.
 
 ## Auto-scaling the API tier
 
-ADR 0010 covers the ML pipeline (training + vLLM serving). The **API tier itself** has its own auto-scaling story — and several gaps the current implementation hasn't yet closed. ADR 0013 documents the target; the diagram below shows it.
+ADR 0010 covers the ML pipeline (training + vLLM serving). The **API tier itself** has its own auto-scaling story — implemented and tested per [ADR 0013](adr/0013-api-tier-auto-scaling.md). The diagram below is the running architecture, not a target.
 
 ```mermaid
 flowchart TB
@@ -760,7 +771,7 @@ flowchart TB
     class Cron,Workers,Q,MJob job
 ```
 
-The 15 specific improvements (cold-start snapshot, externalized refresh, Redis-backed cluster-wide rate limiting, custom-metric HPA, migrations as a Job, PgBouncer, concurrency-cap backpressure, circuit breakers, settings-change pub/sub, split liveness/readiness, async job queue, CDN, per-tenant fairness, OTel collector + sampling, graceful shutdown) are tabled in [ADR 0013](adr/0013-api-tier-auto-scaling.md). Current code already does some of this (lifespan-based shutdown, ETag headers, slowapi); the rest is the next production-readiness PR.
+All 15 improvements ship in the codebase: cold-start snapshot (`api/snapshot.py`), singleton refresh (`api/snapshot_writer.py` + the snapshot CronJob manifest), Redis-backed slowapi limiter and strict admin limiter, HPA on RPS + p95, alembic-as-Job (entrypoint flag + Helm Job), PgBouncer-aware DB pool, backpressure middleware, circuit breakers, Postgres `LISTEN/NOTIFY` settings invalidation, split liveness/readiness, Arq workers (`api/jobs.py`), CDN runbook, per-tenant rate-limit dependency on `/meetings`, OTel `TraceIdRatioBased` + Collector tail-sampling, and explicit lifespan shutdown drain. K8s manifests live under `deploy/k8s/`; the CDN runbook is at `deploy/cdn-runbook.md`. ADR 0013 has the per-item rationale.
 
 ---
 

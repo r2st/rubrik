@@ -239,7 +239,9 @@ The web app at `/` consumes the same JSON endpoints any external client would. O
 
 | Endpoint group | Examples |
 |---|---|
-| **Meta** | `GET /api/health` · `GET /api/summary` |
+| **Probes** | `GET /api/live` (process up) · `GET /api/ready` (warm + DB + not draining) · `GET /api/health` (combined, legacy) |
+| **Meta** | `GET /api/summary` · `GET /metrics` (Prometheus, opt-in) |
+| **Admin** | `POST /api/v1/admin/login` · `POST /api/v1/admin/snapshot/rebuild` · settings CRUD · audit log |
 | **Meetings** | `GET /api/meetings?call_type=&product=&date_from=…` · `GET /api/meetings/{id}` |
 | **Sentiment** | `GET /api/sentiment/{by-call-type, by-purpose, weekly, scores}` |
 | **Clusters** | `GET /api/clusters` |
@@ -316,6 +318,10 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 | Concern | How it's handled |
 |---|---|
 | **Graceful degradation on refresh failure** | Pipeline refresh runs in the background. If it fails, the API keeps serving the last-good state. Every `/api/*` response carries `X-State-Age-Seconds`; once the data is older than 2× the refresh interval and refresh is failing, `X-Stale-Response: true` is set. Refresh failures stop being user-visible 5xx outages. |
+| **Cold-start fix (snapshot)** | When `snapshot.url` is set, replicas read a precomputed `PipelineState` written by a singleton CronJob (`api/snapshot_writer.py`) instead of rebuilding from the data source on every boot. Manifest checksum drives in-place reload. |
+| **Backpressure** | `BackpressureMiddleware` caps inflight requests; over the cap returns `503 + Retry-After`. The LB sheds load instead of escalating it. |
+| **Circuit breakers** | `api/circuit_breaker.py` — closed/open/half_open state machine; the readiness probe wraps the Postgres reach in `readiness_db_probe`. Sick downstream → fast 503 instead of pile-up. |
+| **Graceful shutdown** | Lifespan flips readiness → 503, sleeps so the LB can observe, drains background tasks, disposes the DB pool. Pod terminations don't drop in-flight work. |
 | **OpenAPI documented** | Every Pydantic response model carries a concrete example payload — the auto-generated `/docs` page is copy-pasteable, not abstract. |
 | **Supply-chain artifacts** | CI generates a CycloneDX SBOM (via `syft`) and a license report (`pip-licenses`); the build fails on copyleft licenses incompatible with MIT distribution. |
 
@@ -324,21 +330,21 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 |---|---|
 | **Structured logs** | Text or JSON via `LOG_FORMAT`. Each request gets a one-line access log with `request_id`, `method`, `path`, `status`, `elapsed_ms`. |
 | **Prometheus metrics** | `/metrics` endpoint with request rate, latency histograms, status codes per route. |
-| **OpenTelemetry tracing** | FastAPI auto-instrumented. OTLP/HTTP export when `OTEL_ENDPOINT` is set. Backend-agnostic (Tempo / Jaeger / Datadog / Honeycomb). |
+| **OpenTelemetry tracing** | FastAPI auto-instrumented; head sample rate from `observability.otel_sample_rate`. Tail-based sampling (errors + slow tails + 1% probabilistic) configured in the OTel Collector DaemonSet (`deploy/k8s/otel-collector.yaml`). |
 | **Sentry** | Errors auto-forwarded when `SENTRY_DSN` is set. |
-| **Health endpoint** | `/api/health` (no auth) for load balancers and k8s probes. |
+| **Probes (split)** | `/api/live` for k8s liveness (process only); `/api/ready` for readiness (pipeline warm, DB reachable via circuit breaker, not draining). `/api/health` retained for backward compatibility. |
 
 ### Engineering
 | Concern | How it's handled |
 |---|---|
 | **Packaging** | `pyproject.toml` (PEP 621); installable via `pip install -e ".[dev]"`; entry-point scripts. |
-| **Configuration** | `pydantic-settings` reads `.env` + env vars; typed, validated, multi-environment (dev/staging/prod profiles). See [`.env.example`](.env.example). |
+| **Configuration** | Two-tier: `bootstrap.toml` (env, log, DB URL, admin secret, `[runtime]` knobs that need to be readable before the DB exists) + DB-backed `runtime_settings` for everything else (rate limits, risk weights, feature flags, Redis URL, snapshot URL, OTel sample rate, …). Operator changes propagate via `LISTEN/NOTIFY` on Postgres. See [`bootstrap.toml.example`](bootstrap.toml.example). |
 | **Linting / formatting** | `ruff` (lint + format) configured in pyproject. |
 | **Type checking** | `mypy` for `src/` and `api/`. |
-| **Testing** | `pytest`, **86 tests, 94% coverage**, FastAPI `TestClient`. |
+| **Testing** | `pytest`, **183 tests** (incl. autoscaling + distributed/`fakeredis` paths), FastAPI `TestClient`. |
 | **CI/CD** | GitHub Actions: lint → type-check → test (3.9/3.11/3.12) → security scan → Docker build + image scan. |
 | **Containerization** | Multi-stage Dockerfile, non-root user, healthcheck, JSON logs, Caddy reverse proxy via compose. |
-| **Pipeline lifecycle** | State cached at startup; optional periodic refresh (`PIPELINE_REFRESH_MINUTES`) when the dataset can change underneath. |
+| **Pipeline lifecycle** | State cached at startup; optional periodic refresh (`pipeline.refresh_minutes` runtime setting). At production volume, a singleton CronJob writes a snapshot (`api/snapshot_writer.py`); replicas warm from it instead of rebuilding. |
 | **Pre-commit** | ruff + mypy + standard hooks (`pre-commit install`). |
 | **API contracts** | Pydantic response models + OpenAPI auto-docs at `/docs`. |
 | **Documentation** | README + ARCHITECTURE + APPROACH (with Mermaid) + standalone HTML build. |

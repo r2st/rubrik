@@ -925,14 +925,18 @@ footer code {
 <div class="mermaid">flowchart TD
     Req[Incoming request] --> Body["BodySizeLimitMiddleware<br/>reject >1 MiB up front (DoS guard)"]
     Body -->|too large| Err413["413 + error envelope"]
-    Body -->|ok| RID["RequestIDMiddleware<br/>mint or honor X-Request-ID<br/>start latency timer"]
+    Body -->|ok| BP["BackpressureMiddleware<br/>cap inflight; 503 + Retry-After when full"]
+    BP -->|saturated| Err503["503 + Retry-After"]
+    BP -->|ok| RID["RequestIDMiddleware<br/>mint or honor X-Request-ID"]
     RID --> Sec["SecurityHeadersMiddleware<br/>CSP · HSTS · X-Frame-Options · …"]
     Sec --> CORS["CORSMiddleware<br/>configurable origins"]
     CORS --> GZ["GZipMiddleware<br/>compresses payloads >500B"]
-    GZ --> RL["SlowAPI rate limiter<br/>X-RateLimit-* headers"]
-    RL --> Strict{"strict_rate_limit dep<br/>(admin login + password only)<br/>5/min/IP"}
+    GZ --> RL["SlowAPI<br/>(Redis-backed when configured)<br/>tenant_aware_key + X-RateLimit-*"]
+    RL --> Strict{"strict_rate_limit dep<br/>(admin login + password)<br/>5/min/IP"}
     Strict -->|exceeded| Err429["429 + error envelope"]
-    Strict -->|ok| OTel["OpenTelemetry<br/>(if OTEL_ENDPOINT set)"]
+    Strict --> PerT{"per_tenant_rate_limit_dep<br/>(routes that opt in, e.g. /meetings)"}
+    PerT -->|exceeded| Err429
+    PerT --> OTel["OpenTelemetry<br/>(head sample + Collector tail sample)"]
     OTel --> Auth{X-API-Key check<br/>(if API_KEY set)}
     Auth -->|invalid| Err401["401 + error envelope"]
     Auth -->|ok / disabled| ETag{If-None-Match<br/>matches ETag?}
@@ -943,11 +947,14 @@ footer code {
 
     style Body fill:#fff3e0
     style Err413 fill:#ffcdd2
+    style BP fill:#fff3e0
+    style Err503 fill:#ffcdd2
     style RID fill:#e3f2fd
     style Sec fill:#e3f2fd
     style GZ fill:#e8f5e9
     style RL fill:#fff3e0
     style Strict fill:#fff3e0
+    style PerT fill:#fff3e0
     style Err429 fill:#ffcdd2
     style Auth fill:#ffebee
     style Err401 fill:#ffcdd2
@@ -964,7 +971,12 @@ footer code {
   }
 }
 </code></pre>
-<p>The <code>/api/health</code> endpoint is registered on a separate <strong>public</strong> router that bypasses the auth dependency — load balancers and k8s probes need to hit it without credentials.</p>
+<p>Three probe endpoints are registered on a separate <strong>public</strong> router that bypasses both the auth dependency and the backpressure cap:</p>
+<ul>
+<li><code>/api/live</code> — process up + event loop responsive. k8s liveness probe.</li>
+<li><code>/api/ready</code> — pipeline cache warm, admin DB reachable (via the <code>readiness_db_probe</code> circuit breaker), and the replica isn't draining. k8s readiness probe.</li>
+<li><code>/api/health</code> — combined probe kept for backward compatibility.</li>
+</ul>
 <hr />
 <h2 id="scaling-to-100m-records">Scaling to 100M+ records<a class="anchor" href="#scaling-to-100m-records" title="Permanent link">¶</a></h2>
 <p>The client provided a representative <strong>sample</strong> (currently ~100 meetings, ~4k sentences). The current single-instance, in-memory pipeline is correct <strong>for that sample volume</strong> — it's how we verify pipeline correctness end-to-end during development. At <strong>production volume (millions to 100M+ records)</strong> the substrate changes — the analytical layers run against a real data platform — but the <em>application code shape</em> stays mostly the same.</p>
@@ -1064,7 +1076,7 @@ footer code {
 <p>Migration is incremental: each step in <a href="adr/0008-data-layer-for-scale.md#migration-path-concrete-sequential">ADR 0008</a> is independently shippable, none requires a wholesale rewrite. The current SQLite + SQLAlchemy code is the foundation — change <code>bootstrap.toml</code>'s database URL to Postgres and step #2 is done.</p>
 <hr />
 <h2 id="auto-scaling-the-api-tier">Auto-scaling the API tier<a class="anchor" href="#auto-scaling-the-api-tier" title="Permanent link">¶</a></h2>
-<p>ADR 0010 covers the ML pipeline (training + vLLM serving). The <strong>API tier itself</strong> has its own auto-scaling story — and several gaps the current implementation hasn't yet closed. ADR 0013 documents the target; the diagram below shows it.</p>
+<p>ADR 0010 covers the ML pipeline (training + vLLM serving). The <strong>API tier itself</strong> has its own auto-scaling story — implemented and tested per <a href="adr/0013-api-tier-auto-scaling.md">ADR 0013</a>. The diagram below is the running architecture, not a target.</p>
 <div class="mermaid">flowchart TB
     subgraph Edge["🌐 Edge"]
         CDN["CDN (CloudFront/Fastly)<br/>honors ETag + Cache-Control"]
@@ -1120,7 +1132,7 @@ footer code {
     class Snap,RTSet,RLim shared
     class Cron,Workers,Q,MJob job</div>
 
-<p>The 15 specific improvements (cold-start snapshot, externalized refresh, Redis-backed cluster-wide rate limiting, custom-metric HPA, migrations as a Job, PgBouncer, concurrency-cap backpressure, circuit breakers, settings-change pub/sub, split liveness/readiness, async job queue, CDN, per-tenant fairness, OTel collector + sampling, graceful shutdown) are tabled in <a href="adr/0013-api-tier-auto-scaling.md">ADR 0013</a>. Current code already does some of this (lifespan-based shutdown, ETag headers, slowapi); the rest is the next production-readiness PR.</p>
+<p>All 15 improvements ship in the codebase: cold-start snapshot (<code>api/snapshot.py</code>), singleton refresh (<code>api/snapshot_writer.py</code> + the snapshot CronJob manifest), Redis-backed slowapi limiter and strict admin limiter, HPA on RPS + p95, alembic-as-Job (entrypoint flag + Helm Job), PgBouncer-aware DB pool, backpressure middleware, circuit breakers, Postgres <code>LISTEN/NOTIFY</code> settings invalidation, split liveness/readiness, Arq workers (<code>api/jobs.py</code>), CDN runbook, per-tenant rate-limit dependency on <code>/meetings</code>, OTel <code>TraceIdRatioBased</code> + Collector tail-sampling, and explicit lifespan shutdown drain. K8s manifests live under <code>deploy/k8s/</code>; the CDN runbook is at <code>deploy/cdn-runbook.md</code>. ADR 0013 has the per-item rationale.</p>
 <hr />
 <h2 id="auto-scaling-ml-pipeline-training-serving">Auto-scaling ML pipeline (training + serving)<a class="anchor" href="#auto-scaling-ml-pipeline-training-serving" title="Permanent link">¶</a></h2>
 <p>The Gemma 4 fine-tune in <a href="adr/0003-self-host-summarization-with-gemma-4.md">ADR 0003</a> was a deliberate proof-of-concept on the client sample (~95 train meetings on a single H100, $1.40 wall-clock cost) — sufficient to demonstrate the recipe works and the economics close. <strong>Production scales every layer independently</strong> without changing the trainer logic:</p>

@@ -638,8 +638,16 @@ $ make validate
 </thead>
 <tbody>
 <tr>
+<td><strong>Probes</strong></td>
+<td><code>GET /api/live</code> (process up) · <code>GET /api/ready</code> (warm + DB + not draining) · <code>GET /api/health</code> (combined, legacy)</td>
+</tr>
+<tr>
 <td><strong>Meta</strong></td>
-<td><code>GET /api/health</code> · <code>GET /api/summary</code></td>
+<td><code>GET /api/summary</code> · <code>GET /metrics</code> (Prometheus, opt-in)</td>
+</tr>
+<tr>
+<td><strong>Admin</strong></td>
+<td><code>POST /api/v1/admin/login</code> · <code>POST /api/v1/admin/snapshot/rebuild</code> · settings CRUD · audit log</td>
 </tr>
 <tr>
 <td><strong>Meetings</strong></td>
@@ -842,6 +850,22 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 <td>Pipeline refresh runs in the background. If it fails, the API keeps serving the last-good state. Every <code>/api/*</code> response carries <code>X-State-Age-Seconds</code>; once the data is older than 2× the refresh interval and refresh is failing, <code>X-Stale-Response: true</code> is set. Refresh failures stop being user-visible 5xx outages.</td>
 </tr>
 <tr>
+<td><strong>Cold-start fix (snapshot)</strong></td>
+<td>When <code>snapshot.url</code> is set, replicas read a precomputed <code>PipelineState</code> written by a singleton CronJob (<code>api/snapshot_writer.py</code>) instead of rebuilding from the data source on every boot. Manifest checksum drives in-place reload.</td>
+</tr>
+<tr>
+<td><strong>Backpressure</strong></td>
+<td><code>BackpressureMiddleware</code> caps inflight requests; over the cap returns <code>503 + Retry-After</code>. The LB sheds load instead of escalating it.</td>
+</tr>
+<tr>
+<td><strong>Circuit breakers</strong></td>
+<td><code>api/circuit_breaker.py</code> — closed/open/half_open state machine; the readiness probe wraps the Postgres reach in <code>readiness_db_probe</code>. Sick downstream → fast 503 instead of pile-up.</td>
+</tr>
+<tr>
+<td><strong>Graceful shutdown</strong></td>
+<td>Lifespan flips readiness → 503, sleeps so the LB can observe, drains background tasks, disposes the DB pool. Pod terminations don't drop in-flight work.</td>
+</tr>
+<tr>
 <td><strong>OpenAPI documented</strong></td>
 <td>Every Pydantic response model carries a concrete example payload — the auto-generated <code>/docs</code> page is copy-pasteable, not abstract.</td>
 </tr>
@@ -870,15 +894,15 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 </tr>
 <tr>
 <td><strong>OpenTelemetry tracing</strong></td>
-<td>FastAPI auto-instrumented. OTLP/HTTP export when <code>OTEL_ENDPOINT</code> is set. Backend-agnostic (Tempo / Jaeger / Datadog / Honeycomb).</td>
+<td>FastAPI auto-instrumented; head sample rate from <code>observability.otel_sample_rate</code>. Tail-based sampling (errors + slow tails + 1% probabilistic) configured in the OTel Collector DaemonSet (<code>deploy/k8s/otel-collector.yaml</code>).</td>
 </tr>
 <tr>
 <td><strong>Sentry</strong></td>
 <td>Errors auto-forwarded when <code>SENTRY_DSN</code> is set.</td>
 </tr>
 <tr>
-<td><strong>Health endpoint</strong></td>
-<td><code>/api/health</code> (no auth) for load balancers and k8s probes.</td>
+<td><strong>Probes (split)</strong></td>
+<td><code>/api/live</code> for k8s liveness (process only); <code>/api/ready</code> for readiness (pipeline warm, DB reachable via circuit breaker, not draining). <code>/api/health</code> retained for backward compatibility.</td>
 </tr>
 </tbody>
 </table>
@@ -897,7 +921,7 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 </tr>
 <tr>
 <td><strong>Configuration</strong></td>
-<td><code>pydantic-settings</code> reads <code>.env</code> + env vars; typed, validated, multi-environment (dev/staging/prod profiles). See <a href=".env.example"><code>.env.example</code></a>.</td>
+<td>Two-tier: <code>bootstrap.toml</code> (env, log, DB URL, admin secret, <code>[runtime]</code> knobs that need to be readable before the DB exists) + DB-backed <code>runtime_settings</code> for everything else (rate limits, risk weights, feature flags, Redis URL, snapshot URL, OTel sample rate, …). Operator changes propagate via <code>LISTEN/NOTIFY</code> on Postgres. See <a href="bootstrap.toml.example"><code>bootstrap.toml.example</code></a>.</td>
 </tr>
 <tr>
 <td><strong>Linting / formatting</strong></td>
@@ -909,7 +933,7 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 </tr>
 <tr>
 <td><strong>Testing</strong></td>
-<td><code>pytest</code>, <strong>86 tests, 94% coverage</strong>, FastAPI <code>TestClient</code>.</td>
+<td><code>pytest</code>, <strong>183 tests</strong> (incl. autoscaling + distributed/<code>fakeredis</code> paths), FastAPI <code>TestClient</code>.</td>
 </tr>
 <tr>
 <td><strong>CI/CD</strong></td>
@@ -921,7 +945,7 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 </tr>
 <tr>
 <td><strong>Pipeline lifecycle</strong></td>
-<td>State cached at startup; optional periodic refresh (<code>PIPELINE_REFRESH_MINUTES</code>) when the dataset can change underneath.</td>
+<td>State cached at startup; optional periodic refresh (<code>pipeline.refresh_minutes</code> runtime setting). At production volume, a singleton CronJob writes a snapshot (<code>api/snapshot_writer.py</code>); replicas warm from it instead of rebuilding.</td>
 </tr>
 <tr>
 <td><strong>Pre-commit</strong></td>

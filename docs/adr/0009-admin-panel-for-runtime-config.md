@@ -47,24 +47,31 @@ The minimum needed to start the service before the DB is reachable:
 Everything else lives in the `settings` table:
 
 ```
-key                                value           type   category    description
-auth.api_key                       ""              str    auth        ...
-auth.cors_origins                  ["*"]           list   auth        ...
-rate_limit.default                 "120/minute"    str    rate_limit  ...
-rate_limit.strict                  "30/minute"     str    rate_limit  ...
-pipeline.refresh_minutes           0               int    pipeline    ...
-risk.weight_low_sentiment          0.5             float  risk        ...
-risk.weight_churn_signals          0.3             float  risk        ...
-risk.weight_negative_pivots        0.2             float  risk        ...
-risk.threshold_high                0.40            float  risk        ...
-risk.threshold_medium              0.25            float  risk        ...
-sentiment.negative_pivot_threshold -0.5            float  sentiment   ...
-feature.metrics_enabled            true            bool   feature     ...
-feature.observability_traces       true            bool   feature     ...
-observability.sentry_traces_sample 0.1             float  observabil  ...
+key                                  value           type   category
+auth.api_key                         ""              str    auth
+auth.cors_origins                    ["*"]           list   auth
+rate_limit.default                   "120/minute"    str    rate_limit
+rate_limit.strict                    "30/minute"     str    rate_limit
+rate_limit.per_tenant                {}              json   rate_limit
+pipeline.refresh_minutes             0               int    pipeline
+risk.weight_low_sentiment            0.5             float  risk
+risk.weight_churn_signals            0.3             float  risk
+risk.weight_negative_pivots          0.2             float  risk
+risk.threshold_high                  0.40            float  risk
+risk.threshold_medium                0.25            float  risk
+sentiment.negative_pivot_threshold   -0.5            float  sentiment
+feature.metrics_enabled              true            bool   feature
+feature.observability_traces         true            bool   feature
+observability.sentry_traces_sample_rate
+                                     0.1             float  observability
+observability.otel_sample_rate       0.01            float  observability
+backpressure.max_inflight            128             int    backpressure
+snapshot.url                         ""              str    snapshot
+snapshot.poll_seconds                30              int    snapshot
+distribution.redis_url               ""              str    distribution
 ```
 
-Reads go through a **5-second TTL cache** so admin changes propagate near-instantly without hammering SQLite on every request. Writes update the cache and append an `audit_log` row in the same transaction.
+Reads go through a **5-second TTL cache**. On Postgres, every `set()` additionally publishes a `settings_changed` `NOTIFY`, and a listener thread on each replica drops the cache locally — operator changes propagate in < 100 ms instead of waiting for the TTL. SQLite (dev) silently skips the publish; the TTL is the safety net.
 
 ### Admin panel architecture
 

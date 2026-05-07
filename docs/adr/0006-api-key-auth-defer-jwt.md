@@ -28,9 +28,9 @@ JWT and OAuth2 buy us **multi-tenancy and per-user attribution** — neither of 
 
 We **ship a static shared API key**, with the option to disable auth entirely in dev (no `API_KEY` env → open access).
 
-- Single secret in `Settings.api_key` (env var, never committed)
+- Single secret in the `auth.api_key` runtime setting (DB-backed via ADR 0009; rotated through `/admin`)
 - `require_api_key` FastAPI dependency on every `/api/v1/*` route
-- Health probe (`/api/health`) **bypasses auth** — load balancers and k8s probes need this
+- Public probes (`/api/live`, `/api/ready`, `/api/health`) **bypass auth** — load balancers and k8s probes need this
 - Failed auth returns the standardized error envelope with `code=unauthorized`
 
 The implementation is in `api/auth.py`. Total surface: ~30 lines.
