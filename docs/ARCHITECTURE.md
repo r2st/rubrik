@@ -93,6 +93,158 @@ flowchart LR
 
 Raw inputs enter on the left and pass through the **ingestion layer** — a `TranscriptRepository` Protocol with one concrete backend today (`LocalDirectoryRepository`, reading the client sample from disk) and two slots wired through the same interface (`DatabaseRepository` for ADR 0008's Postgres + Iceberg, `KafkaStreamingRepository` for real-time). `data_loader` parses each meeting into a typed `Meeting`, and `streaming.py` exposes a mergeable fold so the same pipeline runs at production volume. The core then enriches the data in three parallel passes (categorize · sentiment · cluster), insight modules consume the enriched frames, and four interfaces draw from the same insight functions — no logic duplicated across them.
 
+The next four diagrams unpack this picture along orthogonal axes: **layers** (what each tier owns), **per-meeting flow** (how a single record is enriched), **runtime topology** (what processes exist and what they share), and **control vs. data plane** (operator surfaces vs. analyst surfaces).
+
+### Layered view — what lives at each tier
+
+The system is a five-tier stack. Each tier has one job and depends only on the tiers below it. Two cross-cutting capabilities (configuration + observability) thread through every tier.
+
+```mermaid
+flowchart TB
+    subgraph L5["🧑‍💻 Presentation"]
+        UI["Web dashboard<br/>(static HTML + Plotly.js)"]
+        AdminUI["Admin panel<br/>(/admin)"]
+        Notebook["Jupyter notebook"]
+    end
+    subgraph L4["🌐 API · /api/v1/*"]
+        Routes["FastAPI routers<br/>(public · v1 · admin)"]
+        MW["Middleware stack<br/>body cap · request-id · CSP · CORS · gzip · slowapi · OTel"]
+        State["api/state.py<br/>cached pipeline state · refresh task"]
+    end
+    subgraph L3["🧠 Analytics core (src/)"]
+        Pipeline["categorizer · sentiment · clustering<br/>insights · visualizations"]
+    end
+    subgraph L2["🔌 Ingestion (src/)"]
+        IngestLayer["TranscriptRepository protocol<br/>data_loader · streaming.py"]
+    end
+    subgraph L1["💾 Persistence"]
+        AdminDB[("admin DB<br/>settings · audit_log")]
+        DataSrc[("client sample · Postgres+Iceberg · Kafka")]
+    end
+
+    L5 --> L4
+    L4 --> L3
+    L4 --> AdminDB
+    L3 --> L2
+    L2 --> L1
+
+    Cfg2[("⚙️ Config<br/>bootstrap.toml +<br/>runtime settings (DB)")]:::cross
+    Obs["📊 Observability<br/>logs · /metrics · OTel · Sentry"]:::cross
+    Cfg2 -.-> L2
+    Cfg2 -.-> L3
+    Cfg2 -.-> L4
+    Obs -.-> L3
+    Obs -.-> L4
+
+    classDef cross fill:#fffbe6,stroke:#a06b00,color:#3d2a00
+```
+
+The enforcement of this layering shows up in the import graph (next section): no module reaches across more than one tier.
+
+### Per-meeting data flow
+
+Following one meeting from raw transcript to dashboard chart:
+
+```mermaid
+flowchart LR
+    JSON[("meeting_id/<br/>transcript.json<br/>summary.json<br/>action_items.json<br/>+ 3 more")]
+    Repo["repository.get(id)<br/>→ Meeting (typed)"]
+    DF["DataFrame row<br/>+ sentences_df slice<br/>+ speakers_df slice"]
+    Enrich1["categorizer.annotate<br/>→ category · is_escalation · risk_signals"]
+    Enrich2["sentiment.add_trajectories<br/>→ open/close sentiment · pivots"]
+    Enrich3["clustering.cluster_transcripts<br/>→ content_cluster"]
+    Insight["insights.customer_health<br/>insights.incident_impact<br/>insights.competitive_signals · …"]
+    Cache["api/state.py<br/>(thread-safe singleton)"]
+    Resp["GET /api/v1/meetings/{id}<br/>+ ETag + Cache-Control"]
+    Chart["dashboard chart<br/>(Plotly.js)"]
+
+    JSON --> Repo --> DF
+    DF --> Enrich1 --> Insight
+    DF --> Enrich2 --> Insight
+    DF --> Enrich3 --> Insight
+    Insight --> Cache --> Resp --> Chart
+
+    classDef raw fill:#e3f2fd,stroke:#1f77b4,color:#0d2235
+    classDef enrich fill:#e8f5e9,stroke:#2e7d32,color:#0d2235
+    classDef serve fill:#fff3e0,stroke:#a06b00,color:#3d2a00
+    class JSON,Repo,DF raw
+    class Enrich1,Enrich2,Enrich3,Insight enrich
+    class Cache,Resp,Chart serve
+```
+
+A single meeting is enriched in three independent passes, fed into the insight functions, and the result is cached process-wide. Subsequent dashboard reads hit the cache + an HTTP `ETag`/`Cache-Control` layer — no recomputation per request.
+
+### Runtime topology — what runs, what's shared
+
+A typical production deployment is a small fixed set of processes plus an observability sidecar surface:
+
+```mermaid
+flowchart TB
+    subgraph Client["Browser / external clients"]
+        BR[Web UI · /admin · API consumers]
+    end
+
+    subgraph K8s["Kubernetes pod (replica × N)"]
+        UV["uvicorn worker<br/>FastAPI app<br/>(reads PipelineState cache)"]
+        RT["Refresh task<br/>asyncio · per-process"]
+        UV -.-> RT
+    end
+
+    subgraph Persist["Persistence"]
+        AdminDB[("admin DB<br/>SQLite (dev) ·<br/>Postgres (prod)")]
+        Source[("transcript source<br/>filesystem · Iceberg ·<br/>Kafka")]
+    end
+
+    subgraph Obs["Observability backends (opt-in)"]
+        Prom[("Prometheus<br/>scrapes /metrics")]
+        Tempo[("Tempo / Jaeger<br/>OTLP traces")]
+        Sentry[("Sentry<br/>exceptions")]
+    end
+
+    BR -->|HTTPS| UV
+    UV -->|reads + writes| AdminDB
+    UV -->|reads| Source
+    UV -->|exposes /metrics| Prom
+    UV -->|OTLP| Tempo
+    UV -->|errors| Sentry
+
+    classDef pod fill:#e3f2fd,stroke:#1f77b4,color:#0d2235
+    classDef store fill:#fffbe6,stroke:#a06b00,color:#3d2a00
+    class UV,RT pod
+    class AdminDB,Source store
+```
+
+Each replica owns a private in-memory `PipelineState` cache and a private refresh task. State is process-local on purpose — there's no Redis dependency for the analytical cache; replicas converge on each refresh tick. The shared persistence boundary is the admin DB (settings + audit log) and the transcript source.
+
+### Control plane vs. data plane
+
+The system has two distinct surfaces that share infrastructure but serve different audiences:
+
+```mermaid
+flowchart LR
+    subgraph CP["🛠️ Control plane — operators"]
+        AdminLogin["POST /admin/login<br/>(strict 5/min/IP)"]
+        AdminAPI["/api/v1/admin/*<br/>(session-gated)"]
+        Settings[("settings table<br/>14 runtime keys")]
+        Audit[("audit_log<br/>append-only")]
+        AdminLogin --> AdminAPI
+        AdminAPI -->|read/write| Settings
+        AdminAPI -->|append| Audit
+    end
+
+    subgraph DP["📈 Data plane — analysts / consumers"]
+        PubAPI["/api/v1/* read APIs"]
+        Health["/api/health (no auth)"]
+        Pipeline["Pipeline cache<br/>(api/state.py)"]
+        PubAPI --> Pipeline
+    end
+
+    Settings -->|5s TTL cache<br/>tunes auth, rate limits, weights| PubAPI
+    Settings -.->|tunes| Pipeline
+```
+
+Operators tune behavior in the **control plane** (rate limits, churn weights, the API key, feature flags) and every change is audited. Analysts consume the **data plane** through versioned read APIs whose behavior is parameterized by the control plane's current settings — so an operator can adjust risk thresholds without a deploy, and the change propagates to every replica within 5 seconds (the runtime-settings cache TTL).
+
 ---
 
 ## Module dependencies
