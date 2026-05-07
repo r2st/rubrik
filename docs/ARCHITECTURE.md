@@ -128,16 +128,18 @@ flowchart TB
     subgraph L2["🔌 Ingestion (src/)"]
         IngestLayer["TranscriptRepository protocol<br/>data_loader · streaming.py"]
     end
-    subgraph L1["💾 Persistence"]
-        AdminDB[("admin DB<br/>settings · audit_log")]
-        DataSrc[("client sample · Postgres+Iceberg · Kafka")]
+    subgraph L1["💾 App persistence (read + write)"]
+        AdminDB[("admin DB<br/>settings · audit_log<br/>SQLite dev · Postgres prod")]
+    end
+    subgraph Ext["🔗 Upstream data sources (read only)"]
+        DataSrc[("client sample (JSON files)<br/>Postgres + Iceberg<br/>Kafka stream")]
     end
 
     L5 --> L4
     L4 --> L3
     L4 --> AdminDB
     L3 --> L2
-    L2 --> L1
+    L2 --> Ext
 
     Cfg2[("⚙️ Config<br/>bootstrap.toml +<br/>runtime settings (DB)")]:::cross
     Obs["📊 Observability<br/>logs · /metrics · OTel · Sentry"]:::cross
@@ -201,8 +203,11 @@ flowchart TB
         UV -.-> RT
     end
 
-    subgraph Persist["Persistence"]
+    subgraph Persist["App persistence (read + write)"]
         AdminDB[("admin DB<br/>SQLite (dev) ·<br/>Postgres (prod)")]
+    end
+
+    subgraph SrcG["Upstream data (read only)"]
         Source[("transcript source<br/>filesystem · Iceberg ·<br/>Kafka")]
     end
 
