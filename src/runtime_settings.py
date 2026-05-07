@@ -87,6 +87,26 @@ DEFAULTS: list[SettingDefault] = [
     # ---- observability ----
     SettingDefault("observability.sentry_traces_sample_rate", 0.1, "float", "observability",
         "Fraction of requests sampled for Sentry tracing (0..1)."),
+    SettingDefault("observability.otel_sample_rate", 0.01, "float", "observability",
+        "TraceIdRatioBased sample rate for OpenTelemetry traces (0..1). "
+        "Errors and slow requests are always sampled regardless via tail-sampling."),
+
+    # ---- backpressure ----
+    SettingDefault("backpressure.max_inflight", 128, "int", "backpressure",
+        "Per-process inflight-request cap. Exceeding returns 503 + Retry-After. "
+        "Size for ~workers × 2 × cpu_count."),
+
+    # ---- snapshot ----
+    SettingDefault("snapshot.url", "", "str", "snapshot",
+        "Shared PipelineState snapshot location (path or s3://...). "
+        "Empty = build locally on warm-up. Set in production to fix HPA cold start."),
+    SettingDefault("snapshot.poll_seconds", 30, "int", "snapshot",
+        "How often replicas check the snapshot manifest for a new build."),
+
+    # ---- distribution ----
+    SettingDefault("distribution.redis_url", "", "str", "distribution",
+        "Redis URL for cluster-wide rate limiting + cache pub/sub. "
+        "Empty = in-process fallback (single-replica only)."),
 ]
 
 
@@ -165,6 +185,7 @@ class RuntimeSettings:
             s.commit()
             s.refresh(existing)
         self._invalidate()
+        _publish_change(key)
         log.info("setting changed: %s = %r (actor=%s)", key, coerced, actor)
         return existing
 
@@ -212,6 +233,89 @@ class RuntimeSettings:
         with self._lock:
             self._cache = {}
             self._cache_loaded_at = 0.0
+
+
+# ---------------------------------------------------------------------------
+# Push invalidation — Postgres LISTEN/NOTIFY (best effort)
+# ---------------------------------------------------------------------------
+# When settings change on one replica, every other replica should drop its
+# cache immediately rather than waiting for the 5s TTL. Postgres has
+# LISTEN/NOTIFY built in; SQLite (dev) doesn't, so this is a no-op there.
+#
+# We publish via the same connection used to write the row — a separate
+# listener thread (started from the FastAPI lifespan) consumes notifications
+# and calls _invalidate() locally.
+_NOTIFY_CHANNEL = "settings_changed"
+
+
+def _publish_change(key: str) -> None:
+    """Best-effort NOTIFY on Postgres; silent on SQLite or if not connected."""
+    try:
+        from .db import get_engine  # noqa: PLC0415
+        engine = get_engine()
+        if "postgres" not in engine.url.drivername:
+            return
+        # Use a short-lived raw connection so we don't tangle with the ORM session.
+        with engine.connect() as conn:
+            conn.exec_driver_sql(
+                f"NOTIFY {_NOTIFY_CHANNEL}, %s",
+                (f"settings:{key}",),
+            )
+            conn.commit()
+    except Exception as e:  # noqa: BLE001
+        # Push invalidation is opportunistic — TTL is the safety net.
+        log.debug("LISTEN/NOTIFY publish skipped: %s", e)
+
+
+def start_listener(callback):
+    """Start a background thread that LISTENs for settings_changed notifications.
+
+    Returns a handle with ``.stop()`` (or None if Postgres isn't the backend).
+    The callback is invoked as ``callback(payload: str)``.
+    """
+    try:
+        from .db import get_engine  # noqa: PLC0415
+        engine = get_engine()
+        if "postgres" not in engine.url.drivername:
+            log.debug("LISTEN/NOTIFY listener skipped (non-Postgres backend)")
+            return None
+    except Exception as e:  # noqa: BLE001
+        log.debug("LISTEN/NOTIFY listener skipped: %s", e)
+        return None
+
+    listener = _ListenerThread(engine, callback)
+    listener.start()
+    return listener
+
+
+class _ListenerThread(threading.Thread):
+    def __init__(self, engine, callback) -> None:
+        super().__init__(daemon=True, name="settings-listener")
+        self._engine = engine
+        self._callback = callback
+        self._stop = threading.Event()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def run(self) -> None:  # pragma: no cover — requires a real Postgres
+        import select as _select
+        try:
+            raw = self._engine.raw_connection()
+            cur = raw.cursor()
+            cur.execute(f"LISTEN {_NOTIFY_CHANNEL}")
+            while not self._stop.is_set():
+                if _select.select([raw], [], [], 1) == ([], [], []):
+                    continue
+                raw.poll()
+                while raw.notifies:
+                    n = raw.notifies.pop(0)
+                    try:
+                        self._callback(n.payload or "")
+                    except Exception:  # noqa: BLE001
+                        log.exception("settings listener callback failed")
+        except Exception:  # noqa: BLE001
+            log.exception("settings listener crashed; falling back to TTL-only")
 
 
 # ---------------------------------------------------------------------------

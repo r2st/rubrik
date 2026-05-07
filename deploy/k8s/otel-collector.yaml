@@ -1,0 +1,80 @@
+# OpenTelemetry Collector — DaemonSet receiver + tail-based sampling.
+#
+# Why DaemonSet: every API/worker pod sends OTLP to its node-local
+# collector (low latency, no extra hop). The collector then handles
+# sampling, batching, and export to Tempo/Jaeger/Datadog.
+#
+# Tail-based sampling means a span isn't kept-or-dropped at emit time —
+# the whole trace is held briefly, and we keep it iff:
+#   * any span errored, OR
+#   * total trace duration > 500 ms, OR
+#   * a probabilistic 1% sample fires.
+# That ratio costs ~1% of full-fidelity bandwidth while preserving every
+# error path and slow tail. Non-negotiable at high RPS.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          http: { endpoint: 0.0.0.0:4318 }
+          grpc: { endpoint: 0.0.0.0:4317 }
+    processors:
+      batch:
+        timeout: 5s
+        send_batch_size: 512
+      tail_sampling:
+        decision_wait: 10s
+        num_traces: 50000
+        policies:
+          - name: errors
+            type: status_code
+            status_code: { status_codes: [ERROR] }
+          - name: slow
+            type: latency
+            latency: { threshold_ms: 500 }
+          - name: random
+            type: probabilistic
+            probabilistic: { sampling_percentage: 1 }
+    exporters:
+      otlp/tempo:
+        endpoint: tempo.observability:4317
+        tls: { insecure: true }
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [tail_sampling, batch]
+          exporters: [otlp/tempo]
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: otel-collector
+  namespace: observability
+spec:
+  selector:
+    matchLabels: { app: otel-collector }
+  template:
+    metadata:
+      labels: { app: otel-collector }
+    spec:
+      containers:
+        - name: collector
+          image: otel/opentelemetry-collector-contrib:0.99.0
+          args: ["--config=/conf/config.yaml"]
+          ports:
+            - { name: otlp-grpc, containerPort: 4317 }
+            - { name: otlp-http, containerPort: 4318 }
+          volumeMounts:
+            - name: config
+              mountPath: /conf
+          resources:
+            requests: { cpu: "200m", memory: "512Mi" }
+            limits:   { cpu: "1",    memory: "2Gi"  }
+      volumes:
+        - name: config
+          configMap: { name: otel-collector-config }

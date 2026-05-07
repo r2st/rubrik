@@ -15,9 +15,11 @@ from typing import Optional
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse
 
 from src import sentiment as sent_mod
 
+from . import state
 from .auth import require_api_key
 from .caching import cached
 from .models import (
@@ -89,8 +91,65 @@ def _filter(df: pd.DataFrame,
 @public_router.get("/health", response_model=HealthResponse, tags=["meta"])
 @public_router.get("/v1/health", response_model=HealthResponse, tags=["meta"])
 def health() -> HealthResponse:
-    """Liveness probe. No auth required."""
+    """Combined health probe (kept for backward compatibility).
+
+    Prefer ``/api/live`` for k8s liveness and ``/api/ready`` for k8s
+    readiness — they have distinct semantics.
+    """
     return HealthResponse()
+
+
+@public_router.get("/live", tags=["meta"])
+def liveness() -> dict:
+    """Liveness probe — process is up and the event loop is responsive.
+
+    Cheap on purpose: no DB call, no pipeline check. k8s should restart the
+    pod only if this fails.
+    """
+    return {"status": "alive"}
+
+
+@public_router.get("/ready", tags=["meta"])
+def readiness(request: Request) -> JSONResponse:
+    """Readiness probe — true iff this replica can serve real traffic.
+
+    Returns 200 only when:
+      - the process is not in shutdown drain (``app.state.shutting_down``)
+      - the pipeline cache is warm (``state.is_warm()``)
+      - the admin DB is reachable (settings table is queryable)
+
+    Otherwise returns 503 so the LB drops the replica out of rotation. A
+    flap during refresh briefly drains the replica, which is correct.
+    """
+    from .backpressure import current_inflight, current_rejected
+    from .circuit_breaker import all_breakers
+
+    draining = bool(getattr(request.app.state, "shutting_down", False))
+    state_ok = state.is_warm()
+
+    db_ok = True
+    try:
+        from src.db import session_scope
+        from src.models_db import Setting
+        with session_scope() as s:
+            s.query(Setting).limit(1).all()
+    except Exception:  # noqa: BLE001
+        db_ok = False
+
+    breakers = {n: b.state.value for n, b in all_breakers().items()}
+    ready = state_ok and db_ok and not draining
+    body = {
+        "status": "ready" if ready else "not_ready",
+        "checks": {
+            "pipeline_warm": state_ok,
+            "db_reachable": db_ok,
+            "not_draining": not draining,
+        },
+        "inflight": current_inflight(),
+        "rejected_total": current_rejected(),
+        "circuit_breakers": breakers,
+    }
+    return JSONResponse(status_code=(200 if ready else 503), content=body)
 
 
 @router.get("/summary", response_model=SummaryResponse, tags=["meta"])

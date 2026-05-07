@@ -1,0 +1,46 @@
+# Arq worker Deployment — consumes background jobs enqueued by the API
+# (api/jobs.py). Scaled by Redis-queue depth via a Prometheus metric.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transcript-intel-worker
+  labels: { app: transcript-intel, role: worker }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: transcript-intel, role: worker }
+  template:
+    metadata:
+      labels: { app: transcript-intel, role: worker }
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: worker
+          image: ghcr.io/example/transcript-intelligence:latest
+          command: ["arq", "api.jobs.WorkerSettings"]
+          env:
+            - { name: RUN_MIGRATIONS, value: "skip" }
+          envFrom:
+            - secretRef: { name: transcript-intel-bootstrap }
+          resources:
+            requests: { cpu: "500m", memory: "1Gi" }
+            limits:   { cpu: "2",    memory: "4Gi" }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: transcript-intel-worker
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: transcript-intel-worker
+  minReplicas: 1
+  maxReplicas: 20
+  metrics:
+    - type: External
+      external:
+        metric:
+          name: redis_arq_queue_depth
+          selector: { matchLabels: { queue: arq } }
+        target: { type: AverageValue, averageValue: "10" }

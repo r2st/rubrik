@@ -35,3 +35,15 @@ dataset_path = ""
 sentry_dsn = ""
 otel_endpoint = ""
 otel_service_name = "transcript-intelligence"
+
+[runtime]
+# "auto" = container entrypoint runs `alembic upgrade head` on start (good for
+# single-replica dev / docker compose). "skip" = Helm runs migrations as a
+# pre-deploy Job and the entrypoint just execs uvicorn (good for prod rolling
+# deploys; see deploy/k8s/migrate-job.yaml).
+run_migrations = "auto"
+
+# Redis URL — enables cluster-wide rate limiting + cache pub/sub. Empty =
+# in-process fallback (single-replica only). Example:
+#   redis_url = "redis://redis.cluster.local:6379/0"
+redis_url = ""

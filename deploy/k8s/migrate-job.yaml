@@ -1,0 +1,41 @@
+# Pre-deploy migration Job — applies alembic migrations to completion before
+# the rolling Deployment update starts.
+#
+# Wire with Helm:
+#   annotations:
+#     "helm.sh/hook": pre-install,pre-upgrade
+#     "helm.sh/hook-weight": "0"
+#     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+#
+# When the Job completes (status.succeeded == 1), Helm proceeds with the
+# Deployment rollout. Failure aborts the deploy — safer than every replica
+# racing the alembic lock at startup.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: transcript-intel-migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: transcript-intel
+        role: migrate
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: ghcr.io/example/transcript-intelligence:latest
+          # Override the default entrypoint with the migration command only.
+          command: ["alembic", "upgrade", "head"]
+          envFrom:
+            - secretRef:
+                name: transcript-intel-bootstrap
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits:   { cpu: "500m", memory: "512Mi" }

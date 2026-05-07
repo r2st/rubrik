@@ -58,6 +58,18 @@ class ObservabilitySection(BaseModel):
     otel_service_name: str = "transcript-intelligence"
 
 
+class RuntimeSection(BaseModel):
+    """Runtime-process knobs that need to be readable BEFORE the DB exists.
+
+    These can also be promoted to runtime_settings later. For now we keep
+    them in bootstrap because they affect process initialization (Redis
+    URL is needed before slowapi is constructed; migrations flag is read
+    by the entrypoint).
+    """
+    run_migrations: Literal["auto", "skip"] = "auto"
+    redis_url: str = ""
+
+
 class Settings(BaseModel):
     """Bootstrap settings. Loaded once at startup, immutable thereafter."""
 
@@ -66,6 +78,7 @@ class Settings(BaseModel):
     admin: AdminSection = Field(default_factory=AdminSection)
     paths: PathsSection = Field(default_factory=PathsSection)
     observability: ObservabilitySection = Field(default_factory=ObservabilitySection)
+    runtime: RuntimeSection = Field(default_factory=RuntimeSection)
 
     # ------------------------------------------------------------------
     # Convenience accessors (preserve existing call sites' shape)
@@ -109,6 +122,14 @@ class Settings(BaseModel):
     @property
     def otel_service_name(self) -> str:
         return self.observability.otel_service_name
+
+    @property
+    def redis_url(self) -> Optional[str]:
+        return self.runtime.redis_url or None
+
+    @property
+    def run_migrations(self) -> str:
+        return self.runtime.run_migrations
 
 
 # ---------------------------------------------------------------------------

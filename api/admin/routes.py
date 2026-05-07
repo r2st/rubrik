@@ -53,10 +53,44 @@ _strict_window: dict[str, deque[float]] = defaultdict(deque)
 
 
 def strict_rate_limit(request: Request) -> None:
-    """Enforce 5 req/min/IP on login + password-rotation."""
+    """Enforce 5 req/min/IP on login + password-rotation.
+
+    Tries Redis first (cluster-wide enforcement) and falls back to a
+    per-process sliding window. Without Redis, an attacker hitting 10
+    replicas gets 10× the limit — fine for single-replica dev, broken at
+    real scale. Redis is the production path.
+    """
+    ip = (request.client.host if request.client else "unknown") or "unknown"
+
+    # ---- cluster-wide path (Redis-backed) ----
+    redis_url = None
+    try:
+        from src.settings import get_settings  # noqa: PLC0415
+        redis_url = get_settings().redis_url
+    except Exception:  # noqa: BLE001
+        pass
+    if redis_url:
+        try:
+            import redis as _redis  # noqa: PLC0415
+            client = _redis.Redis.from_url(redis_url, socket_timeout=0.25)
+            key = f"strict_rl:{ip}"
+            cnt = client.incr(key)
+            if cnt == 1:
+                client.expire(key, 60)
+            if cnt > _STRICT_LIMIT_PER_MINUTE:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Too many attempts; please wait a minute before retrying.",
+                )
+            return
+        except HTTPException:
+            raise
+        except Exception:  # noqa: BLE001 — degrade to in-process
+            pass
+
+    # ---- in-process fallback ----
     now = time.monotonic()
     cutoff = now - 60.0
-    ip = (request.client.host if request.client else "unknown") or "unknown"
     bucket = _strict_window[ip]
     while bucket and bucket[0] < cutoff:
         bucket.popleft()

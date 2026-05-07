@@ -24,16 +24,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIASGIMiddleware
-from slowapi.util import get_remote_address
 
 from src.logging_config import configure_logging, get_logger
 from src.runtime_settings import initialize_db_and_seed
 from src.settings import get_runtime_view, get_settings
 
+from . import backpressure as backpressure_mod
 from . import errors as errors_mod
+from . import limiter as limiter_mod
 from . import observability, state
 from .admin.auth import ensure_admin_password_seeded
 from .admin.routes import router as admin_router
@@ -55,8 +55,9 @@ log = get_logger(__name__)
 # Lifespan
 # ---------------------------------------------------------------------------
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(app_: FastAPI):
     configure_logging(level=settings.log_level, fmt=settings.log_format)
+    app_.state.shutting_down = False  # reset; module-level app is reused under tests
 
     # Seed the application DB (admin settings + audit log) and admin password.
     # Idempotent — safe on every start.
@@ -69,12 +70,40 @@ async def lifespan(_: FastAPI):
              "on" if runtime.auth_required else "off",
              runtime.pipeline_refresh_minutes)
 
-    state.get_state()  # warm pipeline cache
+    # Settings push invalidation: LISTEN on Postgres for `settings_changed`
+    # and drop the cache locally — operator changes propagate < 100 ms
+    # instead of waiting for the 5 s TTL. No-op on SQLite.
+    from src.runtime_settings import get_runtime, start_listener
+    listener = start_listener(lambda _payload: get_runtime()._invalidate())  # noqa: SLF001
+
+    state.get_state()  # warm pipeline cache (snapshot if available)
     await state.start_refresh_task(runtime.pipeline_refresh_minutes)
+    await state.start_snapshot_poll()  # no-op if snapshot.url is unset
+
     log.info("Ready to serve")
     yield
+
+    # ----- Graceful shutdown drain -----
+    # Order matters: stop accepting new work, drain inflight, then teardown.
+    log.info("Shutting down — initiating drain")
+    app_.state.shutting_down = True  # /api/ready flips to 503
+    # Give the LB a beat to observe the readiness change before we close
+    # the door on inflight requests.
+    import asyncio as _asyncio
+    await _asyncio.sleep(2)
+
+    await state.stop_snapshot_poll()
     await state.stop_refresh_task()
-    log.info("Shutting down")
+    if listener is not None:
+        listener.stop()
+
+    # Close DB pool — SQLAlchemy's engine.dispose() drains lazily.
+    try:
+        from src.db import get_engine
+        get_engine().dispose()
+    except Exception:  # noqa: BLE001
+        log.exception("Engine dispose during shutdown failed")
+    log.info("Shutdown complete")
 
 
 # ---------------------------------------------------------------------------
@@ -109,10 +138,9 @@ def _default_rate_limits() -> list[str]:
     return [get_runtime_view().rate_limit_default]
 
 
-limiter = Limiter(
-    key_func=get_remote_address,
+limiter = limiter_mod.build_limiter(
+    redis_url=settings.redis_url,
     default_limits=_default_rate_limits(),
-    headers_enabled=True,
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, errors_mod.http_exception_handler)
@@ -125,6 +153,16 @@ app.add_middleware(SlowAPIASGIMiddleware)
 # Body-size cap runs first so oversized payloads are rejected before any
 # downstream middleware or handler allocates buffers for them.
 app.add_middleware(BodySizeLimitMiddleware)
+# Backpressure: cap inflight requests; over the cap → 503 + Retry-After.
+# Cap is read from runtime settings (admin-tunable).
+try:
+    from src.runtime_settings import get_runtime as _get_rt
+    _bp_cap = int(_get_rt().get(
+        "backpressure.max_inflight", backpressure_mod.DEFAULT_MAX_INFLIGHT
+    ))
+except Exception:  # noqa: BLE001
+    _bp_cap = backpressure_mod.DEFAULT_MAX_INFLIGHT
+app.add_middleware(backpressure_mod.BackpressureMiddleware, max_inflight=_bp_cap)
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(
     SecurityHeadersMiddleware,

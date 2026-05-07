@@ -1,0 +1,72 @@
+# API tier Deployment — paired with the HPA, migrate Job, snapshot CronJob,
+# and PgBouncer manifests in this directory.
+#
+# Notable knobs:
+#   - RUN_MIGRATIONS=skip — migrations are applied by the pre-deploy Job, not
+#     by every replica on start. Avoids the alembic lock race during rolling
+#     updates.
+#   - terminationGracePeriodSeconds=60 — gives the lifespan drain enough time
+#     to flip readiness, sleep, drain inflight, and close the DB pool.
+#   - Probes split into liveness vs readiness with distinct semantics.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transcript-intel-api
+  labels: { app: transcript-intel, role: api }
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels: { app: transcript-intel, role: api }
+  template:
+    metadata:
+      labels: { app: transcript-intel, role: api }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port:   "8000"
+        prometheus.io/path:   "/metrics"
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: api
+          image: ghcr.io/example/transcript-intelligence:latest
+          ports: [{ containerPort: 8000, name: http }]
+          env:
+            - { name: RUN_MIGRATIONS, value: "skip" }
+            - { name: WORKERS, value: "2" }
+          envFrom:
+            - secretRef:
+                name: transcript-intel-bootstrap
+          # Liveness — process up. NEVER include the pipeline cache here.
+          # Pipeline rebuild can take seconds; pod restarts on liveness fail.
+          livenessProbe:
+            httpGet:   { path: /api/live, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          # Readiness — gates LB traffic. Reflects pipeline warm + DB reach.
+          readinessProbe:
+            httpGet: { path: /api/ready, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+            initialDelaySeconds: 5
+          # Startup probe — gives the snapshot read up to 90s before liveness
+          # kicks in, so a fresh pod isn't killed mid-warm-up.
+          startupProbe:
+            httpGet: { path: /api/live, port: http }
+            periodSeconds: 5
+            failureThreshold: 18
+          resources:
+            requests: { cpu: "500m", memory: "1Gi" }
+            limits:   { cpu: "2",    memory: "4Gi" }
+          # Graceful shutdown: pre-stop hook gives Envoy/iptables a beat to
+          # observe the readiness flip before SIGTERM goes out.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 10"]

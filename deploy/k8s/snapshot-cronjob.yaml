@@ -1,0 +1,40 @@
+# Singleton refresh job — runs the pipeline once per interval, writes a
+# shared PipelineState snapshot. API replicas read it on warm-up via
+# api/snapshot.py, eliminating cold-start rebuilds.
+#
+# Set [snapshot.url] in the admin panel (or via secret) to e.g.
+#   s3://my-bucket/transcript-intel/snapshots/prod/
+# Replicas poll the manifest every 30s (snapshot.poll_seconds) and reload
+# when the checksum changes.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: transcript-intel-snapshot
+spec:
+  # Every 5 minutes — match or beat the desired data freshness window.
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 120
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 300
+      template:
+        metadata:
+          labels: { app: transcript-intel, role: snapshot-writer }
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: writer
+              image: ghcr.io/example/transcript-intelligence:latest
+              command: ["python", "-m", "api.snapshot_writer"]
+              args: ["--log-format=json"]
+              env:
+                - { name: RUN_MIGRATIONS, value: "skip" }
+              envFrom:
+                - secretRef: { name: transcript-intel-bootstrap }
+              resources:
+                requests: { cpu: "1",   memory: "2Gi" }
+                limits:   { cpu: "4",   memory: "8Gi" }

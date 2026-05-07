@@ -1,6 +1,6 @@
 # ADR 0013: API Tier Auto-Scaling — Closing the Gap with the ML Pipeline
 
-- **Status:** Proposed
+- **Status:** Accepted (initial implementation landed; deploy artifacts target k8s rollout)
 - **Date:** 2026-05-07
 
 ## Context

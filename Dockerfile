@@ -36,14 +36,27 @@ COPY alembic ./alembic
 COPY alembic.ini ./alembic.ini
 COPY bootstrap.toml.example ./bootstrap.toml.example
 
-# Entrypoint: run migrations to head, then exec uvicorn. Migrations are
-# idempotent so this is safe on every container start (single-replica
-# deployments) and harmless under multiple replicas (Alembic takes a lock).
+# Entrypoint:
+#   RUN_MIGRATIONS=auto (default) — apply alembic migrations on start, then
+#     exec uvicorn. Right for single-replica dev / docker compose; idempotent
+#     and Alembic locks safely.
+#   RUN_MIGRATIONS=skip — skip the alembic step. Right for production rolling
+#     deploys where a Helm pre-upgrade Job (deploy/k8s/migrate-job.yaml) has
+#     already run migrations to completion before the rolling update starts.
+# Override via the [runtime] table in bootstrap.toml or the env var directly.
 COPY <<'EOF' /app/entrypoint.sh
 #!/usr/bin/env bash
 set -euo pipefail
-echo "[entrypoint] applying alembic migrations..."
-alembic upgrade head
+mode="${RUN_MIGRATIONS:-auto}"
+if [[ "$mode" == "auto" ]]; then
+  echo "[entrypoint] RUN_MIGRATIONS=auto — applying alembic migrations..."
+  alembic upgrade head
+elif [[ "$mode" == "skip" ]]; then
+  echo "[entrypoint] RUN_MIGRATIONS=skip — assuming migrations applied via Job"
+else
+  echo "[entrypoint] RUN_MIGRATIONS=$mode is invalid (use auto|skip)" >&2
+  exit 2
+fi
 echo "[entrypoint] starting uvicorn..."
 exec uvicorn api.main:app --host 0.0.0.0 --port "${PORT:-8000}" --workers "${WORKERS:-2}"
 EOF

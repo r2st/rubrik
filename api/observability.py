@@ -66,18 +66,32 @@ def install_tracing(app: FastAPI, settings: Settings) -> None:
         log.warning("opentelemetry packages not installed — tracing disabled")
         return
 
+    # Sample rate is read from runtime settings so operators can tune trace
+    # volume without a deploy. Tail-based sampling (always-sample errors and
+    # slow tails) lives in the OTel Collector (see deploy/k8s/otel-collector.yaml);
+    # head-based ratio sampling here keeps export volume bounded at high RPS.
+    from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
+    try:
+        from src.runtime_settings import get_runtime  # noqa: PLC0415
+        rate = float(get_runtime().get("observability.otel_sample_rate", 0.01))
+    except Exception:  # noqa: BLE001
+        rate = 0.01
+    rate = max(0.0, min(1.0, rate))
+
     provider = TracerProvider(
         resource=Resource.create({
             "service.name": settings.otel_service_name,
             "deployment.environment": settings.env,
-        })
+        }),
+        sampler=TraceIdRatioBased(rate),
     )
     exporter = OTLPSpanExporter(endpoint=settings.otel_endpoint)
     provider.add_span_processor(BatchSpanProcessor(exporter))
     trace.set_tracer_provider(provider)
 
     FastAPIInstrumentor.instrument_app(app)
-    log.info("OpenTelemetry tracing exporting to %s", settings.otel_endpoint)
+    log.info("OpenTelemetry tracing exporting to %s (head-sample %.3f; "
+             "tail-sample errors/slow in collector)", settings.otel_endpoint, rate)
 
 
 def install_sentry(settings: Settings) -> None:

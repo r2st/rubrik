@@ -1,0 +1,67 @@
+# PgBouncer in transaction-pooling mode — bounds cluster-wide Postgres
+# connection count regardless of how many API replicas the HPA has spun up.
+#
+# Default sizing: pool_size=20, max_client_conn=2000. With 50 API replicas
+# each holding pool_size=2 SQLAlchemy connections, that's 100 client conns
+# multiplexed onto 20 server conns — a 5× compression ratio that keeps
+# Postgres comfortably under its 100-connection default.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: transcript-intel-pgbouncer-config
+data:
+  pgbouncer.ini: |
+    [databases]
+    transcript_intel = host=postgres.cluster.local port=5432 dbname=transcript_intel
+
+    [pgbouncer]
+    listen_addr = 0.0.0.0
+    listen_port = 6432
+    auth_type = scram-sha-256
+    auth_file = /etc/pgbouncer/userlist.txt
+    pool_mode = transaction
+    max_client_conn = 2000
+    default_pool_size = 20
+    reserve_pool_size = 5
+    reserve_pool_timeout = 3
+    server_idle_timeout = 600
+    server_lifetime = 3600
+    log_connections = 0
+    log_disconnections = 0
+    log_pooler_errors = 1
+    application_name_add_host = 1
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transcript-intel-pgbouncer
+  labels: { app: transcript-intel, role: pgbouncer }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: transcript-intel, role: pgbouncer }
+  template:
+    metadata:
+      labels: { app: transcript-intel, role: pgbouncer }
+    spec:
+      containers:
+        - name: pgbouncer
+          image: edoburu/pgbouncer:1.21.0
+          ports: [{ containerPort: 6432, name: pgsql }]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/pgbouncer
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits:   { cpu: "500m", memory: "512Mi" }
+      volumes:
+        - name: config
+          configMap: { name: transcript-intel-pgbouncer-config }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgbouncer
+spec:
+  selector: { app: transcript-intel, role: pgbouncer }
+  ports: [{ port: 6432, targetPort: 6432, name: pgsql }]

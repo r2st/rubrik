@@ -97,12 +97,19 @@ ignore = [
 "src/repository.py" = ["PLC0415"]            # lazy config import to avoid circular
 "src/streaming.py" = ["PLC0415"]             # lazy `time` import inside function for clarity
 "run_analysis.py" = ["PLC0415"]              # lazy streaming-mode imports gated on --streaming flag
-"api/state.py" = ["PLW0603"]                 # singleton pattern uses global
+"api/state.py" = ["PLW0603", "PLC0415"]      # singleton + lazy snapshot/runtime imports
 "api/observability.py" = ["PLC0415"]         # lazy imports gated on settings
 "api/middleware.py" = ["PLC0415"]            # local state import avoids circular
 "api/admin/auth.py" = ["PLC0415", "PLR0911"] # lazy imports + multi-branch verify_password
 "api/admin/routes.py" = ["PLC0415"]          # lazy auth import
 "api/main.py" = ["PLC0415"]                  # lazy router import
+"api/backpressure.py" = ["PLW0603", "SLF001"]   # singleton handle for /api/ready
+"api/snapshot.py" = ["PLC0415"]              # lazy fsspec import (optional dep)
+"api/snapshot_writer.py" = ["PLC0415"]       # lazy runtime_settings import
+"api/limiter.py" = ["PLC0415"]               # lazy redis probe
+"api/jobs.py" = ["PLC0415"]                  # lazy arq + settings imports
+"api/circuit_breaker.py" = []
+"api/routes.py" = ["PLC0415"]                # lazy db + state imports in /api/ready
 "validate.py" = ["PLC0415", "B007"]          # local import avoids circularity
 
 [tool.ruff.format]

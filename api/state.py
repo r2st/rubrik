@@ -47,10 +47,13 @@ class PipelineState:
 _state: PipelineState | None = None
 _lock = threading.Lock()
 _refresh_task: asyncio.Task | None = None
+_snapshot_poll_task: asyncio.Task | None = None
 _consecutive_refresh_failures: int = 0
 _refresh_interval_minutes: int = 0
 # Active repository — resolved lazily so tests can override before first use.
 _repository: TranscriptRepository | None = None
+# Last manifest checksum we loaded — drives snapshot-poll reload decisions.
+_loaded_snapshot_checksum: str | None = None
 
 
 def set_repository(repo: TranscriptRepository | None) -> None:
@@ -77,6 +80,101 @@ def reload() -> PipelineState:
     with _lock:
         _state = _build()
     return _state
+
+
+def is_warm() -> bool:
+    """True iff a usable PipelineState is loaded (for the readiness probe)."""
+    return _state is not None
+
+
+def _try_load_snapshot() -> PipelineState | None:
+    """Try to satisfy the build from a shared snapshot — cold-start fix.
+
+    Returns None if no snapshot is configured, the manifest is missing, or
+    the payload fails verification. Caller falls back to building from the
+    repository.
+    """
+    global _loaded_snapshot_checksum
+    try:
+        from src.runtime_settings import get_runtime
+        url = get_runtime().get("snapshot.url", "")
+    except Exception:  # noqa: BLE001
+        url = ""
+    if not url:
+        return None
+    from . import snapshot as snap
+    manifest = snap.read_manifest(url)
+    if manifest is None:
+        return None
+    payload = snap.read_snapshot(url)
+    if payload is None:
+        return None
+    if not isinstance(payload, PipelineState):
+        log.warning("Snapshot is not a PipelineState — falling back to build")
+        return None
+    payload.built_at_monotonic = time.monotonic()
+    _loaded_snapshot_checksum = manifest.get("checksum")
+    log.info("Loaded pipeline state from snapshot (checksum=%s…, n_meetings=%d)",
+             (manifest.get("checksum") or "")[:12], manifest.get("n_meetings", 0))
+    return payload
+
+
+async def start_snapshot_poll(interval_seconds: int = 30) -> None:
+    """Watch the snapshot manifest for checksum changes; reload when it bumps.
+
+    No-op if ``snapshot.url`` is unset or the task is already running. The
+    poll cadence defaults to 30s — short enough that operators see refreshes
+    promptly, long enough to keep S3 GET cost negligible.
+    """
+    global _snapshot_poll_task
+    if _snapshot_poll_task is not None:
+        return
+    try:
+        from src.runtime_settings import get_runtime
+        url = get_runtime().get("snapshot.url", "")
+    except Exception:  # noqa: BLE001
+        url = ""
+    if not url:
+        return
+
+    async def _loop() -> None:
+        global _state, _loaded_snapshot_checksum
+        from . import snapshot as snap
+        log.info("Snapshot poll starting (url=%s, every %ds)", url, interval_seconds)
+        try:
+            while True:
+                await asyncio.sleep(interval_seconds)
+                try:
+                    manifest = await asyncio.to_thread(snap.read_manifest, url)
+                    if manifest is None:
+                        continue
+                    if manifest.get("checksum") == _loaded_snapshot_checksum:
+                        continue
+                    payload = await asyncio.to_thread(snap.read_snapshot, url)
+                    if isinstance(payload, PipelineState):
+                        payload.built_at_monotonic = time.monotonic()
+                        with _lock:
+                            _state = payload
+                        _loaded_snapshot_checksum = manifest.get("checksum")
+                        log.info("Snapshot reloaded (checksum=%s…)",
+                                 (_loaded_snapshot_checksum or "")[:12])
+                except Exception:  # noqa: BLE001
+                    log.exception("Snapshot poll iteration failed; will retry")
+        except asyncio.CancelledError:
+            log.info("Snapshot poll cancelled")
+            raise
+
+    _snapshot_poll_task = asyncio.create_task(_loop(), name="snapshot-poll")
+
+
+async def stop_snapshot_poll() -> None:
+    global _snapshot_poll_task
+    if _snapshot_poll_task is None:
+        return
+    _snapshot_poll_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await _snapshot_poll_task
+    _snapshot_poll_task = None
 
 
 async def start_refresh_task(interval_minutes: int) -> None:
@@ -122,6 +220,12 @@ async def stop_refresh_task() -> None:
 
 
 def _build() -> PipelineState:
+    # Cold-start fix: try the shared snapshot first. Replicas read instead of
+    # rebuilding; a singleton CronJob writes (see api/snapshot_writer.py).
+    snap_state = _try_load_snapshot()
+    if snap_state is not None:
+        return snap_state
+
     log.info("Building pipeline state…")
     repo = _repository if _repository is not None else default_repository()
     raw = repo.all()
