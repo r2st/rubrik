@@ -195,3 +195,14 @@
   .setting-row { grid-template-columns: 1fr; gap: 8px; }
   .setting-meta { text-align: left; }
 }
+
+/* Secret inputs — masked placeholder shows what's stored. Type to rotate;
+   leaving blank keeps the existing value (the raw key never round-trips). */
+.setting-input input[type="password"] {
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  letter-spacing: 0.5px;
+}
+.setting-input input[type="password"]::placeholder {
+  color: #6b7280;
+  font-style: italic;
+}

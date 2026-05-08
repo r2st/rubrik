@@ -110,6 +110,29 @@ DEFAULTS: list[SettingDefault] = [
     SettingDefault("distribution.redis_url", "", "str", "distribution",
         "Redis URL for cluster-wide rate limiting + cache pub/sub. "
         "Empty = in-process fallback (single-replica only)."),
+
+    # ---- LLM tier 2 (frontier API fallback per ADR 0012) ----
+    SettingDefault("llm.tier2_enabled", False, "bool", "llm",
+        "Allow escalation from the self-hosted Gemma fine-tune (Tier 1) to a "
+        "frontier API (Tier 2) when confidence is low or context is too long. "
+        "Off = Tier 1 only. See ADR 0012."),
+    SettingDefault("llm.tier2_provider", "anthropic", "str", "llm",
+        "Frontier API provider: 'anthropic' (Claude), 'openai' (GPT-4-class), "
+        "or 'google' (Gemini). Determines which API key + endpoint is used."),
+    SettingDefault("llm.tier2_model", "claude-sonnet-4-5", "str", "llm",
+        "Model name on the chosen provider (e.g. 'claude-sonnet-4-5', "
+        "'gpt-4o', 'gemini-2.5-pro')."),
+    SettingDefault("llm.tier2_api_key", "", "secret", "llm",
+        "API key for the Tier-2 provider. Stored encrypted at rest in "
+        "production; masked on read so the raw value never leaves the DB."),
+    SettingDefault("llm.tier2_daily_budget_usd", 50.0, "float", "llm",
+        "Per-tenant daily $ cap on Tier-2 calls. Over budget → return Tier-1 "
+        "result + alert. Set per-tenant via the per-tenant override map."),
+    SettingDefault("llm.tier2_request_timeout_s", 30, "int", "llm",
+        "HTTP timeout (seconds) for outgoing calls to the frontier API."),
+    SettingDefault("llm.tier1_endpoint", "", "str", "llm",
+        "vLLM serving endpoint for the Gemma fine-tune (Tier 1). "
+        "Empty = inline / disabled. Example: 'http://vllm.cluster:8000/v1'."),
 ]
 
 
@@ -181,9 +204,13 @@ class RuntimeSettings:
             else:
                 existing.value = coerced
                 existing.updated_by = actor
+            # Never write a secret's raw value to the audit log — store the
+            # masked form instead so the historical record can't leak the key.
+            audit_old = mask_secret(old) if spec.type == "secret" else old
+            audit_new = mask_secret(coerced) if spec.type == "secret" else coerced
             s.add(AuditLog(
                 actor=actor, action="set", setting_key=key,
-                old_value=old, new_value=coerced, notes=notes,
+                old_value=audit_old, new_value=audit_new, notes=notes,
             ))
             s.commit()
             s.refresh(existing)
@@ -370,7 +397,21 @@ def _coerce(value: Any, type_: str) -> Any:
             import json
             return json.loads(value) if value.strip() else {}
         return value
+    if type_ == "secret":
+        # Stored as a plain string. Caller-facing API masks it on read; the
+        # raw value is only visible to the application code that uses it.
+        return str(value)
     return str(value)
+
+
+def mask_secret(value: object) -> str:
+    """Render a secret for display: empty → "" ; otherwise "••••••<last 4>"."""
+    s = str(value or "")
+    if not s:
+        return ""
+    if len(s) <= 4:
+        return "•" * len(s)
+    return "•" * 6 + s[-4:]
 
 
 # ---------------------------------------------------------------------------

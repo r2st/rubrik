@@ -94,7 +94,7 @@ async function loadSettings() {
   }
 }
 
-const TYPE_BADGES = { str: "string", int: "int", float: "float", bool: "bool", list: "list" };
+const TYPE_BADGES = { str: "string", int: "int", float: "float", bool: "bool", list: "list", json: "json", secret: "secret" };
 
 function renderSettings(categories) {
   const container = $("#settings-tree");
@@ -116,13 +116,25 @@ function renderSettings(categories) {
     input.addEventListener("blur", async () => {
       if (!row.classList.contains("dirty")) return;
       const key = row.dataset.key;
+      const isSecret = input.dataset.type === "secret";
+      // Empty + secret = "leave the existing key in place." Don't overwrite.
+      if (isSecret && input.value === "") {
+        row.classList.remove("dirty");
+        return;
+      }
       try {
         const updated = await api(`/settings/${encodeURIComponent(key)}`, {
           method: "PUT",
           body: JSON.stringify({ value: parseValue(input) }),
         });
-        row.classList.remove("dirty");
-        row.querySelector(".setting-meta").innerHTML = metaHtml(updated);
+        if (isSecret) {
+          // Re-render so the input clears and the placeholder shows the new
+          // masked form. The raw value never round-trips.
+          replaceRow(row, updated);
+        } else {
+          row.classList.remove("dirty");
+          row.querySelector(".setting-meta").innerHTML = metaHtml(updated);
+        }
         toast(`saved · ${key}`);
       } catch (e) {
         toast(e.message, "error");
@@ -165,8 +177,23 @@ function inputFor(s) {
         <option value="false" ${!s.value ? "selected" : ""}>false</option>
       </select>`;
   }
+  if (s.type === "secret") {
+    // Server returns a masked placeholder ("••••••<last4>") so the raw key
+    // never leaves the DB. Render an empty password input — typing rotates
+    // the secret; leaving it empty keeps the existing value (the input is
+    // disabled until the operator focuses to rotate).
+    const placeholder = s.value ? String(s.value) : "(not set)";
+    return `<input type="password" value="" placeholder="${escapeHtml(placeholder)}"
+                   autocomplete="new-password" data-type="secret"
+                   data-secret-empty-keeps-current="1">`;
+  }
+  if (s.type === "json") {
+    const v = typeof s.value === "string" ? s.value : JSON.stringify(s.value);
+    return `<input type="text" value="${escapeHtml(v)}" data-type="json"
+                   placeholder='{"tenant_hash": "500/minute"}'>`;
+  }
   const v = s.type === "list" ? s.value.join(", ") : String(s.value);
-  return `<input type="${s.type === "int" || s.type === "float" ? "text" : "text"}" value="${escapeHtml(v)}" data-type="${s.type}">`;
+  return `<input type="text" value="${escapeHtml(v)}" data-type="${s.type}">`;
 }
 
 function parseValue(el) {

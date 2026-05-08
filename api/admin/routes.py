@@ -161,6 +161,21 @@ def change_password(
 # ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
+def _to_setting_out(s) -> SettingOut:
+    """Serialize a Setting row, masking the value when type is 'secret'.
+
+    The raw secret never leaves the DB — operators see only "••••••<last 4>".
+    To rotate, the UI sends a new full value via PUT; reading the value back
+    always returns the masked form.
+    """
+    from src.runtime_settings import mask_secret
+    value = mask_secret(s.value) if s.type == "secret" else s.value
+    return SettingOut(
+        key=s.key, value=value, type=s.type, category=s.category,
+        description=s.description, updated_at=s.updated_at, updated_by=s.updated_by,
+    )
+
+
 @router.get("/settings", response_model=list[SettingsByCategory])
 def list_settings(actor: str = Depends(require_admin)) -> list[SettingsByCategory]:
     grouped = get_runtime().by_category()
@@ -168,14 +183,7 @@ def list_settings(actor: str = Depends(require_admin)) -> list[SettingsByCategor
     for category in sorted(grouped):
         if category.startswith("_"):  # internal — hide from UI
             continue
-        items = [
-            SettingOut(
-                key=s.key, value=s.value, type=s.type,
-                category=s.category, description=s.description,
-                updated_at=s.updated_at, updated_by=s.updated_by,
-            )
-            for s in grouped[category]
-        ]
+        items = [_to_setting_out(s) for s in grouped[category]]
         out.append(SettingsByCategory(category=category, settings=items))
     return out
 
@@ -186,11 +194,7 @@ def get_setting(key: str, actor: str = Depends(require_admin)) -> SettingOut:
     matches = [s for s in rs.all() if s.key == key]
     if not matches:
         raise HTTPException(404, f"Setting {key!r} not found")
-    s = matches[0]
-    return SettingOut(
-        key=s.key, value=s.value, type=s.type, category=s.category,
-        description=s.description, updated_at=s.updated_at, updated_by=s.updated_by,
-    )
+    return _to_setting_out(matches[0])
 
 
 @router.put("/settings/{key}", response_model=SettingOut)
@@ -204,10 +208,7 @@ def update_setting(
         raise HTTPException(404, str(e)) from None
     except (TypeError, ValueError) as e:
         raise HTTPException(400, f"Invalid value: {e}") from None
-    return SettingOut(
-        key=s.key, value=s.value, type=s.type, category=s.category,
-        description=s.description, updated_at=s.updated_at, updated_by=s.updated_by,
-    )
+    return _to_setting_out(s)
 
 
 @router.post("/settings/{key}/reset", response_model=SettingOut)
@@ -216,10 +217,7 @@ def reset_setting(key: str, actor: str = Depends(require_admin)) -> SettingOut:
         s = get_runtime().reset(key, actor=actor)
     except KeyError as e:
         raise HTTPException(404, str(e)) from None
-    return SettingOut(
-        key=s.key, value=s.value, type=s.type, category=s.category,
-        description=s.description, updated_at=s.updated_at, updated_by=s.updated_by,
-    )
+    return _to_setting_out(s)
 
 
 # ---------------------------------------------------------------------------
