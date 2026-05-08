@@ -36,11 +36,38 @@ The codebase reflects that:
 |---|---|---|
 | Pipeline correctness | Any volume | Component-by-component scaling envelopes below |
 | In-memory pandas analysis | ≤ ~100k records | Switch to streaming + repository pattern → ADR 0008 |
-| FastAPI service | Stateless, horizontal scale | Replicate behind LB; cache via Redis |
-| Gemma 4 fine-tune | QLoRA recipe validated end-to-end | Multi-node Ray Train + autoscaled vLLM → ADR 0010 |
-| Admin panel + runtime config | Same operational surface at any scale | Scales as the API scales |
+| FastAPI service | Stateless, horizontal scale | Replicate behind LB; cache via Redis (ADR 0014) |
+| **LLM tier 1 — self-hosted Gemma 4** (QLoRA fine-tune) | Bulk summarization + action-item extraction; ~150 ms per call | Multi-node Ray Train + autoscaled vLLM with multi-tenant LoRA hot-swap → ADR 0010 |
+| **LLM tier 2 — frontier API** (Claude / GPT-4 / Gemini) | ~5% of traffic: out-of-distribution, long-context, world-knowledge, high-stakes | Per-tenant cap + budget gateway; admin-tunable via the `llm.tier2_*` runtime settings → ADR 0012 |
+| Admin panel + runtime config | Same operational surface at any scale | Scales as the API scales; runs as a separate process on its own port (ADR 0014) |
+| Event backbone + outbox | Decouples writes from fan-out; replayable | Kafka via Strimzi (`deploy/k8s/kafka.yaml`); outbox model → relayer → topic (ADR 0014) |
 
 Wherever a design decision depends on scale, the doc states the **scale envelope** explicitly (e.g., "TF-IDF + KMeans is sound up to ~1M docs in-memory; switch to streaming/minibatch above that").
+
+### LLM choice: why Gemma 4 over the open-model alternatives
+
+| Family | Sizes | License | Why we didn't pick it (vs Gemma 4) |
+|---|---|---|---|
+| **Gemma 4** (chosen) | E2B / E4B (effective compute) | Gemma Terms (commercial use OK; some restrictions) | — |
+| Llama 3.2 | 1B / 3B / 8B / 70B / 405B | Llama Community License (free up to 700 M MAU) | At our task profile (summarization + bulleted extraction) the small variants don't hit Gemma 4 E4B's quality on a single-H100 LoRA run; the larger variants don't fit our latency budget on a single L4 inference pod. |
+| Qwen 2.5 | 0.5B – 72B | Apache 2.0 (most sizes) | Strong, Apache-licensed, good ecosystem. Lost on **multimodal-ready** for our roadmap (video / screen-share processing). Comparable quality at 7B; we'd happily switch if Gemma's license becomes a blocker. |
+| Mistral 7B / Mixtral | 7B / 8×7B / 8×22B | Apache 2.0 | Mixtral's MoE is overkill for summarization; Mistral 7B is dense at the size where Gemma's E-series sparse-effective design wins on inference cost. |
+| Phi-3 (Microsoft) | 3.8B / 14B / mini-128k | MIT | Strong on reasoning benchmarks; weaker on long-form English summarization style match in our held-out eval. |
+| DeepSeek V2 / V3 | 16B-effective / 671B | DeepSeek License | Excellent reasoning; total VRAM needs (even with MoE) overshoot the single-H100 fine-tune budget, and the operator footprint is heavier than we want for the bulk path. |
+
+**Why Gemma 4 specifically:**
+1. **Sparse-effective compute (E-series).** E2B and E4B run at compute parity with their effective size while quality tracks the much larger dense models — right point on the cost-vs-quality curve for self-hosting.
+2. **Native multimodal.** E4B accepts image input. We don't use it today, but screen-share + slide-deck context is a likely roadmap item; switching families later costs more than buying the optionality up front.
+3. **Tooling maturity.** First-class support in `unsloth` (the QLoRA pipeline we use), `vLLM` (the serving stack ADR 0010 commits to), Hugging Face's `transformers`, and PEFT. Not all alternatives ship that combination cleanly today.
+4. **Memory profile.** QLoRA on E4B fits comfortably on a single H100 (we measured: ~28 min, ~$1.40 wall-clock for the recipe-validation run). Llama 70B doesn't; Qwen 32B is borderline.
+5. **Style transfer worked.** v3 hit ROUGE-L 0.394 (+38% over the untuned E4B baseline of 0.286) and held-out outputs visibly matched reference voice. The recipe transfers.
+
+**Honest tradeoffs:**
+- Gemma's license is **more restrictive than Apache 2.0** (e.g., Qwen, Mistral). Tolerable for our use; documented as a "When to revisit" trigger in ADR 0003.
+- Smaller community than Llama → fewer pre-trained domain adapters to start from.
+- Newer family → less battle-tested in production at our intended scale.
+
+If any of those tradeoffs flip, the swap is a one-file change in `gemma-finetune/code/finetune_v3.py` (`base_model` constant) and a re-run of the same training recipe — the rest of the pipeline is model-agnostic. Full comparison + four-iteration training results: [`docs/adr/0003-self-host-summarization-with-gemma-4.md`](docs/adr/0003-self-host-summarization-with-gemma-4.md).
 
 ## What this does
 

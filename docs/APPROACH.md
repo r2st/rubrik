@@ -107,6 +107,29 @@ Four iterations, recommended adapter is **v3-e4b-allrec**. Full methodology in [
 
 **Adopt the v3 Gemma 4 adapter for production summarization.** The economics are compelling — $0 per inference, fully self-hosted, output style locked in. Vendor APIs are reasonable as a stopgap during early onboarding when speed-to-market beats lock-in concerns, but the long-term answer is the self-hosted model.
 
+### Why Gemma 4 specifically (vs other open models)
+
+Within the self-host lane, the open-model field is crowded. The shortlist:
+
+| Family | Considered sizes | License | Why we didn't pick it (vs Gemma 4) |
+|---|---|---|---|
+| **Gemma 4** ★ | E2B / **E4B** | Gemma Terms (commercial OK with notice) | — picked |
+| Llama 3.2 | 1B, 3B, 8B, 70B+ | Llama Community (free ≤ 700 M MAU) | Small variants underperform Gemma 4 E4B on summary-style match; large variants miss our latency / single-pod inference budget |
+| Qwen 2.5 | 0.5B–72B | Apache 2.0 (most sizes) | Comparable at 7B + better license. Lost on **multimodal-ready** for the roadmap (video / screen-share). Strong fallback. |
+| Mistral / Mixtral | 7B / 8×7B / 8×22B | Apache 2.0 | Mixtral's MoE is overkill for narrow-domain summarization; Mistral 7B is dense at the size where Gemma E4B's sparse-effective design wins on inference cost |
+| Phi-3 | 3.8B / 14B | MIT | Strong on reasoning benchmarks; weaker on long-form English summarization style match in our held-out eval |
+| DeepSeek V2 / V3 | 16B-effective / 671B | DeepSeek License | Excellent reasoning; total VRAM (even with MoE) overshoots the single-H100 fine-tune budget. The Tier-2 cascade in ADR 0012 is where DeepSeek-class reasoning belongs |
+
+**The five reasons for Gemma 4:**
+
+1. **Sparse-effective compute (E-series)** — E2B / E4B run at compute parity with their effective size while quality tracks much larger dense models. Right point on the cost/quality curve.
+2. **Native multimodal** — E4B accepts image input. Cheap optionality for a likely roadmap (slides, screen-shares).
+3. **Tooling maturity** — first-class support in `unsloth` (our QLoRA pipeline), `vLLM` (the serving stack ADR 0010 commits to), `transformers`, PEFT.
+4. **Memory profile** — QLoRA on E4B fits a single H100 (~28 min, ~$1.40 wall-clock for recipe validation). Llama 70B doesn't; Qwen 32B is borderline.
+5. **Style transfer worked** — v3 hit ROUGE-L 0.394 (+38% over the baseline E4B's 0.286), with held-out outputs visibly matched to the reference voice.
+
+**Honest tradeoffs:** Gemma's license is more restrictive than Apache 2.0 (Llama, Qwen, Mistral), the community is smaller than Llama's, and the family is newer / less battle-tested at scale. If any of those becomes a blocker, the swap is a one-file change in `gemma-finetune/code/finetune_v3.py` (`base_model` constant) and a re-run of the same recipe; the rest of the pipeline is model-agnostic. Documented "When to revisit" triggers in [ADR 0003](adr/0003-self-host-summarization-with-gemma-4.md).
+
 ### Scaling the recipe
 
 A single-node QLoRA run validated the recipe; production scales to multi-node training (Ray Train + FSDP) and an autoscaled vLLM serving fleet without changing the trainer logic — only the orchestration wrapper. Active learning closes the loop: production traffic generates the next training set automatically.

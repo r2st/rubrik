@@ -643,6 +643,65 @@ footer code {
 </table>
 <h3 id="verdict_1">Verdict<a class="anchor" href="#verdict_1" title="Permanent link">¶</a></h3>
 <p><strong>Adopt the v3 Gemma 4 adapter for production summarization.</strong> The economics are compelling — $0 per inference, fully self-hosted, output style locked in. Vendor APIs are reasonable as a stopgap during early onboarding when speed-to-market beats lock-in concerns, but the long-term answer is the self-hosted model.</p>
+<h3 id="why-gemma-4-specifically-vs-other-open-models">Why Gemma 4 specifically (vs other open models)<a class="anchor" href="#why-gemma-4-specifically-vs-other-open-models" title="Permanent link">¶</a></h3>
+<p>Within the self-host lane, the open-model field is crowded. The shortlist:</p>
+<table>
+<thead>
+<tr>
+<th>Family</th>
+<th>Considered sizes</th>
+<th>License</th>
+<th>Why we didn't pick it (vs Gemma 4)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Gemma 4</strong> ★</td>
+<td>E2B / <strong>E4B</strong></td>
+<td>Gemma Terms (commercial OK with notice)</td>
+<td>— picked</td>
+</tr>
+<tr>
+<td>Llama 3.2</td>
+<td>1B, 3B, 8B, 70B+</td>
+<td>Llama Community (free ≤ 700 M MAU)</td>
+<td>Small variants underperform Gemma 4 E4B on summary-style match; large variants miss our latency / single-pod inference budget</td>
+</tr>
+<tr>
+<td>Qwen 2.5</td>
+<td>0.5B–72B</td>
+<td>Apache 2.0 (most sizes)</td>
+<td>Comparable at 7B + better license. Lost on <strong>multimodal-ready</strong> for the roadmap (video / screen-share). Strong fallback.</td>
+</tr>
+<tr>
+<td>Mistral / Mixtral</td>
+<td>7B / 8×7B / 8×22B</td>
+<td>Apache 2.0</td>
+<td>Mixtral's MoE is overkill for narrow-domain summarization; Mistral 7B is dense at the size where Gemma E4B's sparse-effective design wins on inference cost</td>
+</tr>
+<tr>
+<td>Phi-3</td>
+<td>3.8B / 14B</td>
+<td>MIT</td>
+<td>Strong on reasoning benchmarks; weaker on long-form English summarization style match in our held-out eval</td>
+</tr>
+<tr>
+<td>DeepSeek V2 / V3</td>
+<td>16B-effective / 671B</td>
+<td>DeepSeek License</td>
+<td>Excellent reasoning; total VRAM (even with MoE) overshoots the single-H100 fine-tune budget. The Tier-2 cascade in ADR 0012 is where DeepSeek-class reasoning belongs</td>
+</tr>
+</tbody>
+</table>
+<p><strong>The five reasons for Gemma 4:</strong></p>
+<ol>
+<li><strong>Sparse-effective compute (E-series)</strong> — E2B / E4B run at compute parity with their effective size while quality tracks much larger dense models. Right point on the cost/quality curve.</li>
+<li><strong>Native multimodal</strong> — E4B accepts image input. Cheap optionality for a likely roadmap (slides, screen-shares).</li>
+<li><strong>Tooling maturity</strong> — first-class support in <code>unsloth</code> (our QLoRA pipeline), <code>vLLM</code> (the serving stack ADR 0010 commits to), <code>transformers</code>, PEFT.</li>
+<li><strong>Memory profile</strong> — QLoRA on E4B fits a single H100 (~28 min, ~$1.40 wall-clock for recipe validation). Llama 70B doesn't; Qwen 32B is borderline.</li>
+<li><strong>Style transfer worked</strong> — v3 hit ROUGE-L 0.394 (+38% over the baseline E4B's 0.286), with held-out outputs visibly matched to the reference voice.</li>
+</ol>
+<p><strong>Honest tradeoffs:</strong> Gemma's license is more restrictive than Apache 2.0 (Llama, Qwen, Mistral), the community is smaller than Llama's, and the family is newer / less battle-tested at scale. If any of those becomes a blocker, the swap is a one-file change in <code>gemma-finetune/code/finetune_v3.py</code> (<code>base_model</code> constant) and a re-run of the same recipe; the rest of the pipeline is model-agnostic. Documented "When to revisit" triggers in <a href="adr/0003-self-host-summarization-with-gemma-4.md">ADR 0003</a>.</p>
 <h3 id="scaling-the-recipe">Scaling the recipe<a class="anchor" href="#scaling-the-recipe" title="Permanent link">¶</a></h3>
 <p>A single-node QLoRA run validated the recipe; production scales to multi-node training (Ray Train + FSDP) and an autoscaled vLLM serving fleet without changing the trainer logic — only the orchestration wrapper. Active learning closes the loop: production traffic generates the next training set automatically.</p>
 <div class="mermaid">flowchart LR
@@ -826,7 +885,7 @@ footer code {
   Generated from <code>docs/APPROACH.md</code>
 </footer>
 </main>
-<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#executive-summary" class="h2">Executive summary</a></li><li><a href="#1-categorization" class="h2">1. Categorization</a></li><li><a href="#comparison" class="h3">Comparison</a></li><li><a href="#why-each-shipped-or-didnt" class="h3">Why each shipped (or didn't)</a></li><li><a href="#verdict" class="h3">Verdict</a></li><li><a href="#scale-envelope" class="h3">Scale envelope</a></li><li><a href="#2-summarization-action-items" class="h2">2. Summarization &amp; action items</a></li><li><a href="#comparison_1" class="h3">Comparison</a></li><li><a href="#training-results" class="h3">Training results</a></li><li><a href="#implementation-lessons-worth-knowing-if-you-replicate" class="h3">Implementation lessons (worth knowing if you replicate)</a></li><li><a href="#verdict_1" class="h3">Verdict</a></li><li><a href="#scaling-the-recipe" class="h3">Scaling the recipe</a></li><li><a href="#3-sentiment-analysis" class="h2">3. Sentiment analysis</a></li><li><a href="#what-the-per-sentence-layer-adds" class="h3">What the per-sentence layer adds</a></li><li><a href="#why-not-derive-sentiment-with-a-model" class="h3">Why not derive sentiment with a model</a></li><li><a href="#verdict_2" class="h3">Verdict</a></li><li><a href="#4-customer-churn-risk-score" class="h2">4. Customer churn risk score</a></li><li><a href="#why-these-weights" class="h3">Why these weights</a></li><li><a href="#why-these-thresholds" class="h3">Why these thresholds</a></li><li><a href="#verdict_3" class="h3">Verdict</a></li><li><a href="#cross-cutting-principles" class="h2">Cross-cutting principles</a></li><li><a href="#when-to-revisit-each-verdict" class="h2">When to revisit each verdict</a></li><li><a href="#what-we-deliberately-did-not-do" class="h2">What we deliberately did not do</a></li></ul></aside>
+<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#executive-summary" class="h2">Executive summary</a></li><li><a href="#1-categorization" class="h2">1. Categorization</a></li><li><a href="#comparison" class="h3">Comparison</a></li><li><a href="#why-each-shipped-or-didnt" class="h3">Why each shipped (or didn't)</a></li><li><a href="#verdict" class="h3">Verdict</a></li><li><a href="#scale-envelope" class="h3">Scale envelope</a></li><li><a href="#2-summarization-action-items" class="h2">2. Summarization &amp; action items</a></li><li><a href="#comparison_1" class="h3">Comparison</a></li><li><a href="#training-results" class="h3">Training results</a></li><li><a href="#implementation-lessons-worth-knowing-if-you-replicate" class="h3">Implementation lessons (worth knowing if you replicate)</a></li><li><a href="#verdict_1" class="h3">Verdict</a></li><li><a href="#why-gemma-4-specifically-vs-other-open-models" class="h3">Why Gemma 4 specifically (vs other open models)</a></li><li><a href="#scaling-the-recipe" class="h3">Scaling the recipe</a></li><li><a href="#3-sentiment-analysis" class="h2">3. Sentiment analysis</a></li><li><a href="#what-the-per-sentence-layer-adds" class="h3">What the per-sentence layer adds</a></li><li><a href="#why-not-derive-sentiment-with-a-model" class="h3">Why not derive sentiment with a model</a></li><li><a href="#verdict_2" class="h3">Verdict</a></li><li><a href="#4-customer-churn-risk-score" class="h2">4. Customer churn risk score</a></li><li><a href="#why-these-weights" class="h3">Why these weights</a></li><li><a href="#why-these-thresholds" class="h3">Why these thresholds</a></li><li><a href="#verdict_3" class="h3">Verdict</a></li><li><a href="#cross-cutting-principles" class="h2">Cross-cutting principles</a></li><li><a href="#when-to-revisit-each-verdict" class="h2">When to revisit each verdict</a></li><li><a href="#what-we-deliberately-did-not-do" class="h2">What we deliberately did not do</a></li></ul></aside>
 </div>
 <script
   src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"

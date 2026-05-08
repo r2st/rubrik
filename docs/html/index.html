@@ -384,21 +384,91 @@ footer code {
 <tr>
 <td>FastAPI service</td>
 <td>Stateless, horizontal scale</td>
-<td>Replicate behind LB; cache via Redis</td>
+<td>Replicate behind LB; cache via Redis (ADR 0014)</td>
 </tr>
 <tr>
-<td>Gemma 4 fine-tune</td>
-<td>QLoRA recipe validated end-to-end</td>
-<td>Multi-node Ray Train + autoscaled vLLM → ADR 0010</td>
+<td><strong>LLM tier 1 — self-hosted Gemma 4</strong> (QLoRA fine-tune)</td>
+<td>Bulk summarization + action-item extraction; ~150 ms per call</td>
+<td>Multi-node Ray Train + autoscaled vLLM with multi-tenant LoRA hot-swap → ADR 0010</td>
+</tr>
+<tr>
+<td><strong>LLM tier 2 — frontier API</strong> (Claude / GPT-4 / Gemini)</td>
+<td>~5% of traffic: out-of-distribution, long-context, world-knowledge, high-stakes</td>
+<td>Per-tenant cap + budget gateway; admin-tunable via the <code>llm.tier2_*</code> runtime settings → ADR 0012</td>
 </tr>
 <tr>
 <td>Admin panel + runtime config</td>
 <td>Same operational surface at any scale</td>
-<td>Scales as the API scales</td>
+<td>Scales as the API scales; runs as a separate process on its own port (ADR 0014)</td>
+</tr>
+<tr>
+<td>Event backbone + outbox</td>
+<td>Decouples writes from fan-out; replayable</td>
+<td>Kafka via Strimzi (<code>deploy/k8s/kafka.yaml</code>); outbox model → relayer → topic (ADR 0014)</td>
 </tr>
 </tbody>
 </table>
 <p>Wherever a design decision depends on scale, the doc states the <strong>scale envelope</strong> explicitly (e.g., "TF-IDF + KMeans is sound up to ~1M docs in-memory; switch to streaming/minibatch above that").</p>
+<h3 id="llm-choice-why-gemma-4-over-the-open-model-alternatives">LLM choice: why Gemma 4 over the open-model alternatives<a class="anchor" href="#llm-choice-why-gemma-4-over-the-open-model-alternatives" title="Permanent link">¶</a></h3>
+<table>
+<thead>
+<tr>
+<th>Family</th>
+<th>Sizes</th>
+<th>License</th>
+<th>Why we didn't pick it (vs Gemma 4)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Gemma 4</strong> (chosen)</td>
+<td>E2B / E4B (effective compute)</td>
+<td>Gemma Terms (commercial use OK; some restrictions)</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Llama 3.2</td>
+<td>1B / 3B / 8B / 70B / 405B</td>
+<td>Llama Community License (free up to 700 M MAU)</td>
+<td>At our task profile (summarization + bulleted extraction) the small variants don't hit Gemma 4 E4B's quality on a single-H100 LoRA run; the larger variants don't fit our latency budget on a single L4 inference pod.</td>
+</tr>
+<tr>
+<td>Qwen 2.5</td>
+<td>0.5B – 72B</td>
+<td>Apache 2.0 (most sizes)</td>
+<td>Strong, Apache-licensed, good ecosystem. Lost on <strong>multimodal-ready</strong> for our roadmap (video / screen-share processing). Comparable quality at 7B; we'd happily switch if Gemma's license becomes a blocker.</td>
+</tr>
+<tr>
+<td>Mistral 7B / Mixtral</td>
+<td>7B / 8×7B / 8×22B</td>
+<td>Apache 2.0</td>
+<td>Mixtral's MoE is overkill for summarization; Mistral 7B is dense at the size where Gemma's E-series sparse-effective design wins on inference cost.</td>
+</tr>
+<tr>
+<td>Phi-3 (Microsoft)</td>
+<td>3.8B / 14B / mini-128k</td>
+<td>MIT</td>
+<td>Strong on reasoning benchmarks; weaker on long-form English summarization style match in our held-out eval.</td>
+</tr>
+<tr>
+<td>DeepSeek V2 / V3</td>
+<td>16B-effective / 671B</td>
+<td>DeepSeek License</td>
+<td>Excellent reasoning; total VRAM needs (even with MoE) overshoot the single-H100 fine-tune budget, and the operator footprint is heavier than we want for the bulk path.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Why Gemma 4 specifically:</strong>
+1. <strong>Sparse-effective compute (E-series).</strong> E2B and E4B run at compute parity with their effective size while quality tracks the much larger dense models — right point on the cost-vs-quality curve for self-hosting.
+2. <strong>Native multimodal.</strong> E4B accepts image input. We don't use it today, but screen-share + slide-deck context is a likely roadmap item; switching families later costs more than buying the optionality up front.
+3. <strong>Tooling maturity.</strong> First-class support in <code>unsloth</code> (the QLoRA pipeline we use), <code>vLLM</code> (the serving stack ADR 0010 commits to), Hugging Face's <code>transformers</code>, and PEFT. Not all alternatives ship that combination cleanly today.
+4. <strong>Memory profile.</strong> QLoRA on E4B fits comfortably on a single H100 (we measured: ~28 min, ~$1.40 wall-clock for the recipe-validation run). Llama 70B doesn't; Qwen 32B is borderline.
+5. <strong>Style transfer worked.</strong> v3 hit ROUGE-L 0.394 (+38% over the untuned E4B baseline of 0.286) and held-out outputs visibly matched reference voice. The recipe transfers.</p>
+<p><strong>Honest tradeoffs:</strong>
+- Gemma's license is <strong>more restrictive than Apache 2.0</strong> (e.g., Qwen, Mistral). Tolerable for our use; documented as a "When to revisit" trigger in ADR 0003.
+- Smaller community than Llama → fewer pre-trained domain adapters to start from.
+- Newer family → less battle-tested in production at our intended scale.</p>
+<p>If any of those tradeoffs flip, the swap is a one-file change in <code>gemma-finetune/code/finetune_v3.py</code> (<code>base_model</code> constant) and a re-run of the same training recipe — the rest of the pipeline is model-agnostic. Full comparison + four-iteration training results: <a href="docs/adr/0003-self-host-summarization-with-gemma-4.md"><code>docs/adr/0003-self-host-summarization-with-gemma-4.md</code></a>.</p>
 <h2 id="what-this-does">What this does<a class="anchor" href="#what-this-does" title="Permanent link">¶</a></h2>
 <p>For a stream of B2B meeting transcripts (support cases, customer-facing calls, internal meetings) — designed to scale to millions / 100M+ — this system:</p>
 <ol>
@@ -1075,7 +1145,7 @@ make load-test         # 30s, 20 VUs, all endpoints — exits non-zero if error 
   Generated from <code>README.md</code>
 </footer>
 </main>
-<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#contents" class="h2">Contents</a></li><li><a href="#scope-an-auto-scalable-system" class="h2">Scope: an auto-scalable system</a></li><li><a href="#what-this-does" class="h2">What this does</a></li><li><a href="#illustrative-findings" class="h2">Illustrative findings</a></li><li><a href="#quick-start" class="h2">Quick start</a></li><li><a href="#production-volume-mode" class="h3">Production-volume mode</a></li><li><a href="#architecture" class="h2">Architecture</a></li><li><a href="#project-layout" class="h2">Project layout</a></li><li><a href="#testing-validation" class="h2">Testing &amp; validation</a></li><li><a href="#api-web-dashboard" class="h2">API &amp; web dashboard</a></li><li><a href="#why-fastapi-instead-of-streamlit" class="h3">Why FastAPI instead of Streamlit</a></li><li><a href="#run-all-services" class="h2">Run all services</a></li><li><a href="#container-alternative-docker-compose" class="h3">Container alternative (docker compose)</a></li><li><a href="#production-readiness" class="h2">Production readiness</a></li><li><a href="#security" class="h3">Security</a></li><li><a href="#performance-caching" class="h3">Performance &amp; caching</a></li><li><a href="#resilience" class="h3">Resilience</a></li><li><a href="#observability-opt-in" class="h3">Observability (opt-in)</a></li><li><a href="#engineering" class="h3">Engineering</a></li><li><a href="#configuration" class="h3">Configuration</a></li><li><a href="#admin-panel" class="h3">Admin panel</a></li><li><a href="#whats-deliberately-not-done" class="h3">What's deliberately not done</a></li><li><a href="#auto-scaling-at-production-volume" class="h2">Auto-scaling at production volume</a></li><li><a href="#edge-case-test-data" class="h2">Edge-case test data</a></li><li><a href="#documentation" class="h2">Documentation</a></li><li><a href="#load-testing" class="h3">Load testing</a></li><li><a href="#license" class="h2">License</a></li></ul></aside>
+<aside class="toc"><p class="toc-title">On this page</p><ul><li><a href="#contents" class="h2">Contents</a></li><li><a href="#scope-an-auto-scalable-system" class="h2">Scope: an auto-scalable system</a></li><li><a href="#llm-choice-why-gemma-4-over-the-open-model-alternatives" class="h3">LLM choice: why Gemma 4 over the open-model alternatives</a></li><li><a href="#what-this-does" class="h2">What this does</a></li><li><a href="#illustrative-findings" class="h2">Illustrative findings</a></li><li><a href="#quick-start" class="h2">Quick start</a></li><li><a href="#production-volume-mode" class="h3">Production-volume mode</a></li><li><a href="#architecture" class="h2">Architecture</a></li><li><a href="#project-layout" class="h2">Project layout</a></li><li><a href="#testing-validation" class="h2">Testing &amp; validation</a></li><li><a href="#api-web-dashboard" class="h2">API &amp; web dashboard</a></li><li><a href="#why-fastapi-instead-of-streamlit" class="h3">Why FastAPI instead of Streamlit</a></li><li><a href="#run-all-services" class="h2">Run all services</a></li><li><a href="#container-alternative-docker-compose" class="h3">Container alternative (docker compose)</a></li><li><a href="#production-readiness" class="h2">Production readiness</a></li><li><a href="#security" class="h3">Security</a></li><li><a href="#performance-caching" class="h3">Performance &amp; caching</a></li><li><a href="#resilience" class="h3">Resilience</a></li><li><a href="#observability-opt-in" class="h3">Observability (opt-in)</a></li><li><a href="#engineering" class="h3">Engineering</a></li><li><a href="#configuration" class="h3">Configuration</a></li><li><a href="#admin-panel" class="h3">Admin panel</a></li><li><a href="#whats-deliberately-not-done" class="h3">What's deliberately not done</a></li><li><a href="#auto-scaling-at-production-volume" class="h2">Auto-scaling at production volume</a></li><li><a href="#edge-case-test-data" class="h2">Edge-case test data</a></li><li><a href="#documentation" class="h2">Documentation</a></li><li><a href="#load-testing" class="h3">Load testing</a></li><li><a href="#license" class="h2">License</a></li></ul></aside>
 </div>
 <script
   src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"
