@@ -1,0 +1,97 @@
+# Gateway API — north-south ingress per ADR 0014 §"Edge & ingress".
+#
+# Why Gateway API rather than vanilla Ingress: standardized routing surface,
+# native traffic-split for canaries (the Argo Rollouts manifest binds to
+# this), per-route policy hooks, and provider-agnostic. Backed by an
+# Envoy-class proxy of the cluster operator's choice (Contour, Envoy
+# Gateway, GKE Gateway, or AWS Gateway API Controller).
+#
+# This file ships the *user-facing* Gateway + HTTPRoute resources. The
+# GatewayClass and the controller Deployment are provider-specific and
+# live in the cluster's platform repo.
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: transcript-intel-gateway
+  labels: { app: transcript-intel, role: ingress }
+spec:
+  gatewayClassName: envoy-gateway     # change per provider
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: transcript-intel-tls
+      allowedRoutes:
+        namespaces: { from: Same }
+    - name: http-redirect
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces: { from: Same }
+---
+# Force HTTP → HTTPS for the public hostname.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: transcript-intel-http-redirect
+spec:
+  parentRefs: [{ name: transcript-intel-gateway, sectionName: http-redirect }]
+  hostnames: [api.example.com]
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect: { scheme: https, statusCode: 301 }
+---
+# Main route — splits traffic between stable and canary services. Argo
+# Rollouts (deploy/k8s/argo-rollout.yaml) updates the backendRefs weights
+# during a release.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: transcript-intel-api
+spec:
+  parentRefs: [{ name: transcript-intel-gateway, sectionName: https }]
+  hostnames: [api.example.com]
+  rules:
+    # Public probes — bypass auth, never cached at the edge.
+    - matches:
+        - path: { type: PathPrefix, value: /api/live }
+        - path: { type: PathPrefix, value: /api/ready }
+        - path: { type: PathPrefix, value: /api/health }
+      backendRefs: [{ name: transcript-intel-api, port: 8000, weight: 100 }]
+
+    # Admin endpoints — bypass CDN, normal rate limit.
+    - matches:
+        - path: { type: PathPrefix, value: /api/v1/admin/ }
+      backendRefs: [{ name: transcript-intel-api, port: 8000, weight: 100 }]
+
+    # Public read API — cacheable at the CDN layer.
+    - matches:
+        - path: { type: PathPrefix, value: /api/v1/ }
+      filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              # Belt-and-braces — application also emits these.
+              - { name: Vary, value: "Accept-Encoding, X-API-Key" }
+      backendRefs:
+        - { name: transcript-intel-api,        port: 8000, weight: 95 }
+        - { name: transcript-intel-api-canary, port: 8000, weight:  5 }
+---
+# ReferenceGrant — explicit cross-namespace permission so the Gateway in
+# the ingress namespace can reach the API service in the workload namespace.
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: ingress-to-api
+spec:
+  from:
+    - { group: gateway.networking.k8s.io, kind: HTTPRoute, namespace: ingress }
+  to:
+    - { group: "", kind: Service, name: transcript-intel-api }
+    - { group: "", kind: Service, name: transcript-intel-api-canary }

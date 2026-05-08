@@ -187,7 +187,12 @@ def test_meetings_route_enforces_per_tenant_cap():
 # CDN-relevant headers — runbook claims these are emitted (#12)
 # ---------------------------------------------------------------------------
 def test_summary_emits_etag_and_cache_control_for_cdn():
-    """The CDN runbook depends on these headers. Regression-test them."""
+    """The CDN runbook depends on these headers. Regression-test them.
+
+    ADR 0014 §"Cache invalidation discipline" also requires the response
+    advertise stale-while-revalidate so the CDN can serve a stale payload
+    while it asynchronously revalidates against origin.
+    """
     from fastapi.testclient import TestClient
 
     from api.main import app
@@ -197,6 +202,9 @@ def test_summary_emits_etag_and_cache_control_for_cdn():
     assert r.headers.get("ETag")
     cc = r.headers.get("Cache-Control", "")
     assert "max-age" in cc, f"expected Cache-Control max-age, got {cc!r}"
+    assert "stale-while-revalidate" in cc, (
+        f"expected stale-while-revalidate, got {cc!r}"
+    )
 
 
 def test_admin_endpoint_does_not_emit_cacheable_headers():

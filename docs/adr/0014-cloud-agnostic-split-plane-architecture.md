@@ -82,14 +82,14 @@ For each component the research recommends: what's already shipped in this codeb
 
 | Plane | Component | Status in this repo |
 |---|---|---|
-| Edge | CDN + Gateway API + Envoy | **Manifest:** `deploy/cdn-runbook.md` (CloudFront/Fastly config + validation script). Ingress lives in the parent platform; this repo's `deploy/k8s/deployment.yaml` exposes the readiness probes the gateway integrates with. |
-| Edge | Three-layer rate limiting (tenant quota + concurrency + adaptive) | **Tenant + concurrency** done: per-tenant slowapi key (`api/limiter.py`), `BackpressureMiddleware`, strict admin login limiter. **Adaptive throttling on downstream-latency** is the residual gap — circuit breakers (`api/circuit_breaker.py`) cover the binary up/down case but not graduated SLO-driven shedding. |
+| Edge | CDN + Gateway API + Envoy | **Shipped:** `deploy/k8s/gateway.yaml` (Gateway + HTTPRoute + ReferenceGrant — splits stable/canary traffic, enforces HTTP→HTTPS redirect, isolates probe + admin paths from CDN caching) and `deploy/cdn-runbook.md` (CloudFront/Fastly cutover + validation). |
+| Edge | Three-layer rate limiting (tenant quota + concurrency + adaptive) | **All three shipped:** per-tenant slowapi key (`api/limiter.py`), `BackpressureMiddleware`, strict admin login limiter, plus the new `AdaptiveThrottleMiddleware` (`api/adaptive_throttle.py`) — sliding-window p95 → piecewise-linear shed probability when the SLO breaches, capped at 95% so probes still go through. |
 | Stateless | FastAPI services + HPA | Shipped — `deploy/k8s/{deployment,hpa}.yaml`. HPA on RPS + p95 + CPU floor. |
 | Stateless | Async workers + KEDA | **Worker manifest** shipped (`deploy/k8s/worker.yaml`); HPA via Prometheus-Adapter external metric. **Native KEDA `ScaledObject`** added in this ADR (`deploy/k8s/keda-scaledobjects.yaml`) — both work; KEDA is more idiomatic for queue-driven scaling. |
 | Hot | Redis (cache + rate limit + pub/sub) | **Code path** shipped (`api/limiter.py`, `api/jobs.py`, `api/admin/routes.py` strict limiter). **Manifest** added in this ADR (`deploy/k8s/redis.yaml`). |
 | Hot | Outbox table for CDC | **Model added** in this ADR (`src/models_db.py::OutboxEvent`) + alembic migration + a relayer skeleton (`api/outbox.py`). The relayer is wired only against an in-memory event bus today; pointing it at Kafka is a per-deployment change. |
 | OLTP | PostgreSQL via PgBouncer + PITR | Pool tuning auto-detects PgBouncer (`src/db.py`); `deploy/k8s/pgbouncer.yaml` ships the proxy. PITR posture documented in `deploy/dr-runbook.md` (added in this ADR). |
-| Stream | Kafka / Kinesis | Documented as the production substrate (ADR 0008 + this ADR's diagram). Code-level Kafka client integration is a future PR — repository pattern leaves a `KafkaStreamingRepository` slot. |
+| Stream | Kafka / Kinesis | **Manifest shipped:** `deploy/k8s/kafka.yaml` (Strimzi Kafka cluster sized to ≥24 partitions per the capacity model, plus the `transcript-intel.events` topic, the `.dlq` retry topic, and the producer/consumer KafkaUser ACLs). Code-level client integration is the next PR — repository pattern leaves a `KafkaStreamingRepository` slot. |
 | OLAP | ClickHouse / DuckDB-on-Iceberg | Documented (ADR 0008's analytical tier). The streaming pipeline (`src/streaming.py`) is the producer; ClickHouse ingestion is operationally provisioned, not in-app. |
 | Search | OpenSearch | Out of scope for current deliverables. Documented in ADR 0008 as a step-6 add. |
 | Obs | OpenTelemetry collector + tail sampling | Shipped — `deploy/k8s/otel-collector.yaml` + `api/observability.py` head sampler. |
@@ -103,6 +103,7 @@ The research is explicit that cache stampedes and stale reads are the load-beari
 
 - **TTL jitter** — every cache write randomizes the TTL by ±10% so synchronized expiry doesn't herd. (`api/caching.py::ttl_with_jitter`.)
 - **Single-flight coalescing** — concurrent misses for the same key share a single underlying compute. (`api/caching.py::SingleFlight`.)
+- **Stale-while-revalidate** — `cached()` emits `Cache-Control: ... stale-while-revalidate=N` so CDNs and browser caches can serve a stale payload while asynchronously revalidating against origin. Smooths the cliff between fresh and expired (RFC 5861).
 - **Event-driven invalidation** — committed writes append an `OutboxEvent`; the relayer fans them out, and consumers drop affected cache entries. (Already partially in place via `LISTEN/NOTIFY` for runtime settings; the same pattern extends to entity caches.)
 
 ### Capacity envelope (illustrative)

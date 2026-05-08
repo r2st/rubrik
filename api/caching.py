@@ -40,24 +40,37 @@ def _etag_for_state() -> str:
 
 
 def cached(request: Request, response: Response, payload: Any,
-           *, max_age: int = 60) -> Any:
+           *, max_age: int = 60, stale_while_revalidate: int = 30) -> Any:
     """Stamp ETag + Cache-Control on a response, honor If-None-Match.
 
     On cache hit, returns a 304 Response directly (no body, ETag preserved).
     Returning a Response from a FastAPI route bypasses response_model
     validation — exactly what we want for 304.
 
+    The ``stale-while-revalidate`` directive (RFC 5861, recommended by the
+    cloud-agnostic research) lets CDNs and browser caches serve a stale
+    payload while asynchronously revalidating, smoothing the cliff between
+    "fresh" and "expired" and avoiding the herd that hits the origin the
+    moment ``max-age`` lapses.
+
     Args:
         request: incoming request (read If-None-Match)
         response: outgoing response (set ETag + Cache-Control on 200 path)
         payload: the body to return on cache miss
         max_age: Cache-Control max-age in seconds (default 60s)
+        stale_while_revalidate: extra seconds beyond max_age during which
+            a stale response may be served while a background fetch
+            refreshes the cache (default 30s; pass 0 to disable)
 
     Returns:
         `payload` on cache miss, or a 304 Response on cache hit.
     """
     etag = _etag_for_state()
-    cache_control = f"private, max-age={max_age}, must-revalidate"
+    parts = [f"private, max-age={max_age}"]
+    if stale_while_revalidate > 0:
+        parts.append(f"stale-while-revalidate={stale_while_revalidate}")
+    parts.append("must-revalidate")
+    cache_control = ", ".join(parts)
 
     inbound = request.headers.get("if-none-match")
     if inbound and inbound == etag:

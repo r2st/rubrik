@@ -37,6 +37,7 @@ from src.runtime_settings import (
 )
 from src.settings import get_runtime_view, get_settings
 
+from . import adaptive_throttle as adaptive_throttle_mod
 from . import backpressure as backpressure_mod
 from . import errors as errors_mod
 from . import limiter as limiter_mod
@@ -164,6 +165,10 @@ try:
 except Exception:  # noqa: BLE001
     _bp_cap = backpressure_mod.DEFAULT_MAX_INFLIGHT
 app.add_middleware(backpressure_mod.BackpressureMiddleware, max_inflight=_bp_cap)
+# Adaptive throttle (third rate-limit layer per ADR 0014): probabilistic
+# shedding when the rolling p95 latency breaches the SLO. Sheds before the
+# inflight cap to avoid retry storms on a degraded downstream.
+app.add_middleware(adaptive_throttle_mod.AdaptiveThrottleMiddleware)
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(
     SecurityHeadersMiddleware,

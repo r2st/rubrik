@@ -1,0 +1,137 @@
+# Prometheus rules — SLO recording + multi-window burn-rate alerting.
+#
+# Operationalises deploy/slos.md. The pattern follows Google's SRE workbook
+# (multi-window, multi-burn-rate alerting): page when the budget is being
+# burned fast over short *and* long windows, so we don't page on noise but
+# also don't sleep through a slow disaster.
+#
+# Two windows used here, matching deploy/slos.md:
+#   - 1 hour window @ 14.4× burn  (2% budget consumed in 1h)   → Sev-2 page
+#   - 6 hour window @ 6× burn     (5% budget consumed in 6h)   → Sev-3 page
+#
+# The "_short" + "_long" pair guards against noisy single-window alerts.
+# An alert fires only when both windows confirm the burn.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: transcript-intel-slo
+  labels: { app: transcript-intel, role: slo }
+spec:
+  groups:
+    # ----------------------------------------------------------------------
+    # Recording rules — pre-compute the rates the alerts need.
+    # ----------------------------------------------------------------------
+    - name: transcript-intel-slo-recording
+      interval: 30s
+      rules:
+        # Availability SLI: fraction of non-5xx responses to public API.
+        - record: api:availability:ratio_rate5m
+          expr: |
+            sum(rate(http_requests_total{
+              job="transcript-intel-api",
+              status_class!="5xx"
+            }[5m]))
+            /
+            sum(rate(http_requests_total{job="transcript-intel-api"}[5m]))
+        - record: api:availability:ratio_rate30m
+          expr: |
+            sum(rate(http_requests_total{
+              job="transcript-intel-api",
+              status_class!="5xx"
+            }[30m]))
+            /
+            sum(rate(http_requests_total{job="transcript-intel-api"}[30m]))
+        - record: api:availability:ratio_rate1h
+          expr: |
+            sum(rate(http_requests_total{
+              job="transcript-intel-api",
+              status_class!="5xx"
+            }[1h]))
+            /
+            sum(rate(http_requests_total{job="transcript-intel-api"}[1h]))
+        - record: api:availability:ratio_rate6h
+          expr: |
+            sum(rate(http_requests_total{
+              job="transcript-intel-api",
+              status_class!="5xx"
+            }[6h]))
+            /
+            sum(rate(http_requests_total{job="transcript-intel-api"}[6h]))
+
+        # p95 latency for cached read endpoints (should hit the 50ms SLO).
+        - record: api:p95_latency_seconds:rate5m
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(http_request_duration_seconds_bucket{
+                job="transcript-intel-api"
+              }[5m])) by (le))
+
+        # Stream lag — driven by the consumer-group offset metric the
+        # event-backbone exporter publishes.
+        - record: stream:lag_seconds:max
+          expr: |
+            max(kafka_consumergroup_lag_seconds{
+              consumergroup="transcript-intel.consumers"
+            }) by (topic)
+
+    # ----------------------------------------------------------------------
+    # Multi-window burn-rate alerts.
+    # SLO: 99.95% availability → error budget = 0.0005.
+    # 1h burn rate threshold: 14.4 → 2% of budget consumed in 1h.
+    # 6h burn rate threshold:  6   → 5% of budget consumed in 6h.
+    # ----------------------------------------------------------------------
+    - name: transcript-intel-slo-alerts
+      rules:
+        - alert: APIAvailabilityFastBurn
+          expr: |
+            (1 - api:availability:ratio_rate1h)  > (14.4 * 0.0005)
+            and
+            (1 - api:availability:ratio_rate5m)  > (14.4 * 0.0005)
+          for: 2m
+          labels: { severity: sev2, service: transcript-intel }
+          annotations:
+            summary: "API availability budget burning at 14.4× over 1h"
+            description: |
+              The 1h burn rate exceeds 14.4× the SLO error budget. At this rate
+              we will exhaust the monthly budget in <2 days. Confirmed by the
+              5m short window. Page now.
+            runbook_url: "https://example.com/runbooks/api-availability"
+
+        - alert: APIAvailabilitySlowBurn
+          expr: |
+            (1 - api:availability:ratio_rate6h)  > (6 * 0.0005)
+            and
+            (1 - api:availability:ratio_rate30m) > (6 * 0.0005)
+          for: 15m
+          labels: { severity: sev3, service: transcript-intel }
+          annotations:
+            summary: "API availability budget burning at 6× over 6h"
+            description: |
+              The 6h burn rate exceeds 6× the SLO error budget. Sustained,
+              this consumes the monthly budget in <5 days. Confirmed by 30m
+              short window. Investigate.
+            runbook_url: "https://example.com/runbooks/api-availability"
+
+        - alert: APIp95LatencyBreach
+          expr: api:p95_latency_seconds:rate5m > 0.20      # 200 ms
+          for: 5m
+          labels: { severity: sev3, service: transcript-intel }
+          annotations:
+            summary: "p95 latency breached SLO"
+            description: |
+              p95 latency on the public API has exceeded 200 ms for 5
+              minutes. The HPA target is 200 ms; the adaptive throttle
+              starts shedding above this threshold. Investigate downstream
+              health.
+
+        - alert: StreamLagSLOBreach
+          expr: stream:lag_seconds:max > 60                 # 60 s SLO
+          for: 5m
+          labels: { severity: sev3, service: transcript-intel }
+          annotations:
+            summary: "Event backbone consumer lag exceeds 60 s"
+            description: |
+              The {{ $labels.topic }} consumer group has lagged > 60s for
+              5 minutes. KEDA should have scaled — check ScaledObject and
+              partition count.
