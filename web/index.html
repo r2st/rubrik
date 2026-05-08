@@ -59,6 +59,21 @@
           <div id="chart-product-dist" class="chart"></div>
         </div>
       </div>
+      <details class="legend">
+        <summary>What do these labels mean?</summary>
+        <dl>
+          <dt>Sentiment score</dt>
+          <dd>1–5 scale carried in each meeting's summary. <strong>1</strong> = strongly negative, <strong>3</strong> = neutral, <strong>5</strong> = strongly positive. Aggregations show the arithmetic mean across the matching meetings.</dd>
+          <dt>Call type</dt>
+          <dd><strong>support</strong> (Support Case prefix), <strong>external</strong> (customer-facing call), <strong>internal</strong> (internal meeting). Classified by regex on the meeting title.</dd>
+          <dt>Meeting purpose</dt>
+          <dd>One of 11 ordered buckets — Account Management, Discovery, Demo, QBR, Renewal, Pricing, Onboarding, Roadmap, Escalation, Internal Sync, Other. First-match rules applied to the title.</dd>
+          <dt>Product area</dt>
+          <dd>Multi-label tags by keyword bag: <strong>Detect</strong>, <strong>Comply</strong>, <strong>Protect</strong>, <strong>Identity</strong>, <strong>General</strong>. A meeting can carry several. <em>General</em> is the catch-all when no product keyword fires.</dd>
+          <dt>Weekly trend</dt>
+          <dd>Mean sentiment per ISO week, split by call type. The red band marks the Detect outage window — the dominant noise source in this view.</dd>
+        </dl>
+      </details>
     </section>
 
     <!-- Customers -->
@@ -73,6 +88,25 @@
         <select id="customer-select"></select>
         <div id="customer-detail"></div>
       </div>
+      <details class="legend">
+        <summary>What do these labels mean?</summary>
+        <dl>
+          <dt>Tier <span class="muted">(🔴 / 🟡 / 🟢)</span></dt>
+          <dd>Bucketed risk level. <strong>🔴 high</strong> = score ≥ <code>0.40</code>, <strong>🟡 medium</strong> = <code>0.25–0.40</code>, <strong>🟢 low</strong> = below <code>0.25</code>. Thresholds and weights are tunable in <code>/admin</code> (settings → category <code>risk</code>).</dd>
+          <dt>Risk score</dt>
+          <dd>Composite in <code>[0, 1]</code> where higher = more at risk. Weighted sum of three normalised signals: <code>0.5 × sentiment_gap + 0.3 × churn_signals + 0.2 × negative_pivots</code>.</dd>
+          <dt>Avg sentiment</dt>
+          <dd>Mean of this customer's per-meeting sentiment scores (1–5).</dd>
+          <dt>Min sentiment</dt>
+          <dd>Lowest single-meeting sentiment in the customer's history — surfaces the worst call, not the average.</dd>
+          <dt>Meetings</dt>
+          <dd>Count of distinct meetings tagged to this customer.</dd>
+          <dt>Churn signals</dt>
+          <dd>Total <em>key moments</em> tagged <code>churn_signal</code> by the source data (e.g., "considering competitor", "cancelling renewal"). Direct verbal signal.</dd>
+          <dt>Avg max-drop</dt>
+          <dd>Average within-meeting sentiment pivot — the trajectory signal. A meeting that started fine and went south late shows up here even if its summary score looks OK.</dd>
+        </dl>
+      </details>
     </section>
 
     <!-- Incident -->
@@ -86,6 +120,19 @@
         <h3>Direct incident-response timeline</h3>
         <table class="data" id="table-incident"></table>
       </div>
+      <details class="legend">
+        <summary>What do these labels mean?</summary>
+        <dl>
+          <dt>Affected meetings</dt>
+          <dd>Meetings where the transcript or summary references the Detect outage in the affected window. Identified by keyword + title patterns (e.g., <em>"URGENT: Detect"</em>, post-mortem references).</dd>
+          <dt>Sentiment delta</dt>
+          <dd>Affected-meeting average sentiment <strong>minus</strong> baseline (unaffected) average. A larger negative number = the outage dragged the conversation lower than the rest of the period.</dd>
+          <dt>Blast radius</dt>
+          <dd>Share of all meetings in the window that carry an outage reference. Captures how far the incident leaked into otherwise unrelated calls (renewals, demos, internal syncs).</dd>
+          <dt>Direct incident-response timeline</dt>
+          <dd>Meetings where the title itself signals direct response (<em>URGENT</em>, <em>Escalation</em>, <em>Post-mortem</em>). The narrow shape of the response, not the broader leak.</dd>
+        </dl>
+      </details>
     </section>
 
     <!-- Meeting drill-down -->
@@ -95,6 +142,23 @@
         <select id="meeting-select"></select>
         <div id="meeting-detail"></div>
       </div>
+      <details class="legend">
+        <summary>What do these labels mean?</summary>
+        <dl>
+          <dt>Sentiment trajectory</dt>
+          <dd>Per-sentence sentiment numerically encoded (positive=+1, neutral=0, negative=−1) and bucketed into 10 equal time slices. Surfaces <em>within-call dynamics</em> the meeting-level summary score hides.</dd>
+          <dt>Max drop</dt>
+          <dd>Largest negative delta between consecutive trajectory buckets — the steepest mid-meeting fall. A meeting can end on a high note yet have an alarming max-drop earlier.</dd>
+          <dt>End − start</dt>
+          <dd>Final-bucket sentiment minus opening-bucket sentiment. Positive = the call recovered; negative = it deteriorated.</dd>
+          <dt>Share negative</dt>
+          <dd>Fraction of sentences labelled negative. A meeting with low share-negative but a deep max-drop = a brief, sharp friction event.</dd>
+          <dt>Action items</dt>
+          <dd>Owner-tagged tasks extracted from the call summary. The Customers and Insights pages aggregate these to find owner-level bottlenecks.</dd>
+          <dt>Key moments</dt>
+          <dd>Tagged events from the source summary (e.g., <code>churn_signal</code>, <code>positive_feedback</code>, <code>blocker</code>). Drives the churn-signal count in the risk score.</dd>
+        </dl>
+      </details>
     </section>
 
     <!-- Clusters -->
@@ -104,6 +168,23 @@
         <p class="caption" id="cluster-caption"></p>
         <table class="data" id="table-clusters"></table>
       </div>
+      <details class="legend">
+        <summary>What do these labels mean?</summary>
+        <dl>
+          <dt>Cluster</dt>
+          <dd>A group of meetings whose transcripts share a vocabulary fingerprint. Each meeting belongs to exactly one cluster; the goal is surfacing latent themes that cross the rule-based call-type / purpose taxonomy.</dd>
+          <dt>k</dt>
+          <dd>Number of clusters. Chosen automatically by sweeping <code>k ∈ [4, 10]</code> and picking the value with the highest <strong>silhouette score</strong>. No hardcoded <em>k</em>.</dd>
+          <dt>Silhouette</dt>
+          <dd>Quality measure in <code>[-1, 1]</code>. Higher = clusters are well-separated. Low values (~0.05–0.15) are normal for conversational text — vocabulary overlaps heavily across topics.</dd>
+          <dt>Top terms</dt>
+          <dd>The TF-IDF terms with the highest weight at each cluster's centroid. Read these as <em>"what makes this cluster different from the others"</em>, not as a topic label.</dd>
+          <dt>Size</dt>
+          <dd>Number of meetings assigned to the cluster. Very small clusters (1–2 meetings) are usually outliers and should be inspected manually before drawing conclusions.</dd>
+          <dt>Why no labels</dt>
+          <dd>KMeans gives membership, not human-readable names. We surface the top terms instead so an operator can label the cluster after the fact based on context.</dd>
+        </dl>
+      </details>
     </section>
   </main>
 

@@ -170,3 +170,61 @@ select {
 .empty { text-align: center; color: var(--fg-muted); padding: 24px; }
 .error { color: var(--red); padding: 12px; background: #ffe5e5; border-radius: 6px; }
 .section-title { font-size: 14px; font-weight: 600; margin: 16px 0 8px; color: var(--fg-muted); }
+
+/* Per-page legend (collapsible glossary at the bottom of each panel) */
+.legend {
+  margin-top: 16px;
+  padding: 14px 18px;
+  background: var(--panel, #f8f9fa);
+  border: 1px solid var(--line, #e1e4e8);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+.legend > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--fg, #24292f);
+  list-style: none;             /* hide default disclosure triangle */
+  user-select: none;
+}
+.legend > summary::before {
+  content: "▸ ";
+  display: inline-block;
+  transition: transform 120ms ease-out;
+  color: var(--fg-muted);
+  margin-right: 4px;
+}
+.legend[open] > summary::before {
+  transform: rotate(90deg);
+}
+.legend > summary::-webkit-details-marker { display: none; }
+.legend dl {
+  margin: 14px 0 0;
+  display: grid;
+  grid-template-columns: minmax(140px, max-content) 1fr;
+  column-gap: 18px;
+  row-gap: 10px;
+  align-items: baseline;
+}
+.legend dt {
+  font-weight: 600;
+  color: var(--fg, #24292f);
+  font-size: 13px;
+}
+.legend dd {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.legend dd code {
+  background: rgba(127, 127, 127, 0.12);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+.legend .muted { color: var(--fg-muted); font-weight: 400; }
+@media (max-width: 720px) {
+  .legend dl { grid-template-columns: 1fr; row-gap: 6px; }
+  .legend dt { margin-top: 6px; }
+}
