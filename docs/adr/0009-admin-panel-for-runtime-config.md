@@ -69,9 +69,20 @@ backpressure.max_inflight            128             int    backpressure
 snapshot.url                         ""              str    snapshot
 snapshot.poll_seconds                30              int    snapshot
 distribution.redis_url               ""              str    distribution
+llm.tier1_endpoint                   ""              str    llm
+llm.tier2_enabled                    false           bool   llm
+llm.tier2_provider                   "anthropic"     str    llm
+llm.tier2_model                      "claude-sonnet-4-5"  str llm
+llm.tier2_api_key                    ""              secret llm
+llm.tier2_daily_budget_usd           50.0            float  llm
+llm.tier2_request_timeout_s          30              int    llm
 ```
 
 Reads go through a **5-second TTL cache**. On Postgres, every `set()` additionally publishes a `settings_changed` `NOTIFY`, and a listener thread on each replica drops the cache locally — operator changes propagate in < 100 ms instead of waiting for the TTL. SQLite (dev) silently skips the publish; the TTL is the safety net.
+
+#### The `secret` type
+
+API keys (and any future credential-shaped value) are typed `secret`. The runtime store keeps the **raw value** so the consuming application code can use it; every API read path runs the value through ``mask_secret()`` first, which renders empty as `""` and otherwise as `"••••••<last 4>"`. The audit log writes the masked form for both `old_value` and `new_value` on `secret`-typed rotations — the historical record can't leak the key. The admin UI renders `secret` as a `<input type="password">` with the masked placeholder; an empty submission preserves the existing key (no accidental wipes), a non-empty submission rotates it. See `tests/test_secret_settings.py` for the expected behaviour, including the audit-log invariant.
 
 ### Admin panel architecture
 

@@ -3,7 +3,7 @@
 > An **auto-scalable system** that processes B2B meeting transcripts and surfaces topic categorization, sentiment trends, and strategic insights — exposed as a REST API with a lightweight web dashboard. **Target scale: millions to 100M+ records.**
 
 [![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue)](.github/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-123%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-222%20passing-brightgreen)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-94%25-brightgreen)](pyproject.toml)
 [![Validation](https://img.shields.io/badge/validation-9%2F10%20pass-brightgreen)](validate.py)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](pyproject.toml)
@@ -366,7 +366,7 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 | **Configuration** | Two-tier: `bootstrap.toml` (env, log, DB URL, admin secret, `[runtime]` knobs that need to be readable before the DB exists) + DB-backed `runtime_settings` for everything else (rate limits, risk weights, feature flags, Redis URL, snapshot URL, OTel sampling rate, …). Operator changes propagate via `LISTEN/NOTIFY` on Postgres. See [`bootstrap.toml.example`](bootstrap.toml.example). |
 | **Linting / formatting** | `ruff` (lint + format) configured in pyproject. |
 | **Type checking** | `mypy` for `src/` and `api/`. |
-| **Testing** | `pytest`, **183 tests** (incl. autoscaling + distributed/`fakeredis` paths), FastAPI `TestClient`. |
+| **Testing** | `pytest`, **222 tests** (incl. autoscaling, distributed/`fakeredis`, outbox, cache-stampede, adaptive-throttle, secret-type masking), FastAPI `TestClient`. |
 | **CI/CD** | GitHub Actions: lint → type-check → test (3.9/3.11/3.12) → security scan → Docker build + image scan. |
 | **Containerization** | Multi-stage Dockerfile, non-root user, healthcheck, JSON logs, Caddy reverse proxy via compose. |
 | **Pipeline lifecycle** | State cached at startup; optional periodic refresh (`pipeline.refresh_minutes` runtime setting). At production volume, a singleton CronJob writes a snapshot (`api/snapshot_writer.py`); replicas warm from it instead of rebuilding. |
@@ -398,28 +398,37 @@ sentry_dsn = "https://..."
 otel_endpoint = "http://otel:4318/v1/traces"
 ```
 
-**Runtime config** — everything else lives in the DB and is managed through the admin panel at **`/admin`**. Includes:
+**Runtime config** — everything else lives in the DB and is managed through the admin panel at **`/admin`**. Categories:
 
-- Auth (API key, CORS origins)
-- Rate limits (default + strict)
-- Pipeline refresh interval
-- Risk-scoring weights + thresholds
-- Sentiment friction threshold
-- Feature flags
+- **auth** — API key, CORS origins
+- **rate_limit** — default + strict + per-tenant overrides
+- **pipeline** — refresh interval
+- **risk** — scoring weights + tier thresholds
+- **sentiment** — friction-pivot threshold
+- **feature** — feature flags (metrics, traces)
+- **observability** — Sentry sample rate, OTel head-sample rate
+- **backpressure** — inflight cap
+- **snapshot** — shared snapshot URL + poll interval (cold-start fix)
+- **distribution** — Redis URL for cluster-wide rate limiting + queue
+- **llm** — Tier-1 vLLM endpoint, Tier-2 frontier provider/model/budget/timeout, **Tier-2 API key (masked-on-read `secret` type)**
 
-Changes propagate within 5 seconds. Every change is recorded in an audit log.
+Changes propagate within 5 seconds (or < 100 ms with Postgres `LISTEN/NOTIFY`). Every change is recorded in an audit log; `secret`-typed values store their masked form in the audit row so the raw key never persists in the historical record.
 
 ### Admin panel
 
+The admin panel is a **separate FastAPI process** on its own port (default `:8001`). Production deploys route admin traffic through a private listener while the public API stays behind the CDN. See ADR 0014 §"Control plane vs. data plane" and `deploy/k8s/gateway.yaml`.
+
 ```bash
-make dev                    # bring up the API
-open http://127.0.0.1:8000/admin
+make admin                                # uvicorn api.admin_app:app on :8001
+open http://127.0.0.1:8001/
 # Initial password: from [admin].initial_password in bootstrap.toml
 ```
 
+Or as part of the full dev stack via `./bin/start-all.sh` (also brings up the public API, Jupyter, and docs server).
+
 Three tabs:
-- **Settings** — categorized rows with inline edit; saves on blur, "Reset to default" per row
-- **Audit log** — append-only history of every change (who, when, old value, new value, notes)
+- **Settings** — categorized rows with inline edit; saves on blur, "Reset to default" per row. The `secret` type renders as a password input with a masked placeholder (`••••••<last 4>`); typing rotates the key, leaving it blank keeps the current value.
+- **Audit log** — append-only history of every change (who, when, old value, new value, notes). Secret values appear in their masked form — the raw key is not recoverable from the log.
 - **Account** — password rotation
 
 ### What's deliberately not done

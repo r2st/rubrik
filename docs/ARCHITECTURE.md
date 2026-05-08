@@ -892,19 +892,22 @@ See [ADR 0010](adr/0010-auto-scaling-ml-pipeline.md) for the full architecture, 
 
 ## Admin panel — runtime configuration without env vars
 
-Operationally-tunable knobs (rate limits, churn-risk weights, feature flags, the auth API key) live in a database-backed settings store. Operators change them through `/admin` — every change is audited.
+Operationally-tunable knobs (rate limits, churn-risk weights, feature flags, auth API key, **LLM API keys**) live in a database-backed settings store. Operators change them through `/admin` — every change is audited.
+
+The admin panel runs as a **separate FastAPI process** (`api/admin_app.py`) on its own port. Production deploys route admin traffic to that process via a private listener (Gateway API HTTPRoute → admin Service); the public listener never sees `/api/v1/admin/*`. Both processes share the same admin DB, and `LISTEN/NOTIFY` propagates settings changes within ≤ 100 ms.
 
 ```mermaid
 flowchart LR
-    Boot["bootstrap.toml<br/>(env, log, DB url, admin secret)"] --> App[FastAPI app]
-    App --> RuntimeStore[(settings table<br/>admin DB)]
-    Browser[Browser] --> Login["POST /api/v1/admin/login"]
+    Boot["bootstrap.toml<br/>(env, log, DB url, admin secret)"] --> Admin[Admin app<br/>:8001]
+    Boot --> Public[Public API<br/>:8000]
+    Browser[Operator] --> Login["POST /api/v1/admin/login"]
     Login -->|signed cookie| Browser
-    Browser --> Admin["/admin · settings UI"]
-    Admin -->|GET PUT POST| AdminAPI[/api/v1/admin/*]
-    AdminAPI --> RuntimeStore
+    Browser --> AdminPage["/admin (settings UI)"]
+    AdminPage -->|GET / PUT / POST| AdminAPI["/api/v1/admin/*"]
+    AdminAPI --> RuntimeStore[(settings table<br/>admin DB)]
     AdminAPI --> Audit[(audit_log)]
-    RuntimeStore -->|5s TTL cache| App
+    RuntimeStore -->|5s TTL cache + LISTEN/NOTIFY push| Public
+    RuntimeStore --> Admin
 ```
 
 What lives where:
@@ -912,7 +915,9 @@ What lives where:
 | Type of config | Lives in | Examples | Mutable at runtime? |
 |---|---|---|---|
 | **Bootstrap** | `bootstrap.toml` | env label, log level, DB URL, admin session secret | No (restart required) |
-| **Runtime** | DB `settings` table | API key, rate limits, churn weights, feature flags | Yes — change in `/admin`, takes effect within 5s |
+| **Runtime** | DB `settings` table | auth API key, rate limits, churn weights, feature flags, LLM Tier-2 settings | Yes — change in `/admin`, takes effect within 5 s (or < 100 ms with `LISTEN/NOTIFY`) |
+
+The `secret` type (used for `llm.tier2_api_key`) keeps the **raw value** in the DB so consuming code can use it, but masks it (`"••••••<last 4>"`) on every API read path and in the audit log — the raw key never round-trips through the admin UI. See [ADR 0009](adr/0009-admin-panel-for-runtime-config.md) for the full rationale, including the LISTEN/NOTIFY propagation and the `secret`-type contract.
 
 **No env vars** are read for application configuration. The runtime substrate (uvicorn, k8s) may still use them for infrastructure. See [ADR 0009](adr/0009-admin-panel-for-runtime-config.md) for the full rationale.
 

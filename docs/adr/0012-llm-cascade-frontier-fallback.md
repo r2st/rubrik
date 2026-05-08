@@ -99,7 +99,7 @@ The cascade is the only design that gives us **frontier-quality on the cases tha
 1. **Confidence layer** in Tier 1 — perplexity + judge score emitted per call (instrumentation only; no behavior change).
 2. **Gateway service** — thin FastAPI service in front of one frontier provider; redaction + cache + budget.
 3. **Routing** in `api/state.py` / generation path — escalate when triggers fire; fall back to Tier-1 result on gateway failure.
-4. **Admin panel additions** — per-tenant policy, budgets, model choice, trigger thresholds — all under the `llm.*` runtime-settings namespace.
+4. **Admin panel additions** — per-tenant policy, budgets, model choice, trigger thresholds — all under the `llm.*` runtime-settings namespace. **Shipped:** seven keys under category `llm` (`llm.tier1_endpoint`, `llm.tier2_enabled`, `llm.tier2_provider`, `llm.tier2_model`, `llm.tier2_api_key` — the masked-on-read `secret` type — `llm.tier2_daily_budget_usd`, `llm.tier2_request_timeout_s`). The API key uses the new `secret` type so it's masked in `GET /admin/settings`, masked in audit-log rows, and never leaves the DB in raw form. Per-tenant policy / per-category trigger flags follow the gateway service.
 5. **Telemetry** — Prometheus metric `llm_tier2_share{tenant, category}`; Grafana dashboard tracks the active-learning loop's headline number.
 6. **Active-learning wiring** — Tier-2 reference outputs land in the existing queue; nightly batch builds a candidate dataset for the next fine-tune.
 

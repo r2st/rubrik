@@ -1261,17 +1261,19 @@ the codebase does today.</p>
 <p>See <a href="adr/0010-auto-scaling-ml-pipeline.md">ADR 0010</a> for the full architecture, cost math, and decision rationale.</p>
 <hr />
 <h2 id="admin-panel-runtime-configuration-without-env-vars">Admin panel — runtime configuration without env vars<a class="anchor" href="#admin-panel-runtime-configuration-without-env-vars" title="Permanent link">¶</a></h2>
-<p>Operationally-tunable knobs (rate limits, churn-risk weights, feature flags, the auth API key) live in a database-backed settings store. Operators change them through <code>/admin</code> — every change is audited.</p>
+<p>Operationally-tunable knobs (rate limits, churn-risk weights, feature flags, auth API key, <strong>LLM API keys</strong>) live in a database-backed settings store. Operators change them through <code>/admin</code> — every change is audited.</p>
+<p>The admin panel runs as a <strong>separate FastAPI process</strong> (<code>api/admin_app.py</code>) on its own port. Production deploys route admin traffic to that process via a private listener (Gateway API HTTPRoute → admin Service); the public listener never sees <code>/api/v1/admin/*</code>. Both processes share the same admin DB, and <code>LISTEN/NOTIFY</code> propagates settings changes within ≤ 100 ms.</p>
 <div class="mermaid">flowchart LR
-    Boot["bootstrap.toml<br/>(env, log, DB url, admin secret)"] --> App[FastAPI app]
-    App --> RuntimeStore[(settings table<br/>admin DB)]
-    Browser[Browser] --> Login["POST /api/v1/admin/login"]
+    Boot["bootstrap.toml<br/>(env, log, DB url, admin secret)"] --> Admin[Admin app<br/>:8001]
+    Boot --> Public[Public API<br/>:8000]
+    Browser[Operator] --> Login["POST /api/v1/admin/login"]
     Login -->|signed cookie| Browser
-    Browser --> Admin["/admin · settings UI"]
-    Admin -->|GET PUT POST| AdminAPI[/api/v1/admin/*]
-    AdminAPI --> RuntimeStore
+    Browser --> AdminPage["/admin (settings UI)"]
+    AdminPage -->|GET / PUT / POST| AdminAPI["/api/v1/admin/*"]
+    AdminAPI --> RuntimeStore[(settings table<br/>admin DB)]
     AdminAPI --> Audit[(audit_log)]
-    RuntimeStore -->|5s TTL cache| App</div>
+    RuntimeStore -->|5s TTL cache + LISTEN/NOTIFY push| Public
+    RuntimeStore --> Admin</div>
 
 <p>What lives where:</p>
 <table>
@@ -1293,11 +1295,12 @@ the codebase does today.</p>
 <tr>
 <td><strong>Runtime</strong></td>
 <td>DB <code>settings</code> table</td>
-<td>API key, rate limits, churn weights, feature flags</td>
-<td>Yes — change in <code>/admin</code>, takes effect within 5s</td>
+<td>auth API key, rate limits, churn weights, feature flags, LLM Tier-2 settings</td>
+<td>Yes — change in <code>/admin</code>, takes effect within 5 s (or &lt; 100 ms with <code>LISTEN/NOTIFY</code>)</td>
 </tr>
 </tbody>
 </table>
+<p>The <code>secret</code> type (used for <code>llm.tier2_api_key</code>) keeps the <strong>raw value</strong> in the DB so consuming code can use it, but masks it (<code>"••••••&lt;last 4&gt;"</code>) on every API read path and in the audit log — the raw key never round-trips through the admin UI. See <a href="adr/0009-admin-panel-for-runtime-config.md">ADR 0009</a> for the full rationale, including the LISTEN/NOTIFY propagation and the <code>secret</code>-type contract.</p>
 <p><strong>No env vars</strong> are read for application configuration. The runtime substrate (uvicorn, k8s) may still use them for infrastructure. See <a href="adr/0009-admin-panel-for-runtime-config.md">ADR 0009</a> for the full rationale.</p>
 <hr />
 <h2 id="security-hardening">Security hardening<a class="anchor" href="#security-hardening" title="Permanent link">¶</a></h2>

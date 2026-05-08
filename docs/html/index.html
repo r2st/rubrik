@@ -339,7 +339,7 @@ footer code {
 <p>An <strong>auto-scalable system</strong> that processes B2B meeting transcripts and surfaces topic categorization, sentiment trends, and strategic insights — exposed as a REST API with a lightweight web dashboard. <strong>Target scale: millions to 100M+ records.</strong></p>
 </blockquote>
 <p><a href=".github/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-blue" /></a>
-<a href="https://github.com/"><img alt="Tests" src="https://img.shields.io/badge/tests-123%20passing-brightgreen" /></a>
+<a href="https://github.com/"><img alt="Tests" src="https://img.shields.io/badge/tests-222%20passing-brightgreen" /></a>
 <a href="pyproject.toml"><img alt="Coverage" src="https://img.shields.io/badge/coverage-94%25-brightgreen" /></a>
 <a href="https://github.com/"><img alt="Validation" src="https://img.shields.io/badge/validation-9%2F10%20pass-brightgreen" /></a>
 <a href="pyproject.toml"><img alt="Python" src="https://img.shields.io/badge/python-3.9%2B-blue" /></a>
@@ -703,10 +703,15 @@ $ make validate
 <pre><code class="language-bash">./bin/start-all.sh   # pre-flight + start everything
 ./bin/stop-all.sh    # kill anything left running
 </code></pre>
-<p>What it does:
-1. <strong>Pre-flight</strong>: runs the test suite + the semantic validation; aborts on any FAIL
-2. <strong>Refreshes</strong> <code>output/</code> (batch pipeline) and <code>docs/html/</code> (HTML docs) in parallel
-3. <strong>Starts</strong> four services in the background, waits for each to be ready, prints the URLs:</p>
+<p>What it does (in order):
+1. <strong>Refreshes</strong> <code>output/</code> (batch pipeline) and <code>docs/html/</code> (HTML docs) in parallel
+2. <strong>Starts</strong> four services in the background, waits for each to be ready, prints the URLs:</p>
+<p>By default, <strong>tests and validation are NOT run</strong> — that's a slow opt-in. Use the dedicated targets when you want them: <code>make test</code>, <code>make validate</code>. Or pass them as flags to the launcher:</p>
+<pre><code class="language-bash">./bin/start-all.sh --with-tests       # run pytest before launch
+./bin/start-all.sh --with-validate    # run validate.py before launch
+./bin/start-all.sh --with-preflight   # both
+WITH_PREFLIGHT=1 ./bin/start-all.sh   # env-var equivalent
+</code></pre>
 <table>
 <thead>
 <tr>
@@ -750,7 +755,7 @@ plane"</a> and
 <pre><code class="language-bash">make admin                       # uvicorn api.admin_app:app on :8001
 ADMIN_PORT=9001 make admin       # different port
 </code></pre>
-<p><code>Ctrl+C</code> traps cleanly and stops everything (recursive process-tree cleanup). Logs accumulate under <code>.run-logs/</code>. Override ports via env vars (<code>API_PORT=9000 ADMIN_PORT=9001 ./bin/start-all.sh</code>); skip pre-flight with <code>SKIP_PREFLIGHT=1</code>.</p>
+<p><code>Ctrl+C</code> traps cleanly and stops everything (recursive process-tree cleanup). Logs accumulate under <code>.run-logs/</code>. Override ports via env vars: <code>API_PORT=9000 ADMIN_PORT=9001 ./bin/start-all.sh</code>.</p>
 <h3 id="container-alternative-docker-compose">Container alternative (docker compose)<a class="anchor" href="#container-alternative-docker-compose" title="Permanent link">¶</a></h3>
 <pre><code class="language-bash">make compose-up                  # docker compose up --build -d
 make compose-down                # docker compose down
@@ -944,7 +949,7 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 </tr>
 <tr>
 <td><strong>Testing</strong></td>
-<td><code>pytest</code>, <strong>183 tests</strong> (incl. autoscaling + distributed/<code>fakeredis</code> paths), FastAPI <code>TestClient</code>.</td>
+<td><code>pytest</code>, <strong>222 tests</strong> (incl. autoscaling, distributed/<code>fakeredis</code>, outbox, cache-stampede, adaptive-throttle, secret-type masking), FastAPI <code>TestClient</code>.</td>
 </tr>
 <tr>
 <td><strong>CI/CD</strong></td>
@@ -991,24 +996,31 @@ session_secret = &quot;...&quot;
 sentry_dsn = &quot;https://...&quot;
 otel_endpoint = &quot;http://otel:4318/v1/traces&quot;
 </code></pre>
-<p><strong>Runtime config</strong> — everything else lives in the DB and is managed through the admin panel at <strong><code>/admin</code></strong>. Includes:</p>
+<p><strong>Runtime config</strong> — everything else lives in the DB and is managed through the admin panel at <strong><code>/admin</code></strong>. Categories:</p>
 <ul>
-<li>Auth (API key, CORS origins)</li>
-<li>Rate limits (default + strict)</li>
-<li>Pipeline refresh interval</li>
-<li>Risk-scoring weights + thresholds</li>
-<li>Sentiment friction threshold</li>
-<li>Feature flags</li>
+<li><strong>auth</strong> — API key, CORS origins</li>
+<li><strong>rate_limit</strong> — default + strict + per-tenant overrides</li>
+<li><strong>pipeline</strong> — refresh interval</li>
+<li><strong>risk</strong> — scoring weights + tier thresholds</li>
+<li><strong>sentiment</strong> — friction-pivot threshold</li>
+<li><strong>feature</strong> — feature flags (metrics, traces)</li>
+<li><strong>observability</strong> — Sentry sample rate, OTel head-sample rate</li>
+<li><strong>backpressure</strong> — inflight cap</li>
+<li><strong>snapshot</strong> — shared snapshot URL + poll interval (cold-start fix)</li>
+<li><strong>distribution</strong> — Redis URL for cluster-wide rate limiting + queue</li>
+<li><strong>llm</strong> — Tier-1 vLLM endpoint, Tier-2 frontier provider/model/budget/timeout, <strong>Tier-2 API key (masked-on-read <code>secret</code> type)</strong></li>
 </ul>
-<p>Changes propagate within 5 seconds. Every change is recorded in an audit log.</p>
+<p>Changes propagate within 5 seconds (or &lt; 100 ms with Postgres <code>LISTEN/NOTIFY</code>). Every change is recorded in an audit log; <code>secret</code>-typed values store their masked form in the audit row so the raw key never persists in the historical record.</p>
 <h3 id="admin-panel">Admin panel<a class="anchor" href="#admin-panel" title="Permanent link">¶</a></h3>
-<pre><code class="language-bash">make dev                    # bring up the API
-open http://127.0.0.1:8000/admin
+<p>The admin panel is a <strong>separate FastAPI process</strong> on its own port (default <code>:8001</code>). Production deploys route admin traffic through a private listener while the public API stays behind the CDN. See ADR 0014 §"Control plane vs. data plane" and <code>deploy/k8s/gateway.yaml</code>.</p>
+<pre><code class="language-bash">make admin                                # uvicorn api.admin_app:app on :8001
+open http://127.0.0.1:8001/
 # Initial password: from [admin].initial_password in bootstrap.toml
 </code></pre>
+<p>Or as part of the full dev stack via <code>./bin/start-all.sh</code> (also brings up the public API, Jupyter, and docs server).</p>
 <p>Three tabs:
-- <strong>Settings</strong> — categorized rows with inline edit; saves on blur, "Reset to default" per row
-- <strong>Audit log</strong> — append-only history of every change (who, when, old value, new value, notes)
+- <strong>Settings</strong> — categorized rows with inline edit; saves on blur, "Reset to default" per row. The <code>secret</code> type renders as a password input with a masked placeholder (<code>••••••&lt;last 4&gt;</code>); typing rotates the key, leaving it blank keeps the current value.
+- <strong>Audit log</strong> — append-only history of every change (who, when, old value, new value, notes). Secret values appear in their masked form — the raw key is not recoverable from the log.
 - <strong>Account</strong> — password rotation</p>
 <h3 id="whats-deliberately-not-done">What's deliberately not done<a class="anchor" href="#whats-deliberately-not-done" title="Permanent link">¶</a></h3>
 <ul>
