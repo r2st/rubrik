@@ -266,10 +266,18 @@ A single command brings up the whole dev environment:
 ./bin/stop-all.sh    # kill anything left running
 ```
 
-What it does:
-1. **Pre-flight**: runs the test suite + the semantic validation; aborts on any FAIL
-2. **Refreshes** `output/` (batch pipeline) and `docs/html/` (HTML docs) in parallel
-3. **Starts** four services in the background, waits for each to be ready, prints the URLs:
+What it does (in order):
+1. **Refreshes** `output/` (batch pipeline) and `docs/html/` (HTML docs) in parallel
+2. **Starts** four services in the background, waits for each to be ready, prints the URLs:
+
+By default, **tests and validation are NOT run** — that's a slow opt-in. Use the dedicated targets when you want them: `make test`, `make validate`. Or pass them as flags to the launcher:
+
+```bash
+./bin/start-all.sh --with-tests       # run pytest before launch
+./bin/start-all.sh --with-validate    # run validate.py before launch
+./bin/start-all.sh --with-preflight   # both
+WITH_PREFLIGHT=1 ./bin/start-all.sh   # env-var equivalent
+```
 
 | Service | URL | Serves |
 |---|---|---|
@@ -294,7 +302,7 @@ make admin                       # uvicorn api.admin_app:app on :8001
 ADMIN_PORT=9001 make admin       # different port
 ```
 
-`Ctrl+C` traps cleanly and stops everything (recursive process-tree cleanup). Logs accumulate under `.run-logs/`. Override ports via env vars (`API_PORT=9000 ADMIN_PORT=9001 ./bin/start-all.sh`); skip pre-flight with `SKIP_PREFLIGHT=1`.
+`Ctrl+C` traps cleanly and stops everything (recursive process-tree cleanup). Logs accumulate under `.run-logs/`. Override ports via env vars: `API_PORT=9000 ADMIN_PORT=9001 ./bin/start-all.sh`.
 
 ### Container alternative (docker compose)
 

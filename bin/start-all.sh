@@ -14,11 +14,16 @@
 # the admin DB; settings changes propagate via LISTEN/NOTIFY (Postgres) or
 # the 5s TTL cache fallback (SQLite).
 #
-# Pre-flight: ensures tests pass and validation succeeds before launch.
+# Pre-flight (tests + semantic validation) is **opt-in** — pytest takes
+# ~90 s and is the wrong default for "I just want to bring up the stack."
+# Run tests separately via `make test` / `make validate`, or opt-in here:
 #
 # Usage:
-#   ./bin/start-all.sh                                    # run with defaults
-#   SKIP_PREFLIGHT=1 ./bin/start-all.sh                   # skip tests + validate
+#   ./bin/start-all.sh                                    # fast: skip tests + validate
+#   ./bin/start-all.sh --with-tests                       # run tests before launch
+#   ./bin/start-all.sh --with-validate                    # run validate.py before launch
+#   ./bin/start-all.sh --with-preflight                   # both
+#   WITH_PREFLIGHT=1 ./bin/start-all.sh                   # env-var equivalent
 #   API_PORT=9000 ADMIN_PORT=9001 ./bin/start-all.sh      # custom ports
 #
 # Press Ctrl+C to gracefully stop everything.
@@ -32,8 +37,33 @@ API_PORT="${API_PORT:-8000}"
 ADMIN_PORT="${ADMIN_PORT:-8001}"
 JUPYTER_PORT="${JUPYTER_PORT:-8888}"
 DOCS_PORT="${DOCS_PORT:-8765}"
-SKIP_PREFLIGHT="${SKIP_PREFLIGHT:-0}"
+# Preflight is opt-in. Granular env vars take precedence over the catch-all
+# WITH_PREFLIGHT. Legacy SKIP_PREFLIGHT=1 still works (no-op, kept for
+# muscle memory).
+WITH_TESTS="${WITH_TESTS:-${WITH_PREFLIGHT:-0}}"
+WITH_VALIDATE="${WITH_VALIDATE:-${WITH_PREFLIGHT:-0}}"
 LOG_DIR="${LOG_DIR:-.run-logs}"
+
+# Parse CLI flags (override env vars).
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --with-tests)      WITH_TESTS=1 ;;
+        --with-validate)   WITH_VALIDATE=1 ;;
+        --with-preflight)  WITH_TESTS=1; WITH_VALIDATE=1 ;;
+        --no-tests)        WITH_TESTS=0 ;;
+        --no-validate)     WITH_VALIDATE=0 ;;
+        -h|--help)
+            sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
+            exit 0
+            ;;
+        *)
+            echo "Unknown flag: $1" >&2
+            echo "Use --help for usage." >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -146,7 +176,7 @@ for port_var in API_PORT ADMIN_PORT JUPYTER_PORT DOCS_PORT; do
     fi
 done
 
-if [[ "$SKIP_PREFLIGHT" != "1" ]]; then
+if [[ "$WITH_TESTS" == "1" ]]; then
     log "Pre-flight: running tests…"
     if python -m pytest tests/ -q --no-cov >"$LOG_DIR/pytest.log" 2>&1; then
         ok "Tests passed"
@@ -154,7 +184,11 @@ if [[ "$SKIP_PREFLIGHT" != "1" ]]; then
         err "Tests failed — see $LOG_DIR/pytest.log"
         exit 1
     fi
+else
+    printf "${DIM}  · tests skipped (default; --with-tests to opt in)${NC}\n"
+fi
 
+if [[ "$WITH_VALIDATE" == "1" ]]; then
     log "Pre-flight: semantic validation…"
     if python validate.py >"$LOG_DIR/validate.log" 2>&1; then
         fails=$(grep -c "FAIL" "$LOG_DIR/validate.log" || true)
@@ -162,7 +196,6 @@ if [[ "$SKIP_PREFLIGHT" != "1" ]]; then
             err "Validation reported $fails FAIL(s) — see $LOG_DIR/validate.log"
             exit 1
         fi
-        # Pull the "Summary: N pass · N warn · N fail" line for display
         summary_line=$(grep -E "^\s*Summary:" "$LOG_DIR/validate.log" | tr -s ' ' | sed 's/^ //')
         ok "Validation OK${summary_line:+ — $summary_line}"
     else
@@ -170,7 +203,7 @@ if [[ "$SKIP_PREFLIGHT" != "1" ]]; then
         exit 1
     fi
 else
-    warn "Pre-flight skipped (SKIP_PREFLIGHT=1)"
+    printf "${DIM}  · validation skipped (default; --with-validate to opt in)${NC}\n"
 fi
 
 # ---------------------------------------------------------------------------

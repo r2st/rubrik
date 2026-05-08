@@ -706,7 +706,7 @@ $ make validate
 <p>What it does:
 1. <strong>Pre-flight</strong>: runs the test suite + the semantic validation; aborts on any FAIL
 2. <strong>Refreshes</strong> <code>output/</code> (batch pipeline) and <code>docs/html/</code> (HTML docs) in parallel
-3. <strong>Starts</strong> three services in the background, waits for each to be ready, prints the URLs:</p>
+3. <strong>Starts</strong> four services in the background, waits for each to be ready, prints the URLs:</p>
 <table>
 <thead>
 <tr>
@@ -717,9 +717,14 @@ $ make validate
 </thead>
 <tbody>
 <tr>
-<td>FastAPI + dashboard</td>
+<td>Public API + dashboard</td>
 <td><code>http://127.0.0.1:8000</code></td>
-<td>API + web UI + OpenAPI docs at <code>/docs</code></td>
+<td><code>/api/v1/*</code> analyst read API + web UI + <code>/docs</code> (OpenAPI)</td>
+</tr>
+<tr>
+<td><strong>Admin panel</strong></td>
+<td><code>http://127.0.0.1:8001</code></td>
+<td><code>/admin</code> HTML + <code>/api/v1/admin/*</code> (separate process — see below)</td>
 </tr>
 <tr>
 <td>Jupyter Lab</td>
@@ -733,7 +738,19 @@ $ make validate
 </tr>
 </tbody>
 </table>
-<p><code>Ctrl+C</code> traps cleanly and stops everything (recursive process-tree cleanup). Logs accumulate under <code>.run-logs/</code>. Override ports via env vars (<code>API_PORT=9000 ./bin/start-all.sh</code>); skip pre-flight with <code>SKIP_PREFLIGHT=1</code>.</p>
+<p>The admin panel is a <strong>separate FastAPI process</strong> (<code>api.admin_app</code>) on its
+own port. The split exists so production deploys can route admin traffic
+through a private listener (Gateway API HTTPRoute, VPN, IAM-gated path)
+while the public API stays behind a CDN. Both processes share the admin
+DB; settings changes propagate via Postgres <code>LISTEN/NOTIFY</code> (or the 5 s
+TTL cache fallback on SQLite). See <a href="docs/adr/0014-cloud-agnostic-split-plane-architecture.md">ADR 0014 §"Control plane vs. data
+plane"</a> and
+<a href="deploy/k8s/gateway.yaml"><code>deploy/k8s/gateway.yaml</code></a>.</p>
+<p>Run the admin panel alone (without the rest):</p>
+<pre><code class="language-bash">make admin                       # uvicorn api.admin_app:app on :8001
+ADMIN_PORT=9001 make admin       # different port
+</code></pre>
+<p><code>Ctrl+C</code> traps cleanly and stops everything (recursive process-tree cleanup). Logs accumulate under <code>.run-logs/</code>. Override ports via env vars (<code>API_PORT=9000 ADMIN_PORT=9001 ./bin/start-all.sh</code>); skip pre-flight with <code>SKIP_PREFLIGHT=1</code>.</p>
 <h3 id="container-alternative-docker-compose">Container alternative (docker compose)<a class="anchor" href="#container-alternative-docker-compose" title="Permanent link">¶</a></h3>
 <pre><code class="language-bash">make compose-up                  # docker compose up --build -d
 make compose-down                # docker compose down
