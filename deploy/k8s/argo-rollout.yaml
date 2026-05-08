@@ -1,0 +1,120 @@
+# Argo Rollouts canary — progressive delivery for the API tier.
+#
+# ADR 0014 §"Delivery / Argo Rollouts canary": releases ramp through 5%
+# → 25% → 50% → 100% with analysis between steps. The analysis pulls
+# Prometheus and aborts if error-budget burn or p95 latency regresses.
+#
+# Replaces the bare apps/v1 Deployment in deploy/k8s/deployment.yaml when
+# Argo Rollouts is installed. The Deployment is kept as the bootstrap
+# manifest — switch by applying this Rollout in its place.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: transcript-intel-api
+  labels: { app: transcript-intel, role: api }
+spec:
+  replicas: 6
+  selector:
+    matchLabels: { app: transcript-intel, role: api }
+  # The pod template mirrors deployment.yaml — kept in this file
+  # intentionally so the Rollout is self-contained.
+  template:
+    metadata:
+      labels: { app: transcript-intel, role: api }
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: api
+          image: ghcr.io/example/transcript-intelligence:latest
+          ports: [{ containerPort: 8000, name: http }]
+          env:
+            - { name: RUN_MIGRATIONS, value: "skip" }
+          envFrom:
+            - secretRef: { name: transcript-intel-bootstrap }
+          livenessProbe:
+            httpGet: { path: /api/live, port: http }
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /api/ready, port: http }
+            periodSeconds: 5
+          startupProbe:
+            httpGet: { path: /api/live, port: http }
+            periodSeconds: 5
+            failureThreshold: 18
+          resources:
+            requests: { cpu: "500m", memory: "1Gi" }
+            limits:   { cpu: "2",    memory: "4Gi" }
+          lifecycle:
+            preStop:
+              exec: { command: ["sh", "-c", "sleep 10"] }
+  strategy:
+    canary:
+      # Two parallel services so traffic can be routed to canary vs stable.
+      canaryService: transcript-intel-api-canary
+      stableService: transcript-intel-api
+      # Drive the split via the Gateway API HTTPRoute (or the configured
+      # ingress provider). The trafficRouting block below is illustrative;
+      # bind to whatever the cluster supports.
+      trafficRouting:
+        smi:
+          rootService: transcript-intel-api
+          trafficSplitName: transcript-intel-api
+      steps:
+        - setWeight: 5
+        - pause: { duration: 5m }
+        - analysis:
+            templates:
+              - templateName: api-success-rate
+              - templateName: api-p95-latency
+        - setWeight: 25
+        - pause: { duration: 10m }
+        - analysis:
+            templates:
+              - templateName: api-success-rate
+              - templateName: api-p95-latency
+        - setWeight: 50
+        - pause: { duration: 10m }
+        - setWeight: 100
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: api-success-rate
+spec:
+  args:
+    - { name: service-name, value: transcript-intel-api-canary }
+  metrics:
+    - name: success-rate
+      interval: 1m
+      successCondition: "result[0] >= 0.995"
+      failureLimit: 1
+      provider:
+        prometheus:
+          address: http://prometheus.observability:9090
+          query: |
+            sum(rate(http_requests_total{service="{{ args.service-name }}",
+                                          status_class!="5xx"}[5m]))
+            /
+            sum(rate(http_requests_total{service="{{ args.service-name }}"}[5m]))
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: api-p95-latency
+spec:
+  args:
+    - { name: service-name, value: transcript-intel-api-canary }
+  metrics:
+    - name: p95-latency-ms
+      interval: 1m
+      successCondition: "result[0] <= 0.2"   # 200ms — matches HPA target
+      failureLimit: 2
+      provider:
+        prometheus:
+          address: http://prometheus.observability:9090
+          query: |
+            histogram_quantile(0.95,
+              sum(rate(http_request_duration_seconds_bucket{
+                service="{{ args.service-name }}"}[5m]))
+              by (le))

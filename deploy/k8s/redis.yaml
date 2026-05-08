@@ -1,0 +1,94 @@
+# Redis — cluster-wide rate limit storage + Arq queue + cache pub/sub.
+#
+# Per ADR 0014 §"Hot path", Redis is the load-bearing piece for:
+#   - slowapi cluster-wide rate limit storage  (api/limiter.py)
+#   - per-tenant rate limit counters           (api/limiter.py)
+#   - Arq job queue + result store             (api/jobs.py)
+#   - cache invalidation pub/sub               (future)
+#
+# Single primary + 1 replica is the minimum honest production posture.
+# Larger deployments swap this for a managed offering (ElastiCache,
+# Memorystore, Azure Cache, Upstash) — the application code is unchanged
+# because all access is via a Redis URL set on [runtime].redis_url.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: transcript-intel-redis-config
+data:
+  redis.conf: |
+    # Eviction: LFU is a better default than LRU for skewed access patterns
+    # (the research's recommendation). 256 MB is illustrative — size against
+    # working-set. Keys carry TTLs already (see ttl_with_jitter in caching.py).
+    maxmemory 256mb
+    maxmemory-policy allkeys-lfu
+    appendonly yes
+    appendfsync everysec
+    # Keep strict timeouts so dead clients don't pin connections.
+    timeout 30
+    tcp-keepalive 60
+    # Disable expensive commands the app never uses.
+    rename-command FLUSHDB ""
+    rename-command FLUSHALL ""
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: transcript-intel-redis
+  labels: { app: transcript-intel, role: redis }
+spec:
+  serviceName: redis
+  replicas: 2  # 1 primary + 1 replica via Sentinel/Operator (sketched, not configured here)
+  selector:
+    matchLabels: { app: transcript-intel, role: redis }
+  template:
+    metadata:
+      labels: { app: transcript-intel, role: redis }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.2-alpine
+          args: ["/etc/redis/redis.conf"]
+          ports: [{ containerPort: 6379, name: redis }]
+          volumeMounts:
+            - { name: data,   mountPath: /data }
+            - { name: config, mountPath: /etc/redis }
+          resources:
+            requests: { cpu: "200m", memory: "300Mi" }
+            limits:   { cpu: "1",    memory: "512Mi" }
+          # Liveness via a TCP ping — readiness via PING command.
+          livenessProbe:
+            tcpSocket: { port: redis }
+            periodSeconds: 10
+          readinessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            periodSeconds: 5
+      volumes:
+        - name: config
+          configMap: { name: transcript-intel-redis-config }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: { requests: { storage: 10Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  selector: { app: transcript-intel, role: redis }
+  ports: [{ port: 6379, targetPort: 6379, name: redis }]
+  clusterIP: None  # headless — clients resolve pod IPs directly
+---
+# PodDisruptionBudget — Redis is a quorum-bearing service; at least one
+# replica must remain available during voluntary disruptions (node drains,
+# upgrades). Per ADR 0014 §"Stateful software belongs on StatefulSets".
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: transcript-intel-redis-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: transcript-intel, role: redis }

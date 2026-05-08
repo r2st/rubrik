@@ -446,6 +446,8 @@ The synthetic fixtures already caught 2 real categorizer bugs during development
 - [`docs/adr/`](docs/adr/) — Architecture Decision Records (immutable, dated, per-decision)
 - **`docs/html/`** — same content as standalone HTML files. `make docs` to build, `open docs/html/index.html` to view
 - [`docs/presentation.html`](docs/presentation.html) — multi-slide HTML presentation (13 slides, keyboard-navigable). Run `make slides` or open the file directly.
+- [`research/deep-research-report.md`](research/deep-research-report.md) — independent cloud-agnostic blueprint adopted as the reference architecture (ADR 0014).
+- [`deploy/slos.md`](deploy/slos.md), [`deploy/dr-runbook.md`](deploy/dr-runbook.md) — operational artifacts: SLO catalogue and disaster-recovery procedures.
 
 ### Load testing
 

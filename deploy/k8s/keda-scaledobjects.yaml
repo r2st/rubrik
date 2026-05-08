@@ -1,0 +1,62 @@
+# KEDA ScaledObjects — event-driven autoscaling for the worker tier.
+#
+# ADR 0014 §"Stateless app plane" recommends KEDA on top of HPA so consumers
+# scale on **queue lag** rather than CPU. The Redis trigger covers Arq's
+# task queue (api/jobs.py); the Kafka trigger is the production path once
+# the event backbone is wired.
+#
+# KEDA's Kafka scaler doc cautions that consumer parallelism is bounded by
+# partition count — the ADR 0014 capacity model derives ≥24 partitions for
+# 12 MiB/s of stream throughput; size maxReplicaCount accordingly.
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: transcript-intel-arq-workers
+  namespace: prod
+  labels: { app: transcript-intel, role: worker }
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: transcript-intel-worker
+  pollingInterval: 15        # seconds between trigger evaluations
+  cooldownPeriod: 300        # seconds idle before scaling to minReplicaCount
+  minReplicaCount: 1
+  maxReplicaCount: 20
+  triggers:
+    - type: redis
+      metadata:
+        addressFromEnv: REDIS_HOST_PORT      # set in the Deployment env
+        listName: arq:queue
+        listLength: "10"                     # scale-up when ≥ 10 pending
+        databaseIndex: "0"
+        enableTLS: "false"
+---
+# Kafka consumer group ScaledObject — applies once the event backbone is
+# wired (production stage 4 in ADR 0008's migration table). Bind the
+# Deployment name to the actual consumer pool when it ships.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: transcript-intel-kafka-consumers
+  namespace: prod
+  labels: { app: transcript-intel, role: kafka-consumer }
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: transcript-intel-kafka-consumers
+  pollingInterval: 15
+  cooldownPeriod: 300
+  minReplicaCount: 3         # cover the partition-count floor
+  maxReplicaCount: 24        # match minimum partition count from the capacity model
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServersFromEnv: KAFKA_BOOTSTRAP
+        consumerGroup: transcript-intel.events
+        topic: transcript-intel.events
+        lagThreshold: "10000"
+        activationLagThreshold: "100"
+        offsetResetPolicy: latest

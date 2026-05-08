@@ -657,6 +657,19 @@ Three probe endpoints are registered on a separate **public** router that bypass
 
 ---
 
+## Cloud-agnostic split-plane reference (ADR 0014)
+
+The full production blueprint for handling 100M+ records is consolidated in
+[ADR 0014](adr/0014-cloud-agnostic-split-plane-architecture.md), which adopts
+the cloud-agnostic research blueprint (`research/deep-research-report.md`)
+as the reference. The split-plane diagram, component-by-component status,
+SLOs (`deploy/slos.md`), DR/PITR posture (`deploy/dr-runbook.md`), and the
+remaining-gap deploy manifests (`deploy/k8s/{redis,argo-rollout,keda-scaledobjects,cluster-autoscaler}.yaml`)
+all live there. This ARCHITECTURE doc remains the day-to-day map of what
+the codebase does today.
+
+---
+
 ## Scaling to 100M+ records
 
 **The architecture target is an auto-scalable system handling millions to 100M+ records.** The in-memory single-instance build is the development path, not the production path. At production volume the substrate changes (the analytical layers run against a real data platform; the API tier auto-scales per [ADR 0013](adr/0013-api-tier-auto-scaling.md); the ML tier auto-scales per [ADR 0010](adr/0010-auto-scaling-ml-pipeline.md)) but the *application code shape* stays mostly the same.

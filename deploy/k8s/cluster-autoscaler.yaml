@@ -1,0 +1,81 @@
+# Cluster Autoscaler — node-level elasticity to back HPA + KEDA.
+#
+# Per ADR 0014, HPA scales pod replicas, KEDA scales on event-source lag,
+# and Cluster Autoscaler adds nodes when pods cannot schedule. All three
+# work together — without CA, HPA tops out at "no Pending pods → no
+# action" once nodes are full.
+#
+# This manifest is intentionally provider-agnostic — the actual node pool
+# wiring belongs to the cloud provider's Helm chart (autoscaler/aws-eks,
+# autoscaler/gke, autoscaler/aks, or Karpenter on AWS for pod-level node
+# provisioning). What's captured here is the deployment shape and the
+# safety knobs.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cluster-autoscaler
+  namespace: kube-system
+  labels: { app: cluster-autoscaler }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: cluster-autoscaler }
+  template:
+    metadata:
+      labels: { app: cluster-autoscaler }
+      annotations:
+        # Don't evict CA itself during scale-down.
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+    spec:
+      serviceAccountName: cluster-autoscaler
+      containers:
+        - name: cluster-autoscaler
+          image: registry.k8s.io/autoscaling/cluster-autoscaler:v1.30.0
+          command:
+            - ./cluster-autoscaler
+            - --v=4
+            - --stderrthreshold=info
+            - --cloud-provider=aws        # change per cluster: gce | azure | aws
+            - --skip-nodes-with-local-storage=false
+            - --expander=least-waste
+            - --node-group-auto-discovery=asg:tag=k8s.io/cluster-autoscaler/enabled
+            - --balance-similar-node-groups
+            # Conservative scale-down: matches ADR 0014's "Conservative
+            # scale-down: avoid thrashing under spikey traffic".
+            - --scale-down-delay-after-add=10m
+            - --scale-down-unneeded-time=10m
+            - --scale-down-utilization-threshold=0.5
+            - --max-graceful-termination-sec=60
+          resources:
+            requests: { cpu: "100m", memory: "300Mi" }
+            limits:   { cpu: "500m", memory: "1Gi" }
+---
+# Karpenter NodePool (alternative on AWS) — pod-level node provisioning,
+# faster than CA for spiky loads. Use one or the other, not both.
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: transcript-intel-default
+spec:
+  template:
+    metadata:
+      labels: { app: transcript-intel }
+    spec:
+      requirements:
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64", "arm64"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand", "spot"]   # spot for stateless tier; on-demand for stateful
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values: ["m6i.large", "m6i.xlarge", "m7g.large", "m7g.xlarge"]
+      taints: []
+      expireAfter: 720h                    # rotate weekly to pick up patched AMIs
+  disruption:
+    consolidationPolicy: WhenUnderutilized
+    consolidateAfter: 30s
+  limits:
+    cpu: "1000"
