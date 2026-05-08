@@ -269,15 +269,32 @@ A single command brings up the whole dev environment:
 What it does:
 1. **Pre-flight**: runs the test suite + the semantic validation; aborts on any FAIL
 2. **Refreshes** `output/` (batch pipeline) and `docs/html/` (HTML docs) in parallel
-3. **Starts** three services in the background, waits for each to be ready, prints the URLs:
+3. **Starts** four services in the background, waits for each to be ready, prints the URLs:
 
 | Service | URL | Serves |
 |---|---|---|
-| FastAPI + dashboard | `http://127.0.0.1:8000` | API + web UI + OpenAPI docs at `/docs` |
+| Public API + dashboard | `http://127.0.0.1:8000` | `/api/v1/*` analyst read API + web UI + `/docs` (OpenAPI) |
+| **Admin panel** | `http://127.0.0.1:8001` | `/admin` HTML + `/api/v1/admin/*` (separate process — see below) |
 | Jupyter Lab | `http://127.0.0.1:8888` | The narrative notebook |
 | HTML docs | `http://127.0.0.1:8765` | Standalone documentation site |
 
-`Ctrl+C` traps cleanly and stops everything (recursive process-tree cleanup). Logs accumulate under `.run-logs/`. Override ports via env vars (`API_PORT=9000 ./bin/start-all.sh`); skip pre-flight with `SKIP_PREFLIGHT=1`.
+The admin panel is a **separate FastAPI process** (`api.admin_app`) on its
+own port. The split exists so production deploys can route admin traffic
+through a private listener (Gateway API HTTPRoute, VPN, IAM-gated path)
+while the public API stays behind a CDN. Both processes share the admin
+DB; settings changes propagate via Postgres `LISTEN/NOTIFY` (or the 5 s
+TTL cache fallback on SQLite). See [ADR 0014 §"Control plane vs. data
+plane"](docs/adr/0014-cloud-agnostic-split-plane-architecture.md) and
+[`deploy/k8s/gateway.yaml`](deploy/k8s/gateway.yaml).
+
+Run the admin panel alone (without the rest):
+
+```bash
+make admin                       # uvicorn api.admin_app:app on :8001
+ADMIN_PORT=9001 make admin       # different port
+```
+
+`Ctrl+C` traps cleanly and stops everything (recursive process-tree cleanup). Logs accumulate under `.run-logs/`. Override ports via env vars (`API_PORT=9000 ADMIN_PORT=9001 ./bin/start-all.sh`); skip pre-flight with `SKIP_PREFLIGHT=1`.
 
 ### Container alternative (docker compose)
 

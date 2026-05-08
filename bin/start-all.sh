@@ -3,16 +3,23 @@
 # start-all.sh — bring up the full Transcript Intelligence dev environment.
 #
 # Starts (in parallel):
-#   - FastAPI server            :8000   (REST API + web dashboard at /)
+#   - Public API + dashboard    :8000   (api.main, /api/v1/* + dashboard at /)
+#   - Admin panel               :8001   (api.admin_app, /admin + /api/v1/admin)
 #   - Jupyter Lab               :8888   (narrative notebook)
 #   - Static docs HTTP server   :8765   (HTML documentation)
+#
+# The admin panel runs as a SEPARATE process on its own port so the platform
+# can route admin traffic through a private listener (see ADR 0014 §"Control
+# plane vs. data plane" and deploy/k8s/gateway.yaml). Both processes share
+# the admin DB; settings changes propagate via LISTEN/NOTIFY (Postgres) or
+# the 5s TTL cache fallback (SQLite).
 #
 # Pre-flight: ensures tests pass and validation succeeds before launch.
 #
 # Usage:
-#   ./bin/start-all.sh                  # run with defaults
-#   SKIP_PREFLIGHT=1 ./bin/start-all.sh  # skip tests + validate
-#   API_PORT=9000 ./bin/start-all.sh    # custom ports
+#   ./bin/start-all.sh                                    # run with defaults
+#   SKIP_PREFLIGHT=1 ./bin/start-all.sh                   # skip tests + validate
+#   API_PORT=9000 ADMIN_PORT=9001 ./bin/start-all.sh      # custom ports
 #
 # Press Ctrl+C to gracefully stop everything.
 
@@ -22,6 +29,7 @@ set -euo pipefail
 # Config (override via env)
 # ---------------------------------------------------------------------------
 API_PORT="${API_PORT:-8000}"
+ADMIN_PORT="${ADMIN_PORT:-8001}"
 JUPYTER_PORT="${JUPYTER_PORT:-8888}"
 DOCS_PORT="${DOCS_PORT:-8765}"
 SKIP_PREFLIGHT="${SKIP_PREFLIGHT:-0}"
@@ -130,7 +138,7 @@ require_cmd lsof    || warn "lsof not available — port-conflict checks disable
 require_cmd curl    || { err "curl required for readiness checks"; exit 1; }
 
 # Port-conflict check
-for port_var in API_PORT JUPYTER_PORT DOCS_PORT; do
+for port_var in API_PORT ADMIN_PORT JUPYTER_PORT DOCS_PORT; do
     port=${!port_var}
     if port_in_use "$port" 2>/dev/null; then
         err "$port_var ($port) is already in use. Stop the conflicting process or set $port_var=<other>."
@@ -182,13 +190,21 @@ ok "Outputs refreshed (output/, docs/html/)"
 # ---------------------------------------------------------------------------
 # Start services
 # ---------------------------------------------------------------------------
-log "Starting FastAPI on :$API_PORT …"
+log "Starting public API on :$API_PORT …"
 uvicorn api.main:app \
     --host 127.0.0.1 --port "$API_PORT" \
     --log-level info \
     >"$LOG_DIR/api.log" 2>&1 &
 PIDS+=($!)
-wait_for_http "http://127.0.0.1:$API_PORT/api/health" "FastAPI"
+wait_for_http "http://127.0.0.1:$API_PORT/api/live" "Public API"
+
+log "Starting admin panel on :$ADMIN_PORT …"
+uvicorn api.admin_app:app \
+    --host 127.0.0.1 --port "$ADMIN_PORT" \
+    --log-level info \
+    >"$LOG_DIR/admin.log" 2>&1 &
+PIDS+=($!)
+wait_for_http "http://127.0.0.1:$ADMIN_PORT/api/live" "Admin panel"
 
 if command -v jupyter >/dev/null 2>&1; then
     log "Starting Jupyter Lab on :$JUPYTER_PORT …"
@@ -220,6 +236,7 @@ printf "${GREEN}${BOLD}╰──────────────────
 echo
 printf "  ${BOLD}Dashboard${NC}      ${BLUE}http://127.0.0.1:%s${NC}\n" "$API_PORT"
 printf "  ${BOLD}OpenAPI docs${NC}   ${BLUE}http://127.0.0.1:%s/docs${NC}\n" "$API_PORT"
+printf "  ${BOLD}Admin panel${NC}    ${BLUE}http://127.0.0.1:%s/${NC}   ${DIM}(separate process)${NC}\n" "$ADMIN_PORT"
 printf "  ${BOLD}Jupyter${NC}        ${BLUE}http://127.0.0.1:%s/lab/tree/transcript_intelligence.ipynb${NC}\n" "$JUPYTER_PORT"
 printf "  ${BOLD}HTML docs${NC}      ${BLUE}http://127.0.0.1:%s${NC}\n" "$DOCS_PORT"
 echo

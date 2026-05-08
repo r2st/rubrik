@@ -105,6 +105,7 @@ ignore = [
 "api/admin/auth.py" = ["PLC0415", "PLR0911"] # lazy imports + multi-branch verify_password
 "api/admin/routes.py" = ["PLC0415"]          # lazy auth import
 "api/main.py" = ["PLC0415"]                  # lazy router import
+"api/admin_app.py" = ["PLC0415"]             # lazy db imports inside readiness probe
 "api/backpressure.py" = ["PLW0603", "SLF001"]   # singleton handle for /api/ready
 "api/snapshot.py" = ["PLC0415"]              # lazy fsspec import (optional dep)
 "api/snapshot_writer.py" = ["PLC0415"]       # lazy runtime_settings import

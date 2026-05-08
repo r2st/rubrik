@@ -8,6 +8,7 @@
 set -euo pipefail
 
 API_PORT="${API_PORT:-8000}"
+ADMIN_PORT="${ADMIN_PORT:-8001}"
 JUPYTER_PORT="${JUPYTER_PORT:-8888}"
 DOCS_PORT="${DOCS_PORT:-8765}"
 
@@ -36,6 +37,7 @@ if ! command -v lsof >/dev/null 2>&1; then
     exit 1
 fi
 
-kill_port "$API_PORT"     "FastAPI"
+kill_port "$API_PORT"     "Public API"
+kill_port "$ADMIN_PORT"   "Admin panel"
 kill_port "$JUPYTER_PORT" "Jupyter Lab"
 kill_port "$DOCS_PORT"    "Docs server"

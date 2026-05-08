@@ -50,11 +50,14 @@ migrate-status:  ## Show current alembic revision + pending migrations
 	alembic current
 	alembic history
 
-api:  ## Run the FastAPI server (production: 4 workers)
+api:  ## Run the public API + dashboard (production: 4 workers)
 	uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers 4
 
-dev:  ## Run the FastAPI server with auto-reload (dev)
+dev:  ## Run the public API with auto-reload (dev)
 	uvicorn api.main:app --reload --host 127.0.0.1 --port 8000
+
+admin:  ## Run the admin panel on its own port (default 8001)
+	uvicorn api.admin_app:app --reload --host 127.0.0.1 --port $${ADMIN_PORT:-8001}
 
 notebook:  ## Open the narrative notebook
 	jupyter lab transcript_intelligence.ipynb
