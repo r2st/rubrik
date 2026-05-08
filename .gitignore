@@ -55,9 +55,6 @@ data/*.db-journal
 data/*.db-shm
 data/*.db-wal
 
-# Personal interview prep — don't push
-rehearsal/
-
 # Runtime logs from start-all.sh
 .run-logs/
 

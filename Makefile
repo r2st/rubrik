@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test cov lint format type-check validate validate-edge gen-synthetic run run-streaming migrate migrate-status api dev notebook docs rehearsal-html docker-build docker-run start-all stop-all compose-up compose-down clean all
+.PHONY: help install install-dev test cov lint format type-check validate validate-edge gen-synthetic run run-streaming migrate migrate-status api dev admin notebook docs slides docker-build docker-run start-all stop-all compose-up compose-down clean all
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -74,9 +74,6 @@ docs:  ## Build the static HTML documentation site
 slides:  ## Open the HTML presentation in the default browser
 	@open docs/presentation.html 2>/dev/null || xdg-open docs/presentation.html 2>/dev/null || \
 	  echo "Open: file://$$(pwd)/docs/presentation.html"
-
-rehearsal-html:  ## Build personal interview-prep HTML site (rehearsal/html/, gitignored)
-	python rehearsal/build_html.py
 
 docker-build:  ## Build the Docker image
 	docker build -t transcript-intelligence:latest .
