@@ -240,6 +240,39 @@ def get_audit(
 
 
 # ---------------------------------------------------------------------------
+# Outbox — operator surface for the transactional outbox / relayer (ADR 0014)
+# ---------------------------------------------------------------------------
+@router.get("/outbox/stuck")
+def outbox_stuck_count(actor: str = Depends(require_admin)) -> dict:
+    """Count rows the relayer gave up on (delivery_attempts ≥ max).
+
+    Healthy = 0. Non-zero = downstream is sick or the publisher is
+    misconfigured. See `deploy/incident-runbooks.md` §"Outbox relayer
+    falling behind."
+    """
+    from api.outbox import count_stuck_rows
+    return {"stuck": count_stuck_rows(), "actor": actor}
+
+
+@router.post("/outbox/replay")
+def outbox_replay(
+    limit: int = 100,
+    actor: str = Depends(require_admin),
+) -> dict:
+    """Reset ``delivery_attempts`` to 0 for stuck rows so the relayer retries.
+
+    Use after a publisher outage clears: rows that hit the attempt cap
+    during the outage become eligible again on the next drain cycle. The
+    relayer logs each retry; failed rows climb back to the cap and either
+    route to the DLQ (if the publisher supports it) or stick again
+    (operator inspects the source).
+    """
+    from api.outbox import replay_stuck_rows
+    reset = replay_stuck_rows(limit=max(1, min(limit, 1000)))
+    return {"ok": True, "reset": reset, "actor": actor}
+
+
+# ---------------------------------------------------------------------------
 # Snapshot — manually trigger a rebuild (off-path via Arq when available)
 # ---------------------------------------------------------------------------
 @router.post("/snapshot/rebuild")

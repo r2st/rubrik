@@ -102,6 +102,31 @@ class InMemoryPublisher:
         self.delivered.append(event)
 
 
+class DLQPublisher:
+    """Wraps a primary publisher and a separate DLQ publisher.
+
+    Intended use: production deploys construct ``DLQPublisher(KafkaPublisher
+    (events_topic), KafkaPublisher(dlq_topic))``. The relayer never sees
+    the DLQ directly — it just calls ``publish()`` on this wrapper.
+
+    Routing rule: a poison-row check happens **before** publish, in the
+    relayer (rows whose ``delivery_attempts >= max_attempts`` are routed
+    to the DLQ instead of the primary). This wrapper exists so the relayer
+    can call one of two publish methods on the same handle without knowing
+    the topic configuration.
+    """
+
+    def __init__(self, primary: Publisher, dlq: Publisher) -> None:
+        self.primary = primary
+        self.dlq = dlq
+
+    def publish(self, event: OutboxRecord) -> None:
+        self.primary.publish(event)
+
+    def publish_dlq(self, event: OutboxRecord) -> None:
+        self.dlq.publish(event)
+
+
 # ---------------------------------------------------------------------------
 # Relayer
 # ---------------------------------------------------------------------------
@@ -115,6 +140,15 @@ class Relayer:
         """Publish at most ``batch_size`` unprocessed rows; return the count.
 
         Returns 0 when the table is fully drained — caller can sleep.
+
+        On a publisher exception, the row's ``delivery_attempts`` is
+        incremented and the row is left for the next pass. Once
+        ``delivery_attempts`` reaches ``max_attempts``, the row is treated
+        as **poison**: routed to the DLQ via ``publisher.publish_dlq()`` if
+        the publisher supports it, then marked processed (so it stops
+        re-trying). If the publisher doesn't have a DLQ method, the poison
+        row stays unprocessed and is visible to the operator dashboard
+        (``count_stuck_rows()``).
         """
         published = 0
         with session_scope() as s:
@@ -122,7 +156,6 @@ class Relayer:
                 s.execute(
                     select(OutboxEvent)
                     .where(OutboxEvent.processed_at.is_(None))
-                    .where(OutboxEvent.delivery_attempts < self.max_attempts)
                     .order_by(OutboxEvent.created_at.asc())
                     .limit(self.batch_size)
                 ).scalars()
@@ -138,12 +171,34 @@ class Relayer:
                     sequence=row.sequence,
                     payload=row.payload,
                 )
+                # Poison row → DLQ (if the publisher supports it) and mark
+                # processed so the relayer stops re-trying.
+                if row.delivery_attempts >= self.max_attempts:
+                    if hasattr(self.publisher, "publish_dlq"):
+                        try:
+                            self.publisher.publish_dlq(record)
+                            row.processed_at = datetime.now(timezone.utc)
+                            log.warning(
+                                "Outbox row %s exceeded max_attempts; "
+                                "routed to DLQ",
+                                row.id,
+                            )
+                        except Exception:  # noqa: BLE001
+                            log.exception(
+                                "DLQ publish failed for row %s; leaving "
+                                "stuck for operator inspection", row.id,
+                            )
+                    # No DLQ method — leave it stuck for an operator.
+                    continue
+
                 try:
                     self.publisher.publish(record)
                 except Exception:  # noqa: BLE001
                     row.delivery_attempts += 1
-                    log.exception("Outbox publish failed (id=%s, attempts=%d)",
-                                  row.id, row.delivery_attempts)
+                    log.exception(
+                        "Outbox publish failed (id=%s, attempts=%d)",
+                        row.id, row.delivery_attempts,
+                    )
                     continue
                 row.processed_at = datetime.now(timezone.utc)
                 published += 1
@@ -160,6 +215,54 @@ class Relayer:
             except Exception:  # noqa: BLE001
                 log.exception("Outbox relayer iteration failed; sleeping before retry")
                 time.sleep(idle_sleep_s * 5)
+
+
+# ---------------------------------------------------------------------------
+# Operator surface — replay stuck rows + count stuck rows
+# ---------------------------------------------------------------------------
+def count_stuck_rows(max_attempts: int = 5) -> int:
+    """How many unprocessed rows have hit the attempt cap. 0 = healthy."""
+    with session_scope() as s:
+        from sqlalchemy import func
+        return int(
+            s.execute(
+                select(func.count(OutboxEvent.id))
+                .where(OutboxEvent.processed_at.is_(None))
+                .where(OutboxEvent.delivery_attempts >= max_attempts)
+            ).scalar() or 0
+        )
+
+
+def replay_stuck_rows(*, max_attempts: int = 5, limit: int = 100) -> int:
+    """Reset ``delivery_attempts`` to 0 for unprocessed rows that hit the cap.
+
+    Use case: a brief publisher outage caused a batch of rows to exceed
+    ``max_attempts``. Once the publisher is healthy again, replay them.
+
+    Returns the number of rows reset. The next ``drain_once()`` will retry
+    them as if fresh.
+    """
+    from sqlalchemy import update
+    with session_scope() as s:
+        result = s.execute(
+            update(OutboxEvent)
+            .where(OutboxEvent.processed_at.is_(None))
+            .where(OutboxEvent.delivery_attempts >= max_attempts)
+            .where(
+                OutboxEvent.id.in_(
+                    select(OutboxEvent.id)
+                    .where(OutboxEvent.processed_at.is_(None))
+                    .where(OutboxEvent.delivery_attempts >= max_attempts)
+                    .order_by(OutboxEvent.created_at.asc())
+                    .limit(limit)
+                )
+            )
+            .values(delivery_attempts=0)
+        )
+        s.commit()
+        reset = int(result.rowcount or 0)
+        log.info("Outbox replay: reset %d stuck row(s)", reset)
+        return reset
 
 
 # ---------------------------------------------------------------------------

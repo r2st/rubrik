@@ -40,6 +40,7 @@ from src.settings import get_runtime_view, get_settings
 from . import adaptive_throttle as adaptive_throttle_mod
 from . import backpressure as backpressure_mod
 from . import errors as errors_mod
+from . import idempotency as idempotency_mod
 from . import limiter as limiter_mod
 from . import observability, state
 from .admin.auth import ensure_admin_password_seeded
@@ -169,6 +170,11 @@ app.add_middleware(backpressure_mod.BackpressureMiddleware, max_inflight=_bp_cap
 # shedding when the rolling p95 latency breaches the SLO. Sheds before the
 # inflight cap to avoid retry storms on a degraded downstream.
 app.add_middleware(adaptive_throttle_mod.AdaptiveThrottleMiddleware)
+# Idempotency-Key cache (opt-in per request via header + per-deploy via the
+# `idempotency.enabled` runtime setting). Sits inside the throttles so the
+# cached response gets the same load-shedding protections; sits outside
+# the auth + business logic so cache lookups bypass downstream work.
+app.add_middleware(idempotency_mod.IdempotencyMiddleware)
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(
     SecurityHeadersMiddleware,

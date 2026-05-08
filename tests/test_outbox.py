@@ -117,3 +117,117 @@ def test_prune_removes_old_processed_rows():
     assert deleted == 1
     with session_scope() as s:
         assert s.query(OutboxEvent).count() == 0
+
+
+# ---------------------------------------------------------------------------
+# DLQ + operator surface
+# ---------------------------------------------------------------------------
+def test_dlq_publisher_routes_to_secondary():
+    """`DLQPublisher.publish_dlq()` calls the dlq publisher, not the primary."""
+    from api.outbox import DLQPublisher, InMemoryPublisher
+
+    primary = InMemoryPublisher()
+    dlq = InMemoryPublisher()
+    pub = DLQPublisher(primary, dlq)
+
+    record = type("R", (), {
+        "id": 1, "aggregate_type": "m", "aggregate_id": "x",
+        "event_type": "t", "sequence": 0, "payload": {},
+    })()
+    pub.publish(record)
+    pub.publish_dlq(record)
+    assert primary.delivered == [record]
+    assert dlq.delivered == [record]
+
+
+def test_relayer_routes_poison_rows_to_dlq():
+    """delivery_attempts >= max_attempts → DLQ + marked processed."""
+    from api.outbox import DLQPublisher, InMemoryPublisher
+
+    primary = InMemoryPublisher()
+    dlq = InMemoryPublisher()
+    relayer = Relayer(publisher=DLQPublisher(primary, dlq), max_attempts=3)
+
+    with session_scope() as s:
+        emit(s, aggregate_type="m", aggregate_id="poison",
+             event_type="t", payload={})
+        s.commit()
+        s.query(OutboxEvent).update({"delivery_attempts": 5})
+        s.commit()
+    relayer.drain_once()
+
+    # Routed to DLQ, NOT primary; row marked processed.
+    assert primary.delivered == []
+    assert len(dlq.delivered) == 1
+    assert dlq.delivered[0].aggregate_id == "poison"
+    with session_scope() as s:
+        unprocessed = s.query(OutboxEvent).filter(
+            OutboxEvent.processed_at.is_(None)
+        ).count()
+    assert unprocessed == 0
+
+
+def test_count_stuck_rows_returns_zero_when_healthy():
+    from api.outbox import count_stuck_rows
+    assert count_stuck_rows(max_attempts=5) == 0
+
+
+def test_count_stuck_rows_counts_rows_at_attempt_cap():
+    from api.outbox import count_stuck_rows
+    with session_scope() as s:
+        for _ in range(3):
+            emit(s, aggregate_type="m", aggregate_id="x",
+                 event_type="t", payload={})
+        s.commit()
+        s.query(OutboxEvent).update({"delivery_attempts": 7})
+        s.commit()
+    assert count_stuck_rows(max_attempts=5) == 3
+
+
+def test_replay_stuck_rows_resets_attempts():
+    """`replay_stuck_rows` zeroes delivery_attempts so the next drain retries."""
+    from api.outbox import replay_stuck_rows
+    with session_scope() as s:
+        for _ in range(2):
+            emit(s, aggregate_type="m", aggregate_id="x",
+                 event_type="t", payload={})
+        s.commit()
+        s.query(OutboxEvent).update({"delivery_attempts": 6})
+        s.commit()
+
+    reset = replay_stuck_rows(max_attempts=5)
+    assert reset == 2
+    with session_scope() as s:
+        for row in s.query(OutboxEvent).all():
+            assert row.delivery_attempts == 0
+
+
+def test_admin_outbox_endpoints():
+    """Admin can see stuck-row count and trigger a replay."""
+    from fastapi.testclient import TestClient
+
+    from api.main import app
+    BOOTSTRAP = "changeme-on-first-login"
+
+    # Seed a stuck row.
+    with session_scope() as s:
+        emit(s, aggregate_type="m", aggregate_id="x",
+             event_type="t", payload={})
+        s.commit()
+        s.query(OutboxEvent).update({"delivery_attempts": 7})
+        s.commit()
+
+    with TestClient(app) as c:
+        c.post("/api/v1/admin/login", json={"password": BOOTSTRAP})
+
+        r = c.get("/api/v1/admin/outbox/stuck")
+        assert r.status_code == 200
+        assert r.json()["stuck"] == 1
+
+        r = c.post("/api/v1/admin/outbox/replay")
+        assert r.status_code == 200, r.text
+        assert r.json() == {"ok": True, "reset": 1, "actor": "admin"}
+
+        # After replay, the same endpoint reports zero stuck rows.
+        r = c.get("/api/v1/admin/outbox/stuck")
+        assert r.json()["stuck"] == 0

@@ -51,6 +51,7 @@ from src.runtime_settings import (
 from src.settings import get_settings
 
 from . import errors as errors_mod
+from . import idempotency as idempotency_mod
 from .admin.auth import ensure_admin_password_seeded
 from .admin.routes import router as admin_router
 from .middleware import (
@@ -118,6 +119,10 @@ errors_mod.register(app)
 # Admin traffic is low-volume — no backpressure or adaptive throttle here.
 # But body-size + request-id + security headers still apply.
 app.add_middleware(BodySizeLimitMiddleware)
+# Idempotency-Key cache — admin endpoints (password rotation, snapshot
+# rebuild, settings updates) are exactly where client retries cause
+# duplicate writes; the cache makes them safe.
+app.add_middleware(idempotency_mod.IdempotencyMiddleware)
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(SecurityHeadersMiddleware, hsts=settings.is_prod)
 

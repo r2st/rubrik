@@ -133,6 +133,19 @@ DEFAULTS: list[SettingDefault] = [
     SettingDefault("llm.tier1_endpoint", "", "str", "llm",
         "vLLM serving endpoint for the Gemma fine-tune (Tier 1). "
         "Empty = inline / disabled. Example: 'http://vllm.cluster:8000/v1'."),
+
+    # ---- idempotency (Idempotency-Key middleware, opt-in per request) ----
+    SettingDefault("idempotency.enabled", False, "bool", "idempotency",
+        "Honor the 'Idempotency-Key' header on POST/PUT/PATCH/DELETE. "
+        "Cached responses replay safely; mismatched re-use returns 409. "
+        "Off = the header is ignored (legacy behavior)."),
+    SettingDefault("idempotency.ttl_hours", 24, "int", "idempotency",
+        "How long a cached idempotency entry survives. 24h is the standard "
+        "convention; longer wastes storage, shorter risks late retries "
+        "leaking past the cache."),
+    SettingDefault("idempotency.max_body_bytes", 16384, "int", "idempotency",
+        "Bodies larger than this skip idempotency caching entirely. "
+        "Large uploads aren't idempotency-key targets in practice."),
 ]
 
 
