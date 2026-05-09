@@ -149,15 +149,40 @@ async def readiness(request: Request) -> JSONResponse:
     except (CircuitOpenError, Exception):  # noqa: BLE001
         db_ok = False
 
+    # Redis probe — only when configured. Reflects the health of the
+    # cluster-wide rate limiter + Arq queue + idempotency cache. If the
+    # operator set redis_url but Redis is unhealthy, those subsystems
+    # silently degrade to in-process — the LB should drop us out of
+    # rotation so we don't serve degraded responses.
+    redis_ok = True
+    redis_configured = False
+    try:
+        from src.settings import get_settings
+        url = get_settings().redis_url
+        if url:
+            redis_configured = True
+
+            def _ping():
+                import redis
+                redis.Redis.from_url(url, socket_timeout=0.25).ping()
+            await asyncio.to_thread(_ping)
+    except Exception:  # noqa: BLE001
+        redis_ok = False
+
     breakers = {n: b.state.value for n, b in all_breakers().items()}
-    ready = state_ok and db_ok and not draining
+    ready = state_ok and db_ok and not draining and (
+        redis_ok if redis_configured else True
+    )
+    checks = {
+        "pipeline_warm": state_ok,
+        "db_reachable": db_ok,
+        "not_draining": not draining,
+    }
+    if redis_configured:
+        checks["redis_reachable"] = redis_ok
     body = {
         "status": "ready" if ready else "not_ready",
-        "checks": {
-            "pipeline_warm": state_ok,
-            "db_reachable": db_ok,
-            "not_draining": not draining,
-        },
+        "checks": checks,
         "inflight": current_inflight(),
         "rejected_total": current_rejected(),
         "circuit_breakers": breakers,

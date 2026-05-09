@@ -121,6 +121,8 @@ class AdaptiveThrottleMiddleware(BaseHTTPMiddleware):
         # Decide whether to shed BEFORE doing any downstream work.
         prob = self._throttle.shed_probability()
         if prob > 0.0 and random.random() < prob:  # noqa: S311
+            from . import metrics
+            metrics.record_throttle_shed()
             log.warning(
                 "Adaptive throttle: shedding (p95=%.1f ms, slo=%.1f ms, p=%.2f, path=%s)",
                 self._throttle.current_p95(), self._throttle.slo_p95_ms, prob, path,

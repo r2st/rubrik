@@ -59,13 +59,17 @@ class CircuitBreaker:
 
     async def call(self, fn: Callable[..., Awaitable[T]], *args: Any, **kwargs: Any) -> T:
         """Execute ``fn`` under the breaker. Raises ``CircuitOpenError`` if open."""
+        transitioned = False
         async with self._lock:
             if self._state is State.OPEN:
                 if time.monotonic() - self._opened_at >= self.recovery_timeout_s:
                     self._state = State.HALF_OPEN
+                    transitioned = True
                     log.info("Circuit %s -> half_open (probing)", self.name)
                 else:
                     raise CircuitOpenError(f"Circuit {self.name!r} is open")
+        if transitioned:
+            self._publish_state()
 
         try:
             result = await fn(*args, **kwargs)
@@ -81,6 +85,7 @@ class CircuitBreaker:
                 log.info("Circuit %s -> closed (recovered)", self.name)
             self._state = State.CLOSED
             self._failures = 0
+        self._publish_state()
 
     async def _on_failure(self) -> None:
         async with self._lock:
@@ -93,6 +98,15 @@ class CircuitBreaker:
                     )
                 self._state = State.OPEN
                 self._opened_at = time.monotonic()
+        self._publish_state()
+
+    def _publish_state(self) -> None:
+        """Best-effort Prometheus gauge update; silent if metrics not wired."""
+        try:
+            from . import metrics
+            metrics.record_breaker_state(self.name, self._state.value)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # ---------------------------------------------------------------------------

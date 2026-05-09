@@ -29,7 +29,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Protocol
+from typing import Any, Optional, Protocol
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -44,6 +44,23 @@ log = get_logger(__name__)
 # ---------------------------------------------------------------------------
 # Application-side: emit an event in the same transaction as the state change
 # ---------------------------------------------------------------------------
+def _current_trace_id() -> Optional[str]:
+    """Best-effort current OTel trace ID as a 32-char hex string, or None.
+
+    Returns None when OTel isn't installed, isn't initialized, or no span
+    is active. Doing this defensively keeps the application code free of
+    OTel imports — and falls through cleanly in the dev workflow.
+    """
+    try:
+        from opentelemetry import trace
+        ctx = trace.get_current_span().get_span_context()
+        if not ctx.is_valid:
+            return None
+        return f"{ctx.trace_id:032x}"
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def emit(
     session: Session,
     *,
@@ -52,12 +69,17 @@ def emit(
     event_type: str,
     payload: dict,
     sequence: int = 0,
+    trace_id: Optional[str] = None,
 ) -> OutboxEvent:
     """Insert an OutboxEvent inside the caller's existing transaction.
 
     Caller is responsible for committing the surrounding transaction. If
     the commit fails, the event row is rolled back together with the
     state change — the whole point of the pattern.
+
+    The active OTel trace ID is captured automatically; pass an explicit
+    ``trace_id`` to override (useful when emitting from a worker that's
+    relaying state from an upstream call).
     """
     row = OutboxEvent(
         aggregate_type=aggregate_type,
@@ -65,6 +87,7 @@ def emit(
         event_type=event_type,
         payload=payload,
         sequence=sequence,
+        trace_id=trace_id if trace_id is not None else _current_trace_id(),
     )
     session.add(row)
     return row
@@ -82,6 +105,7 @@ class OutboxRecord:
     event_type: str
     sequence: int
     payload: Any
+    trace_id: Optional[str] = None
 
 
 class Publisher(Protocol):
@@ -170,6 +194,7 @@ class Relayer:
                     event_type=row.event_type,
                     sequence=row.sequence,
                     payload=row.payload,
+                    trace_id=row.trace_id,
                 )
                 # Poison row → DLQ (if the publisher supports it) and mark
                 # processed so the relayer stops re-trying.

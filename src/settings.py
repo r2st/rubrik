@@ -45,7 +45,27 @@ class DatabaseSection(BaseModel):
 
 class AdminSection(BaseModel):
     initial_password: str = "changeme-on-first-login"
+    # The committed value below is a non-production placeholder. Production
+    # SHOULD set ``session_secret_path`` to a file path (e.g. mounted via a
+    # K8s Secret, AWS Secrets Manager, Vault) — when that path is set and
+    # readable, its contents override this field. The literal in
+    # bootstrap.toml is then never the production secret.
     session_secret: str = "replace-with-a-long-random-string-in-production"
+    session_secret_path: str = ""
+
+    def resolved_session_secret(self) -> str:
+        """Read ``session_secret_path`` if set and readable; otherwise the
+        in-line ``session_secret``. Whitespace stripped (file mounts often
+        carry a trailing newline)."""
+        if self.session_secret_path:
+            from pathlib import Path as _P
+            p = _P(self.session_secret_path)
+            if p.exists():
+                try:
+                    return p.read_text().strip()
+                except OSError:  # pragma: no cover — permission error
+                    pass
+        return self.session_secret
 
 
 class PathsSection(BaseModel):

@@ -88,6 +88,8 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         cached = self._lookup(key)
         if cached is not None:
             if cached["request_hash"] != request_hash:
+                from . import metrics
+                metrics.record_idempotency("conflict")
                 log.warning(
                     "Idempotency conflict: key=%s reused with different "
                     "request hash (path=%s)",
@@ -110,8 +112,13 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
                         }
                     },
                 )
+            from . import metrics
+            metrics.record_idempotency("hit")
             log.info("Idempotency hit: key=%s path=%s", key, request.url.path)
             return _replay(cached)
+
+        from . import metrics
+        metrics.record_idempotency("miss")
 
         # Miss — execute and cache. Replay the body since we already read it.
         async def _receive():

@@ -42,6 +42,7 @@ from . import backpressure as backpressure_mod
 from . import errors as errors_mod
 from . import idempotency as idempotency_mod
 from . import limiter as limiter_mod
+from . import metrics as metrics_mod
 from . import observability, state
 from .admin.auth import ensure_admin_password_seeded
 from .admin.routes import router as admin_router
@@ -198,6 +199,9 @@ app.add_middleware(GZipMiddleware, minimum_size=500, compresslevel=6)
 # ---------------------------------------------------------------------------
 # Observability (must come after app construction)
 # ---------------------------------------------------------------------------
+# Register custom metrics BEFORE the instrumentator's exposer mounts /metrics
+# so the first scrape sees them.
+metrics_mod.register_outbox_collector()
 observability.install_metrics(app, settings)
 observability.install_tracing(app, settings)
 

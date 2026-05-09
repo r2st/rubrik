@@ -164,7 +164,7 @@ def issue_session(actor: str, settings: Settings) -> str:
     """Mint a session cookie payload."""
     payload = {"sub": actor, "iat": int(time.time())}
     body = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
-    sig = _sign(body, settings.admin.session_secret)
+    sig = _sign(body, settings.admin.resolved_session_secret())
     return f"{body}.{sig}"
 
 
@@ -178,7 +178,7 @@ def verify_session(token: str, settings: Settings) -> Optional[dict]:
     if not token or token.count(".") != 1:
         return None
     body, sig = token.split(".", 1)
-    if not hmac.compare_digest(_sign(body, settings.admin.session_secret), sig):
+    if not hmac.compare_digest(_sign(body, settings.admin.resolved_session_secret()), sig):
         return None
     try:
         padded = body + "=" * (-len(body) % 4)

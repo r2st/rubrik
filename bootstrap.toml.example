@@ -23,8 +23,14 @@ url = "sqlite:///./data/admin.db"
 # Hash is generated on first start and stored in the DB; this plaintext field
 # is then ignored. Rotate via the admin panel.
 initial_password = "changeme-on-first-login"
-# Cookie session secret. Replace with a long random string in prod.
+
+# Cookie session secret. The committed value below is a non-production
+# placeholder. In production, set `session_secret_path` instead and mount
+# the real secret as a file (K8s Secret, AWS Secrets Manager, Vault, etc.)
+# — the file contents override this literal at startup.
 session_secret = "replace-with-a-long-random-string-in-production"
+# Example: session_secret_path = "/run/secrets/session_secret"
+session_secret_path = ""
 
 [paths]
 # Override the default dataset location (leave empty for the repo default)

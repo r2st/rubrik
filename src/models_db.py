@@ -91,6 +91,10 @@ class OutboxEvent(Base):
     event_type: Mapped[str] = mapped_column(String(64), nullable=False)
     sequence: Mapped[int] = mapped_column(nullable=False, default=0)
     payload: Mapped[object] = mapped_column(JSON, nullable=False)
+    # Trace propagation: 32-char OTel trace ID captured at emit-time so
+    # downstream consumers can extend the trace span (Tempo/Jaeger UI shows
+    # producer → relayer → consumer as one trace).
+    trace_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     # Relayer bookkeeping
     processed_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
     delivery_attempts: Mapped[int] = mapped_column(nullable=False, default=0)
