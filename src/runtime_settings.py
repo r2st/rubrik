@@ -51,6 +51,21 @@ DEFAULTS: list[SettingDefault] = [
         "Empty string = auth disabled (dev mode)."),
     SettingDefault("auth.cors_origins", ["*"], "list", "auth",
         "Allowed CORS origins. Tighten in prod (e.g., ['https://dashboard.example.com'])."),
+    # JWT — opt-in upgrade path from API-key auth (ADR 0006 migration trigger)
+    SettingDefault("auth.jwt_enabled", False, "bool", "auth",
+        "Enable Bearer-token JWT validation alongside the API-key check. "
+        "Off = legacy API-key only."),
+    SettingDefault("auth.jwt_algorithm", "HS256", "str", "auth",
+        "JWT signing algorithm. HS256 uses auth.jwt_secret; RS256/ES256 "
+        "fetch keys from auth.jwt_jwks_url."),
+    SettingDefault("auth.jwt_secret", "", "secret", "auth",
+        "Shared HMAC secret for HS256 JWTs. Masked on read."),
+    SettingDefault("auth.jwt_jwks_url", "", "str", "auth",
+        "JWKS endpoint for RS256/ES256 JWTs. Cached in-process for 10 min."),
+    SettingDefault("auth.jwt_audience", "", "str", "auth",
+        "Required 'aud' claim. Empty = audience check is skipped."),
+    SettingDefault("auth.jwt_issuer", "", "str", "auth",
+        "Required 'iss' claim. Empty = issuer check is skipped."),
 
     # ---- rate limiting ----
     SettingDefault("rate_limit.default", "120/minute", "str", "rate_limit",
@@ -146,6 +161,12 @@ DEFAULTS: list[SettingDefault] = [
     SettingDefault("idempotency.max_body_bytes", 16384, "int", "idempotency",
         "Bodies larger than this skip idempotency caching entirely. "
         "Large uploads aren't idempotency-key targets in practice."),
+
+    # ---- Repository backend (filesystem dev → DB production swap) ----
+    SettingDefault("transcripts.repository", "local", "str", "transcripts",
+        "Repository backend: 'local' = filesystem (default, dev), "
+        "'database' = SQL via DatabaseRepository (production per ADR 0008). "
+        "Switching is a one-setting change — no app redeploy."),
 ]
 
 

@@ -100,15 +100,153 @@ class LocalDirectoryRepository:
 
 
 # ---------------------------------------------------------------------------
+# Backend: SQL database (Postgres in production) via JSON blob storage
+# ---------------------------------------------------------------------------
+class DatabaseRepository:
+    """Reads meetings from a SQL database — schema-on-read JSON blobs.
+
+    Each meeting is one row: ``(meeting_id, raw, created_at)`` where
+    ``raw`` is a JSON column holding the full meeting envelope. This is
+    the architectural target ADR 0008 commits to (Postgres OLTP); the
+    analytical tier (ClickHouse, Iceberg) is fed by the outbox + relayer
+    in ADR 0014.
+
+    The ``meetings`` table itself is owned at the data-platform layer,
+    not by the application's alembic migrations (which only manage
+    ``settings`` / ``audit_log`` / ``outbox_events``). The
+    ``import_from_local`` helper is a one-shot migration aid for
+    deployments transitioning from filesystem-backed to database-backed
+    storage.
+    """
+
+    def __init__(self, *, table_name: str = "meetings") -> None:
+        self.table_name = table_name
+
+    def count(self) -> int:
+        from sqlalchemy import text
+
+        from .db import session_scope
+        with session_scope() as s:
+            return int(
+                s.execute(text(f"SELECT COUNT(*) FROM {self.table_name}"))
+                .scalar() or 0
+            )
+
+    def get(self, meeting_id: str) -> Optional[Meeting]:
+        from sqlalchemy import text
+
+        from .db import session_scope
+        with session_scope() as s:
+            row = s.execute(
+                text(
+                    f"SELECT raw FROM {self.table_name} "
+                    f"WHERE meeting_id = :mid"
+                ),
+                {"mid": meeting_id},
+            ).first()
+        if row is None:
+            return None
+        return self._row_to_meeting(meeting_id, row[0])
+
+    def stream(self, *, batch_size: int = 1000) -> Iterator[list[Meeting]]:
+        """Chunked fetch — bounded memory regardless of total size."""
+        from sqlalchemy import text
+
+        from .db import session_scope
+        offset = 0
+        while True:
+            with session_scope() as s:
+                rows = s.execute(
+                    text(
+                        f"SELECT meeting_id, raw FROM {self.table_name} "
+                        f"ORDER BY meeting_id LIMIT :lim OFFSET :off"
+                    ),
+                    {"lim": batch_size, "off": offset},
+                ).fetchall()
+            if not rows:
+                return
+            yield [self._row_to_meeting(mid, raw) for mid, raw in rows]
+            if len(rows) < batch_size:
+                return
+            offset += len(rows)
+
+    def all(self) -> list[Meeting]:
+        return [m for batch in self.stream(batch_size=10_000) for m in batch]
+
+    def import_from_local(
+        self, root: Path, *, batch_size: int = 1000,
+    ) -> int:
+        """One-shot: copy a filesystem layout into the table. Idempotent."""
+        from sqlalchemy import text
+
+        from .db import session_scope
+        local = LocalDirectoryRepository(root=root)
+        inserted = 0
+        for batch in local.stream(batch_size=batch_size):
+            with session_scope() as s:
+                for m in batch:
+                    s.execute(
+                        text(
+                            f"INSERT INTO {self.table_name} "
+                            f"(meeting_id, raw, created_at) "
+                            f"VALUES (:mid, :raw, CURRENT_TIMESTAMP) "
+                            f"ON CONFLICT (meeting_id) DO UPDATE "
+                            f"SET raw = EXCLUDED.raw"
+                        ),
+                        {"mid": m.meeting_id, "raw": _meeting_to_dict(m)},
+                    )
+                    inserted += 1
+                s.commit()
+        log.info("DatabaseRepository imported %d meetings from %s",
+                 inserted, root)
+        return inserted
+
+    @staticmethod
+    def _row_to_meeting(meeting_id: str, raw):
+        if isinstance(raw, str):
+            import json
+            raw = json.loads(raw)
+        return Meeting(
+            meeting_id=meeting_id,
+            info=raw.get("info", {}),
+            transcript=raw.get("transcript", {}),
+            speakers=raw.get("speakers", []),
+            speaker_meta=raw.get("speaker_meta", {}),
+            summary=raw.get("summary", {}),
+            events=raw.get("events", []),
+        )
+
+
+def _meeting_to_dict(m: Meeting) -> dict:
+    return {
+        "info": m.info,
+        "transcript": m.transcript,
+        "speakers": m.speakers,
+        "speaker_meta": m.speaker_meta,
+        "summary": m.summary,
+        "events": m.events,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Default-instance helper
 # ---------------------------------------------------------------------------
 def default_repository() -> TranscriptRepository:
     """Build the default repository for the current environment.
 
-    Today: `LocalDirectoryRepository` over the path in `bootstrap.toml`.
-    Production: swap to a `DatabaseRepository` (per ADR 0008/0011) by changing
-    only this function.
+    Resolution order:
+      1. ``transcripts.repository = "database"`` runtime setting → DatabaseRepository
+      2. ``[paths].dataset_path`` set in bootstrap.toml → LocalDirectoryRepository over that path
+      3. Default → LocalDirectoryRepository over the repo's data dir
     """
+    try:
+        from .runtime_settings import get_runtime
+        backend = str(get_runtime().get("transcripts.repository", "local"))
+    except Exception:  # noqa: BLE001
+        backend = "local"
+    if backend == "database":
+        return DatabaseRepository()
+
     settings = get_settings()
     if settings.dataset_path is not None:
         return LocalDirectoryRepository(root=Path(settings.dataset_path))
