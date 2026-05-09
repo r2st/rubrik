@@ -1,6 +1,6 @@
 # ADR 0012: LLM Cascade — Self-Hosted Fine-Tune for Bulk, Frontier API for Edge Cases
 
-- **Status:** Proposed
+- **Status:** Accepted (gateway scaffold + admin keys + PII redactor shipped; provider HTTP layer wired at deploy time)
 - **Date:** 2026-05-07
 
 ## Context
@@ -97,7 +97,7 @@ The cascade is the only design that gives us **frontier-quality on the cases tha
 ## Implementation plan (when prioritized)
 
 1. **Confidence layer** in Tier 1 — perplexity + judge score emitted per call (instrumentation only; no behavior change).
-2. **Gateway service** — thin FastAPI service in front of one frontier provider; redaction + cache + budget.
+2. **Gateway service** — thin FastAPI service in front of one frontier provider; redaction + cache + budget. **Shipped as `api/llm_gateway.py::FrontierGateway`**: PII redaction via `src/pii.py` (fails closed if density > 50%), per-tenant daily $ budget enforced via Redis (`llm_budget:{tenant}:{YYYYMMDD}`), provider call wrapped in a `llm_gateway_<provider>` circuit breaker, audit-log row per call (model · latency · estimated cost · redaction summary). Provider HTTP layer is stubbed (`NotImplementedError`) — production deploys plug in the real `anthropic` / `openai` / `google` client. ADR 0014's `secret`-typed `llm.tier2_api_key` runtime setting carries the credential.
 3. **Routing** in `api/state.py` / generation path — escalate when triggers fire; fall back to Tier-1 result on gateway failure.
 4. **Admin panel additions** — per-tenant policy, budgets, model choice, trigger thresholds — all under the `llm.*` runtime-settings namespace. **Shipped:** seven keys under category `llm` (`llm.tier1_endpoint`, `llm.tier2_enabled`, `llm.tier2_provider`, `llm.tier2_model`, `llm.tier2_api_key` — the masked-on-read `secret` type — `llm.tier2_daily_budget_usd`, `llm.tier2_request_timeout_s`). The API key uses the new `secret` type so it's masked in `GET /admin/settings`, masked in audit-log rows, and never leaves the DB in raw form. Per-tenant policy / per-category trigger flags follow the gateway service.
 5. **Telemetry** — Prometheus metric `llm_tier2_share{tenant, category}`; Grafana dashboard tracks the active-learning loop's headline number.

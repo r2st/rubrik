@@ -292,10 +292,11 @@
           <span class="tag">Auto-scalable</span>
           <span class="tag">FastAPI</span>
           <span class="tag">scikit-learn</span>
-          <span class="tag">Gemma 4 (QLoRA)</span>
-          <span class="tag">Postgres + Iceberg</span>
+          <span class="tag">Gemma 4 (QLoRA) + frontier cascade</span>
+          <span class="tag">Postgres + Iceberg + Kafka</span>
           <span class="tag">Ray Train + vLLM</span>
-          <span class="tag">183 tests · 94% cov</span>
+          <span class="tag">14 ADRs</span>
+          <span class="tag">278 tests · 94% cov</span>
         </div>
         <p class="meta">Take-home submission · Rubrik · 2026</p>
       </div>
@@ -545,34 +546,36 @@ flowchart LR
             <h4>Security</h4>
             <ul>
               <li>API-key auth (DB-backed)</li>
-              <li>PBKDF2-SHA256 admin pw</li>
-              <li>HMAC session cookie</li>
-              <li>5/min/IP login throttle</li>
-              <li>1 MiB body cap (DoS)</li>
-              <li>CSP / HSTS / CORS / etc.</li>
-              <li>Audit log on every write</li>
+              <li>JWT auth (opt-in, HS/RS via JWKS)</li>
+              <li>PBKDF2-SHA256 admin pw + file-mountable session secret</li>
+              <li>5/min/IP login throttle · 1 MiB body cap</li>
+              <li><strong>Idempotency-Key cache</strong> (replay-safe writes)</li>
+              <li><strong>PII redactor</strong> (LLM gateway pre-egress)</li>
+              <li><code>secret</code> type masked everywhere it's read</li>
+              <li>CSP / HSTS / CORS · Audit log on every write</li>
             </ul>
           </div>
           <div class="card">
             <h4>Resilience</h4>
             <ul>
-              <li>Backpressure (503 shed)</li>
-              <li>Circuit breakers</li>
+              <li>Three-layer rate limit (global + concurrency + adaptive)</li>
+              <li>Circuit breakers (state metric)</li>
+              <li>Cache-stampede protection (TTL jitter + single-flight + SWR)</li>
+              <li>Outbox + DLQ + admin replay endpoint</li>
               <li>Graceful drain shutdown</li>
-              <li>Last-good-state on refresh fail</li>
-              <li>X-State-Age + Stale headers</li>
               <li>Cold-start snapshot</li>
+              <li>Last-good-state on refresh fail</li>
             </ul>
           </div>
           <div class="card">
             <h4>Observability</h4>
             <ul>
-              <li>Structured logs (JSON in prod)</li>
-              <li>X-Request-ID end-to-end</li>
-              <li>Prometheus /metrics</li>
-              <li>OTel head + tail sampling</li>
+              <li>Structured logs (JSON in prod) · X-Request-ID end-to-end</li>
+              <li>Prometheus /metrics + custom series (outbox / idempotency / throttle / breaker)</li>
+              <li>SLO burn-rate alerts (1h@14.4× · 6h@6×)</li>
+              <li>OTel head + tail sampling · trace_id propagated through outbox</li>
+              <li>Live + Ready probes (DB + Redis + breaker)</li>
               <li>Sentry (opt-in)</li>
-              <li>Live + Ready probes</li>
             </ul>
           </div>
         </div>
@@ -612,28 +615,35 @@ flowchart LR
   clustering.py     — TF-IDF + KMeans
   sentiment.py      — trajectories
   insights.py       — 6 modules
-  repository.py     — protocol + 3 backends
+  repository.py     — local + database + kafka slot
   streaming.py      — mergeable folds
-  runtime_settings  — DB-backed config
+  runtime_settings  — DB-backed config + LISTEN/NOTIFY
+  pii.py            — PII redactor (egress guard)
 api/
   main.py           — lifespan + middleware
-  routes.py         — versioned API
-  state.py          — pipeline cache
+  admin_app.py      — separate admin process
+  routes.py         — versioned API + /live + /ready
+  state.py          — pipeline cache (snapshot-aware)
   snapshot.py       — cold-start fix
+  metrics.py        — custom Prom series
   jobs.py           — Arq scaffolding
+  outbox.py         — transactional outbox + DLQ + replay
+  outbox_kafka.py   — Kafka publisher (confluent-kafka)
+  llm_gateway.py    — Tier-2 frontier scaffold
+  jwt_auth.py       — Bearer-token verifier (opt-in)
+  idempotency.py    — replay-safe writes
   limiter.py        — rate-limit + per-tenant
-  circuit_breaker.py
-  backpressure.py
-  admin/            — session + settings
+  circuit_breaker.py · backpressure.py · adaptive_throttle.py
+  admin/            — session + settings + secret type
 gemma-finetune/     — QLoRA recipes</code></pre>
           </div>
           <div>
             <h3>Quality bar</h3>
             <ul>
-              <li><span class="green">183</span> tests · 94% coverage · <code>fakeredis</code> + Postgres LISTEN/NOTIFY paths under test</li>
-              <li><code>ruff</code> clean · <code>mypy</code> on src + api · 13 ADRs</li>
-              <li>27 Mermaid diagrams across docs</li>
-              <li>K8s manifests for HPA, migrate Job, PgBouncer, snapshot CronJob, OTel collector, Arq workers</li>
+              <li><span class="green">278</span> tests · 94% coverage · <code>fakeredis</code> · LISTEN/NOTIFY · idempotency · PII · JWT · DB repo · LLM gateway · custom Prom metrics</li>
+              <li><code>ruff</code> clean · <code>mypy</code> on src + api · 14 ADRs · expand/contract migration template</li>
+              <li>30+ Mermaid diagrams across docs</li>
+              <li>K8s: HPA · KEDA · Cluster Autoscaler · Argo Rollouts · Gateway API · Kafka (Strimzi) · Redis · PgBouncer · OTel Collector · Prom SLO rules · migrate Job · snapshot CronJob · Arq workers</li>
             </ul>
             <h3>Throughput baseline</h3>
             <p class="muted">Local load test (11 endpoints, weighted mix): ~395 RPS · p95 ≤ 35 ms.</p>
@@ -651,7 +661,9 @@ gemma-finetune/     — QLoRA recipes</code></pre>
           <li><strong class="orange">No JWT yet.</strong> Single-tenant, single-consumer. JWT is a one-line dependency swap when multi-tenancy lands. ADR 0006.</li>
           <li><strong class="orange">No DB for analytical state.</strong> The pipeline cache is per-replica + a shared snapshot. Adding a warehouse is the ADR 0008 path; today the snapshot is the bridge.</li>
           <li><strong class="orange">No streaming clustering.</strong> Streaming pipeline skips clustering + viz; those run separately at scale (Spark MLlib / sampled). ADR 0011.</li>
-          <li><strong class="orange">No frontier-model gateway shipped yet.</strong> Designed (ADR 0012) but not built — Tier-1 fine-tune covers the in-distribution bulk.</li>
+          <li><strong class="orange">Frontier-LLM gateway scaffold shipped, provider HTTP layer stubbed.</strong> ADR 0012 — gateway, PII redactor, circuit breaker, daily $ budget, audit log all wired; production deploys plug in the real <code>anthropic</code> / <code>openai</code> / <code>google</code> client where the scaffold raises <code>NotImplementedError</code>.</li>
+          <li><strong class="orange">Kafka client class shipped; broker is deploy-time.</strong> <code>KafkaPublisher</code> in <code>api/outbox_kafka.py</code> + Strimzi manifest + KEDA scaler + outbox DLQ wrapper are all in place; pointing at a real broker is one URL in <code>bootstrap.toml</code>.</li>
+          <li><strong class="orange">DatabaseRepository ships; Postgres provisioning is operator-side.</strong> <code>transcripts.repository = database</code> flips backend at runtime; the <code>meetings</code> table itself is owned at the data-platform layer per ADR 0008.</li>
         </ul>
       </div>
     </section>

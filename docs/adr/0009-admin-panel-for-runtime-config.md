@@ -76,6 +76,16 @@ llm.tier2_model                      "claude-sonnet-4-5"  str llm
 llm.tier2_api_key                    ""              secret llm
 llm.tier2_daily_budget_usd           50.0            float  llm
 llm.tier2_request_timeout_s          30              int    llm
+auth.jwt_enabled                     false           bool   auth
+auth.jwt_algorithm                   "HS256"         str    auth
+auth.jwt_secret                      ""              secret auth
+auth.jwt_jwks_url                    ""              str    auth
+auth.jwt_audience                    ""              str    auth
+auth.jwt_issuer                      ""              str    auth
+idempotency.enabled                  false           bool   idempotency
+idempotency.ttl_hours                24              int    idempotency
+idempotency.max_body_bytes           16384           int    idempotency
+transcripts.repository               "local"         str    transcripts
 ```
 
 Reads go through a **5-second TTL cache**. On Postgres, every `set()` additionally publishes a `settings_changed` `NOTIFY`, and a listener thread on each replica drops the cache locally — operator changes propagate in < 100 ms instead of waiting for the TTL. SQLite (dev) silently skips the publish; the TTL is the safety net.

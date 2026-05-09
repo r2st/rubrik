@@ -3,7 +3,7 @@
 > An **auto-scalable system** that processes B2B meeting transcripts and surfaces topic categorization, sentiment trends, and strategic insights — exposed as a REST API with a lightweight web dashboard. **Target scale: millions to 100M+ records.**
 
 [![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue)](.github/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-222%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-278%20passing-brightgreen)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-94%25-brightgreen)](pyproject.toml)
 [![Validation](https://img.shields.io/badge/validation-9%2F10%20pass-brightgreen)](validate.py)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](pyproject.toml)
@@ -344,14 +344,17 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 ### Security
 | Concern | How it's handled |
 |---|---|
-| **API key auth** | `X-API-Key` header check on every `/api/v1/*` route. Disabled when `auth.api_key` runtime setting is empty (dev). Health probe stays public. |
+| **API key auth** | `X-API-Key` header check on every `/api/v1/*` route. Disabled when `auth.api_key` runtime setting is empty (dev). Probes stay public. |
+| **JWT auth (opt-in)** | `require_jwt` dependency validates Bearer tokens (HS256 / RS256/ES256 via JWKS) when `auth.jwt_enabled = true`. Optional `aud`/`iss` claim checks. Co-exists with the API-key path during the migration window. |
 | **Admin login brute-force guard** | Stricter 5/min/IP rate limit on `/api/v1/admin/login` and `/api/v1/admin/password` via a dedicated FastAPI dependency (`strict_rate_limit`), layered on top of the global slowapi cap. |
 | **Body-size cap (DoS guard)** | `BodySizeLimitMiddleware` rejects requests >1 MiB with a 413 envelope before any handler allocates buffers. Checks `Content-Length` first, then enforces the cap on streaming/chunked bodies. |
+| **Idempotency-Key cache** | Opt-in via the `idempotency.enabled` runtime setting + per-request `Idempotency-Key` header. Cached replay = no duplicate writes; same key + different hash = 409. Redis storage when configured; in-process fallback otherwise. |
+| **PII redaction** | `src/pii.py` — regex redactor for emails, phones, SSN, Luhn-validated credit cards, IPs, common API-key shapes. Returns redacted text + `RedactionSummary` (counts + match-density). Used by the LLM gateway before any prompt leaves the perimeter. |
 | **CORS** | Configurable origins (runtime setting). Tighten in prod. |
-| **Rate limiting (global)** | `slowapi` with default 120 req/min/IP, `X-RateLimit-*` headers; admin-tunable. |
+| **Rate limiting** | Three layers (ADR 0014): per-tenant slowapi (default 120/min, Redis-backed) + concurrency cap (`BackpressureMiddleware`) + adaptive throttle (sheds when p95 > SLO). Per-tenant overrides via `rate_limit.per_tenant`. |
 | **Security headers** | CSP, HSTS (prod only), X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy — all on every response. |
-| **Admin password storage** | PBKDF2-SHA256 (200k iters); HMAC-signed session cookie with `Secure` (prod) + `HttpOnly` + `SameSite=Strict`. |
-| **Audit log** | Every admin mutation recorded with actor + before/after value; surfaced in `/admin`. |
+| **Admin password storage** | PBKDF2-SHA256 (200k iters); HMAC-signed session cookie with `Secure` (prod) + `HttpOnly` + `SameSite=Strict`. Session secret loadable from a file path (`session_secret_path`) so K8s Secret mounts work. |
+| **Audit log** | Every admin mutation recorded with actor + before/after value; surfaced in `/admin`. `secret`-typed values are masked in audit rows so the raw key never persists. |
 | **Request IDs** | Every request stamped with `X-Request-ID`. Honored if inbound (load balancer / mesh propagation). |
 | **Error envelope** | All errors return `{"error": {code, message, request_id, path, details?}}` — no framework internals leak. |
 | **API versioning** | All routes under `/api/v1/`. Future v2 ships side-by-side without breaking clients. |
@@ -372,7 +375,11 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 | **Graceful degradation on refresh failure** | Pipeline refresh runs in the background. If it fails, the API keeps serving the last-good state. Every `/api/*` response carries `X-State-Age-Seconds`; once the data is older than 2× the refresh interval and refresh is failing, `X-Stale-Response: true` is set. Refresh failures stop being user-visible 5xx outages. |
 | **Cold-start fix (snapshot)** | When `snapshot.url` is set, replicas read a precomputed `PipelineState` written by a singleton CronJob (`api/snapshot_writer.py`) instead of rebuilding from the data source on every boot. Manifest checksum drives in-place reload. |
 | **Backpressure** | `BackpressureMiddleware` caps inflight requests; over the cap returns `503 + Retry-After`. The LB sheds load instead of escalating it. |
-| **Circuit breakers** | `api/circuit_breaker.py` — closed/open/half_open state machine; the readiness probe wraps the Postgres reach in `readiness_db_probe`. Sick downstream → fast 503 instead of pile-up. |
+| **Adaptive throttle** | Sliding-window p95 latency tracker; sheds traffic probabilistically when p95 breaches SLO. Closes the third rate-limit layer (research §"Backpressure must be explicit"). |
+| **Cache stampede protection** | `ttl_with_jitter()` (±10% TTL randomization) + `SingleFlight` (concurrent misses for the same key share one underlying compute) + `stale-while-revalidate` directive. |
+| **Circuit breakers** | `api/circuit_breaker.py` — closed/open/half_open state machine; readiness wraps the Postgres reach in `readiness_db_probe`. State transitions emit a Prometheus gauge (`circuit_breaker_state{name}`). |
+| **Outbox + DLQ + replay** | Transactional outbox (`api/outbox.py`) for at-least-once event fan-out. `DLQPublisher` routes poison rows to a dedicated topic; `POST /api/v1/admin/outbox/replay` resets stuck rows for the next drain pass. |
+| **Idempotency cache** | `Idempotency-Key` header makes POST/PUT/DELETE retries safe. Same key + same hash → cached replay; same key + different hash → 409. Redis-backed in production. |
 | **Graceful shutdown** | Lifespan flips readiness → 503, sleeps so the LB can observe, drains background tasks, disposes the DB pool. Pod terminations don't drop in-flight work. |
 | **OpenAPI documented** | Every Pydantic response model carries a concrete example payload — the auto-generated `/docs` page is copy-pasteable, not abstract. |
 | **Supply-chain artifacts** | CI generates a CycloneDX SBOM (via `syft`) and a license report (`pip-licenses`); the build fails on copyleft licenses incompatible with MIT distribution. |
@@ -381,10 +388,10 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 | Concern | How it's handled |
 |---|---|
 | **Structured logs** | Text or JSON via `LOG_FORMAT`. Each request gets a one-line access log with `request_id`, `method`, `path`, `status`, `elapsed_ms`. |
-| **Prometheus metrics** | `/metrics` endpoint with request rate, latency histograms, status codes per route. |
-| **OpenTelemetry tracing** | FastAPI auto-instrumented; head trace-sampling rate from `observability.otel_sample_rate`. Tail-based sampling (errors + slow tails + 1% probabilistic) configured in the OTel Collector DaemonSet (`deploy/k8s/otel-collector.yaml`). |
+| **Prometheus metrics** | `/metrics` endpoint — HTTP histograms via `prometheus-fastapi-instrumentator`, plus custom series from `api/metrics.py`: `outbox_unprocessed`, `outbox_stuck`, `idempotency_total{result}`, `adaptive_throttle_shed_total`, `circuit_breaker_state{name}`. SLO burn-rate alerts in `deploy/k8s/prometheus-slo-rules.yaml`. |
+| **OpenTelemetry tracing** | FastAPI auto-instrumented; head trace-sampling rate from `observability.otel_sample_rate`. Tail-based sampling (errors + slow tails + 1% probabilistic) configured in the OTel Collector DaemonSet (`deploy/k8s/otel-collector.yaml`). Outbox events carry `trace_id` so traces span producer → consumer. |
 | **Sentry** | Errors auto-forwarded when `SENTRY_DSN` is set. |
-| **Probes (split)** | `/api/live` for k8s liveness (process only); `/api/ready` for readiness (pipeline warm, DB reachable via circuit breaker, not draining). `/api/health` retained for backward compatibility. |
+| **Probes (split)** | `/api/live` for k8s liveness (process only); `/api/ready` for readiness (pipeline warm, DB reachable via circuit breaker, Redis reachable when configured, not draining). `/api/health` retained for backward compatibility. |
 
 ### Engineering
 | Concern | How it's handled |
@@ -393,7 +400,7 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 | **Configuration** | Two-tier: `bootstrap.toml` (env, log, DB URL, admin secret, `[runtime]` knobs that need to be readable before the DB exists) + DB-backed `runtime_settings` for everything else (rate limits, risk weights, feature flags, Redis URL, snapshot URL, OTel sampling rate, …). Operator changes propagate via `LISTEN/NOTIFY` on Postgres. See [`bootstrap.toml.example`](bootstrap.toml.example). |
 | **Linting / formatting** | `ruff` (lint + format) configured in pyproject. |
 | **Type checking** | `mypy` for `src/` and `api/`. |
-| **Testing** | `pytest`, **222 tests** (incl. autoscaling, distributed/`fakeredis`, outbox, cache-stampede, adaptive-throttle, secret-type masking), FastAPI `TestClient`. |
+| **Testing** | `pytest`, **278 tests** (autoscaling · distributed/`fakeredis` · outbox + DLQ · cache-stampede · adaptive-throttle · idempotency · secret-type masking · custom Prom metrics · PII redaction · JWT auth · DatabaseRepository · LLM gateway), FastAPI `TestClient`. |
 | **CI/CD** | GitHub Actions: lint → type-check → test (3.9/3.11/3.12) → security scan → Docker build + image scan. |
 | **Containerization** | Multi-stage Dockerfile, non-root user, healthcheck, JSON logs, Caddy reverse proxy via compose. |
 | **Pipeline lifecycle** | State cached at startup; optional periodic refresh (`pipeline.refresh_minutes` runtime setting). At production volume, a singleton CronJob writes a snapshot (`api/snapshot_writer.py`); replicas warm from it instead of rebuilding. |
@@ -427,7 +434,7 @@ otel_endpoint = "http://otel:4318/v1/traces"
 
 **Runtime config** — everything else lives in the DB and is managed through the admin panel at **`/admin`**. Categories:
 
-- **auth** — API key, CORS origins
+- **auth** — API key, CORS origins, JWT (algorithm, secret/JWKS, audience, issuer)
 - **rate_limit** — default + strict + per-tenant overrides
 - **pipeline** — refresh interval
 - **risk** — scoring weights + tier thresholds
@@ -437,7 +444,9 @@ otel_endpoint = "http://otel:4318/v1/traces"
 - **backpressure** — inflight cap
 - **snapshot** — shared snapshot URL + poll interval (cold-start fix)
 - **distribution** — Redis URL for cluster-wide rate limiting + queue
+- **idempotency** — `Idempotency-Key` cache (enabled flag, TTL, max-body-bytes)
 - **llm** — Tier-1 vLLM endpoint, Tier-2 frontier provider/model/budget/timeout, **Tier-2 API key (masked-on-read `secret` type)**
+- **transcripts** — repository backend (`local` filesystem · `database` Postgres-JSONB)
 
 Changes propagate within 5 seconds (or < 100 ms with Postgres `LISTEN/NOTIFY`). Every change is recorded in an audit log; `secret`-typed values store their masked form in the audit row so the raw key never persists in the historical record.
 

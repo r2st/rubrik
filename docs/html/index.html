@@ -339,7 +339,7 @@ footer code {
 <p>An <strong>auto-scalable system</strong> that processes B2B meeting transcripts and surfaces topic categorization, sentiment trends, and strategic insights — exposed as a REST API with a lightweight web dashboard. <strong>Target scale: millions to 100M+ records.</strong></p>
 </blockquote>
 <p><a href=".github/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-blue" /></a>
-<a href="https://github.com/"><img alt="Tests" src="https://img.shields.io/badge/tests-222%20passing-brightgreen" /></a>
+<a href="https://github.com/"><img alt="Tests" src="https://img.shields.io/badge/tests-278%20passing-brightgreen" /></a>
 <a href="pyproject.toml"><img alt="Coverage" src="https://img.shields.io/badge/coverage-94%25-brightgreen" /></a>
 <a href="https://github.com/"><img alt="Validation" src="https://img.shields.io/badge/validation-9%2F10%20pass-brightgreen" /></a>
 <a href="pyproject.toml"><img alt="Python" src="https://img.shields.io/badge/python-3.9%2B-blue" /></a>
@@ -843,7 +843,11 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 <tbody>
 <tr>
 <td><strong>API key auth</strong></td>
-<td><code>X-API-Key</code> header check on every <code>/api/v1/*</code> route. Disabled when <code>auth.api_key</code> runtime setting is empty (dev). Health probe stays public.</td>
+<td><code>X-API-Key</code> header check on every <code>/api/v1/*</code> route. Disabled when <code>auth.api_key</code> runtime setting is empty (dev). Probes stay public.</td>
+</tr>
+<tr>
+<td><strong>JWT auth (opt-in)</strong></td>
+<td><code>require_jwt</code> dependency validates Bearer tokens (HS256 / RS256/ES256 via JWKS) when <code>auth.jwt_enabled = true</code>. Optional <code>aud</code>/<code>iss</code> claim checks. Co-exists with the API-key path during the migration window.</td>
 </tr>
 <tr>
 <td><strong>Admin login brute-force guard</strong></td>
@@ -854,12 +858,20 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 <td><code>BodySizeLimitMiddleware</code> rejects requests &gt;1 MiB with a 413 envelope before any handler allocates buffers. Checks <code>Content-Length</code> first, then enforces the cap on streaming/chunked bodies.</td>
 </tr>
 <tr>
+<td><strong>Idempotency-Key cache</strong></td>
+<td>Opt-in via the <code>idempotency.enabled</code> runtime setting + per-request <code>Idempotency-Key</code> header. Cached replay = no duplicate writes; same key + different hash = 409. Redis storage when configured; in-process fallback otherwise.</td>
+</tr>
+<tr>
+<td><strong>PII redaction</strong></td>
+<td><code>src/pii.py</code> — regex redactor for emails, phones, SSN, Luhn-validated credit cards, IPs, common API-key shapes. Returns redacted text + <code>RedactionSummary</code> (counts + match-density). Used by the LLM gateway before any prompt leaves the perimeter.</td>
+</tr>
+<tr>
 <td><strong>CORS</strong></td>
 <td>Configurable origins (runtime setting). Tighten in prod.</td>
 </tr>
 <tr>
-<td><strong>Rate limiting (global)</strong></td>
-<td><code>slowapi</code> with default 120 req/min/IP, <code>X-RateLimit-*</code> headers; admin-tunable.</td>
+<td><strong>Rate limiting</strong></td>
+<td>Three layers (ADR 0014): per-tenant slowapi (default 120/min, Redis-backed) + concurrency cap (<code>BackpressureMiddleware</code>) + adaptive throttle (sheds when p95 &gt; SLO). Per-tenant overrides via <code>rate_limit.per_tenant</code>.</td>
 </tr>
 <tr>
 <td><strong>Security headers</strong></td>
@@ -867,11 +879,11 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 </tr>
 <tr>
 <td><strong>Admin password storage</strong></td>
-<td>PBKDF2-SHA256 (200k iters); HMAC-signed session cookie with <code>Secure</code> (prod) + <code>HttpOnly</code> + <code>SameSite=Strict</code>.</td>
+<td>PBKDF2-SHA256 (200k iters); HMAC-signed session cookie with <code>Secure</code> (prod) + <code>HttpOnly</code> + <code>SameSite=Strict</code>. Session secret loadable from a file path (<code>session_secret_path</code>) so K8s Secret mounts work.</td>
 </tr>
 <tr>
 <td><strong>Audit log</strong></td>
-<td>Every admin mutation recorded with actor + before/after value; surfaced in <code>/admin</code>.</td>
+<td>Every admin mutation recorded with actor + before/after value; surfaced in <code>/admin</code>. <code>secret</code>-typed values are masked in audit rows so the raw key never persists.</td>
 </tr>
 <tr>
 <td><strong>Request IDs</strong></td>
@@ -944,8 +956,24 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 <td><code>BackpressureMiddleware</code> caps inflight requests; over the cap returns <code>503 + Retry-After</code>. The LB sheds load instead of escalating it.</td>
 </tr>
 <tr>
+<td><strong>Adaptive throttle</strong></td>
+<td>Sliding-window p95 latency tracker; sheds traffic probabilistically when p95 breaches SLO. Closes the third rate-limit layer (research §"Backpressure must be explicit").</td>
+</tr>
+<tr>
+<td><strong>Cache stampede protection</strong></td>
+<td><code>ttl_with_jitter()</code> (±10% TTL randomization) + <code>SingleFlight</code> (concurrent misses for the same key share one underlying compute) + <code>stale-while-revalidate</code> directive.</td>
+</tr>
+<tr>
 <td><strong>Circuit breakers</strong></td>
-<td><code>api/circuit_breaker.py</code> — closed/open/half_open state machine; the readiness probe wraps the Postgres reach in <code>readiness_db_probe</code>. Sick downstream → fast 503 instead of pile-up.</td>
+<td><code>api/circuit_breaker.py</code> — closed/open/half_open state machine; readiness wraps the Postgres reach in <code>readiness_db_probe</code>. State transitions emit a Prometheus gauge (<code>circuit_breaker_state{name}</code>).</td>
+</tr>
+<tr>
+<td><strong>Outbox + DLQ + replay</strong></td>
+<td>Transactional outbox (<code>api/outbox.py</code>) for at-least-once event fan-out. <code>DLQPublisher</code> routes poison rows to a dedicated topic; <code>POST /api/v1/admin/outbox/replay</code> resets stuck rows for the next drain pass.</td>
+</tr>
+<tr>
+<td><strong>Idempotency cache</strong></td>
+<td><code>Idempotency-Key</code> header makes POST/PUT/DELETE retries safe. Same key + same hash → cached replay; same key + different hash → 409. Redis-backed in production.</td>
 </tr>
 <tr>
 <td><strong>Graceful shutdown</strong></td>
@@ -976,11 +1004,11 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 </tr>
 <tr>
 <td><strong>Prometheus metrics</strong></td>
-<td><code>/metrics</code> endpoint with request rate, latency histograms, status codes per route.</td>
+<td><code>/metrics</code> endpoint — HTTP histograms via <code>prometheus-fastapi-instrumentator</code>, plus custom series from <code>api/metrics.py</code>: <code>outbox_unprocessed</code>, <code>outbox_stuck</code>, <code>idempotency_total{result}</code>, <code>adaptive_throttle_shed_total</code>, <code>circuit_breaker_state{name}</code>. SLO burn-rate alerts in <code>deploy/k8s/prometheus-slo-rules.yaml</code>.</td>
 </tr>
 <tr>
 <td><strong>OpenTelemetry tracing</strong></td>
-<td>FastAPI auto-instrumented; head trace-sampling rate from <code>observability.otel_sample_rate</code>. Tail-based sampling (errors + slow tails + 1% probabilistic) configured in the OTel Collector DaemonSet (<code>deploy/k8s/otel-collector.yaml</code>).</td>
+<td>FastAPI auto-instrumented; head trace-sampling rate from <code>observability.otel_sample_rate</code>. Tail-based sampling (errors + slow tails + 1% probabilistic) configured in the OTel Collector DaemonSet (<code>deploy/k8s/otel-collector.yaml</code>). Outbox events carry <code>trace_id</code> so traces span producer → consumer.</td>
 </tr>
 <tr>
 <td><strong>Sentry</strong></td>
@@ -988,7 +1016,7 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 </tr>
 <tr>
 <td><strong>Probes (split)</strong></td>
-<td><code>/api/live</code> for k8s liveness (process only); <code>/api/ready</code> for readiness (pipeline warm, DB reachable via circuit breaker, not draining). <code>/api/health</code> retained for backward compatibility.</td>
+<td><code>/api/live</code> for k8s liveness (process only); <code>/api/ready</code> for readiness (pipeline warm, DB reachable via circuit breaker, Redis reachable when configured, not draining). <code>/api/health</code> retained for backward compatibility.</td>
 </tr>
 </tbody>
 </table>
@@ -1019,7 +1047,7 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 </tr>
 <tr>
 <td><strong>Testing</strong></td>
-<td><code>pytest</code>, <strong>222 tests</strong> (incl. autoscaling, distributed/<code>fakeredis</code>, outbox, cache-stampede, adaptive-throttle, secret-type masking), FastAPI <code>TestClient</code>.</td>
+<td><code>pytest</code>, <strong>278 tests</strong> (autoscaling · distributed/<code>fakeredis</code> · outbox + DLQ · cache-stampede · adaptive-throttle · idempotency · secret-type masking · custom Prom metrics · PII redaction · JWT auth · DatabaseRepository · LLM gateway), FastAPI <code>TestClient</code>.</td>
 </tr>
 <tr>
 <td><strong>CI/CD</strong></td>
@@ -1068,7 +1096,7 @@ otel_endpoint = &quot;http://otel:4318/v1/traces&quot;
 </code></pre>
 <p><strong>Runtime config</strong> — everything else lives in the DB and is managed through the admin panel at <strong><code>/admin</code></strong>. Categories:</p>
 <ul>
-<li><strong>auth</strong> — API key, CORS origins</li>
+<li><strong>auth</strong> — API key, CORS origins, JWT (algorithm, secret/JWKS, audience, issuer)</li>
 <li><strong>rate_limit</strong> — default + strict + per-tenant overrides</li>
 <li><strong>pipeline</strong> — refresh interval</li>
 <li><strong>risk</strong> — scoring weights + tier thresholds</li>
@@ -1078,7 +1106,9 @@ otel_endpoint = &quot;http://otel:4318/v1/traces&quot;
 <li><strong>backpressure</strong> — inflight cap</li>
 <li><strong>snapshot</strong> — shared snapshot URL + poll interval (cold-start fix)</li>
 <li><strong>distribution</strong> — Redis URL for cluster-wide rate limiting + queue</li>
+<li><strong>idempotency</strong> — <code>Idempotency-Key</code> cache (enabled flag, TTL, max-body-bytes)</li>
 <li><strong>llm</strong> — Tier-1 vLLM endpoint, Tier-2 frontier provider/model/budget/timeout, <strong>Tier-2 API key (masked-on-read <code>secret</code> type)</strong></li>
+<li><strong>transcripts</strong> — repository backend (<code>local</code> filesystem · <code>database</code> Postgres-JSONB)</li>
 </ul>
 <p>Changes propagate within 5 seconds (or &lt; 100 ms with Postgres <code>LISTEN/NOTIFY</code>). Every change is recorded in an audit log; <code>secret</code>-typed values store their masked form in the audit row so the raw key never persists in the historical record.</p>
 <h3 id="admin-panel">Admin panel<a class="anchor" href="#admin-panel" title="Permanent link">¶</a></h3>

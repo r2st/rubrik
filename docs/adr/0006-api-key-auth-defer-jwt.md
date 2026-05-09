@@ -61,6 +61,8 @@ The implementation is in `api/auth.py`. Total surface: ~30 lines.
 
 The migration path is clear: replace `require_api_key` with a JWT verifier, add an issuance endpoint or use an external IDP. Routes stay unchanged; only the dependency is swapped.
 
+**Update:** the JWT verifier is now shipped as `api/jwt_auth.py::require_jwt` (opt-in via the `auth.jwt_enabled` runtime setting). Supports HS256 (`auth.jwt_secret`, masked-on-read) and RS256/ES256 via JWKS endpoint (`auth.jwt_jwks_url`, cached 10 minutes). Optional `aud` / `iss` claim checks. The dependency co-exists with `require_api_key` so operators can run both during the migration window and flip routes one at a time.
+
 ## Related
 
 - `api/auth.py` — current implementation

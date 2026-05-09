@@ -927,7 +927,12 @@ footer code {
     Body -->|too large| Err413["413 + error envelope"]
     Body -->|ok| BP["BackpressureMiddleware<br/>cap inflight; 503 + Retry-After when full"]
     BP -->|saturated| Err503["503 + Retry-After"]
-    BP -->|ok| RID["RequestIDMiddleware<br/>mint or honor X-Request-ID"]
+    BP -->|ok| Adaptive["AdaptiveThrottleMiddleware<br/>shed when p95 > SLO (probabilistic)"]
+    Adaptive -->|shed| Err503
+    Adaptive -->|ok| Idem["IdempotencyMiddleware<br/>(opt-in via Idempotency-Key)"]
+    Idem -->|cache hit| Replay["Cached response<br/>(Idempotency-Status: replayed)"]
+    Idem -->|hash mismatch| Err409["409 idempotency_conflict"]
+    Idem -->|miss / disabled| RID["RequestIDMiddleware<br/>mint or honor X-Request-ID"]
     RID --> Sec["SecurityHeadersMiddleware<br/>CSP · HSTS · X-Frame-Options · …"]
     Sec --> CORS["CORSMiddleware<br/>configurable origins"]
     CORS --> GZ["GZipMiddleware<br/>compresses payloads >500B"]
@@ -1320,14 +1325,44 @@ the codebase does today.</p>
 <td>Reject oversized requests before any handler allocates buffers — DoS guard.</td>
 </tr>
 <tr>
+<td><code>BackpressureMiddleware</code></td>
+<td>per process</td>
+<td>Inflight cap → 503 + Retry-After. Sheds before request pile-up cascades.</td>
+</tr>
+<tr>
+<td><code>AdaptiveThrottleMiddleware</code></td>
+<td>per process</td>
+<td>Probabilistic shedding when sliding-window p95 breaches SLO. Third rate-limit layer.</td>
+</tr>
+<tr>
+<td><code>IdempotencyMiddleware</code></td>
+<td>opt-in</td>
+<td>Caches POST/PUT/DELETE responses by <code>Idempotency-Key</code>; same key + same hash replays, mismatched returns 409.</td>
+</tr>
+<tr>
 <td>Strict 5/min/IP rate limit</td>
 <td><code>Depends(strict_rate_limit)</code> on <code>/admin/login</code> + <code>/admin/password</code></td>
 <td>Slow brute-force credential attacks below the global slowapi cap.</td>
 </tr>
 <tr>
+<td>Per-tenant rate limit</td>
+<td><code>Depends(per_tenant_rate_limit_dep)</code> on opt-in routes</td>
+<td>Admin-tunable per-tenant cap from <code>rate_limit.per_tenant</code>. Redis-backed when configured.</td>
+</tr>
+<tr>
 <td>Global slowapi rate limiter</td>
 <td>app-wide</td>
-<td>Per-IP fairness across all routes; admin-tunable via <code>rate_limit.default</code>.</td>
+<td>Per-tenant fairness via <code>tenant_aware_key</code>; admin-tunable via <code>rate_limit.default</code>.</td>
+</tr>
+<tr>
+<td>API-key auth</td>
+<td><code>Depends(require_api_key)</code> on <code>/api/v1/*</code></td>
+<td>Single shared secret today; <code>auth.api_key</code> runtime setting; rotated via <code>/admin</code>.</td>
+</tr>
+<tr>
+<td>JWT auth (opt-in)</td>
+<td><code>Depends(require_jwt)</code></td>
+<td>Bearer-token validation when <code>auth.jwt_enabled = true</code>. HS256/RS256/ES256 (JWKS). Optional <code>aud</code>/<code>iss</code> checks. Co-exists with API-key auth during migration.</td>
 </tr>
 <tr>
 <td>PBKDF2-SHA256 (200k iters)</td>
@@ -1337,7 +1372,17 @@ the codebase does today.</p>
 <tr>
 <td>HMAC-signed session cookie</td>
 <td><code>api/admin/auth.py</code></td>
-<td><code>Secure</code> (prod) + <code>HttpOnly</code> + <code>SameSite=Strict</code>.</td>
+<td><code>Secure</code> (prod) + <code>HttpOnly</code> + <code>SameSite=Strict</code>. Session secret loadable from a file path (<code>session_secret_path</code>) for K8s Secret mounts.</td>
+</tr>
+<tr>
+<td><code>secret</code>-typed runtime settings</td>
+<td><code>api/admin/routes.py::_to_setting_out</code> + <code>runtime_settings.set()</code></td>
+<td>API keys + JWT secret are masked on every read path AND in audit-log rows. Raw value never leaves the DB.</td>
+</tr>
+<tr>
+<td>PII redactor</td>
+<td><code>src/pii.py</code></td>
+<td>Regex-based scrubbing for emails/phones/SSN/CCs (Luhn-validated)/IPs/API-key shapes. Used by the LLM gateway before any prompt leaves the perimeter.</td>
 </tr>
 <tr>
 <td><code>SecurityHeadersMiddleware</code></td>
@@ -1347,7 +1392,12 @@ the codebase does today.</p>
 <tr>
 <td>Audit log</td>
 <td><code>audit_log</code> table</td>
-<td>Every admin mutation recorded with actor + before/after value.</td>
+<td>Every admin mutation recorded with actor + before/after value. <code>secret</code>-typed values are masked in audit rows.</td>
+</tr>
+<tr>
+<td>Outbox + DLQ</td>
+<td><code>OutboxEvent</code> table + <code>DLQPublisher</code> + <code>POST /admin/outbox/replay</code></td>
+<td>At-least-once event fan-out without dual-writes. Poison rows route to DLQ; operator can replay via the admin endpoint.</td>
 </tr>
 </tbody>
 </table>

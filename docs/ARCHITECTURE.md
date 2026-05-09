@@ -601,7 +601,12 @@ flowchart TD
     Body -->|too large| Err413["413 + error envelope"]
     Body -->|ok| BP["BackpressureMiddleware<br/>cap inflight; 503 + Retry-After when full"]
     BP -->|saturated| Err503["503 + Retry-After"]
-    BP -->|ok| RID["RequestIDMiddleware<br/>mint or honor X-Request-ID"]
+    BP -->|ok| Adaptive["AdaptiveThrottleMiddleware<br/>shed when p95 > SLO (probabilistic)"]
+    Adaptive -->|shed| Err503
+    Adaptive -->|ok| Idem["IdempotencyMiddleware<br/>(opt-in via Idempotency-Key)"]
+    Idem -->|cache hit| Replay["Cached response<br/>(Idempotency-Status: replayed)"]
+    Idem -->|hash mismatch| Err409["409 idempotency_conflict"]
+    Idem -->|miss / disabled| RID["RequestIDMiddleware<br/>mint or honor X-Request-ID"]
     RID --> Sec["SecurityHeadersMiddleware<br/>CSP · HSTS · X-Frame-Options · …"]
     Sec --> CORS["CORSMiddleware<br/>configurable origins"]
     CORS --> GZ["GZipMiddleware<br/>compresses payloads >500B"]
@@ -930,12 +935,21 @@ Defense-in-depth controls layered onto the request path:
 | Control | Where | Purpose |
 |---|---|---|
 | `BodySizeLimitMiddleware` (1 MiB) | outermost middleware | Reject oversized requests before any handler allocates buffers — DoS guard. |
+| `BackpressureMiddleware` | per process | Inflight cap → 503 + Retry-After. Sheds before request pile-up cascades. |
+| `AdaptiveThrottleMiddleware` | per process | Probabilistic shedding when sliding-window p95 breaches SLO. Third rate-limit layer. |
+| `IdempotencyMiddleware` | opt-in | Caches POST/PUT/DELETE responses by `Idempotency-Key`; same key + same hash replays, mismatched returns 409. |
 | Strict 5/min/IP rate limit | `Depends(strict_rate_limit)` on `/admin/login` + `/admin/password` | Slow brute-force credential attacks below the global slowapi cap. |
-| Global slowapi rate limiter | app-wide | Per-IP fairness across all routes; admin-tunable via `rate_limit.default`. |
+| Per-tenant rate limit | `Depends(per_tenant_rate_limit_dep)` on opt-in routes | Admin-tunable per-tenant cap from `rate_limit.per_tenant`. Redis-backed when configured. |
+| Global slowapi rate limiter | app-wide | Per-tenant fairness via `tenant_aware_key`; admin-tunable via `rate_limit.default`. |
+| API-key auth | `Depends(require_api_key)` on `/api/v1/*` | Single shared secret today; `auth.api_key` runtime setting; rotated via `/admin`. |
+| JWT auth (opt-in) | `Depends(require_jwt)` | Bearer-token validation when `auth.jwt_enabled = true`. HS256/RS256/ES256 (JWKS). Optional `aud`/`iss` checks. Co-exists with API-key auth during migration. |
 | PBKDF2-SHA256 (200k iters) | `api/admin/auth.py` | Admin password hashing. |
-| HMAC-signed session cookie | `api/admin/auth.py` | `Secure` (prod) + `HttpOnly` + `SameSite=Strict`. |
+| HMAC-signed session cookie | `api/admin/auth.py` | `Secure` (prod) + `HttpOnly` + `SameSite=Strict`. Session secret loadable from a file path (`session_secret_path`) for K8s Secret mounts. |
+| `secret`-typed runtime settings | `api/admin/routes.py::_to_setting_out` + `runtime_settings.set()` | API keys + JWT secret are masked on every read path AND in audit-log rows. Raw value never leaves the DB. |
+| PII redactor | `src/pii.py` | Regex-based scrubbing for emails/phones/SSN/CCs (Luhn-validated)/IPs/API-key shapes. Used by the LLM gateway before any prompt leaves the perimeter. |
 | `SecurityHeadersMiddleware` | per response | CSP, HSTS (prod), X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy. |
-| Audit log | `audit_log` table | Every admin mutation recorded with actor + before/after value. |
+| Audit log | `audit_log` table | Every admin mutation recorded with actor + before/after value. `secret`-typed values are masked in audit rows. |
+| Outbox + DLQ | `OutboxEvent` table + `DLQPublisher` + `POST /admin/outbox/replay` | At-least-once event fan-out without dual-writes. Poison rows route to DLQ; operator can replay via the admin endpoint. |
 
 Reporting process and scope live in [`SECURITY.md`](../SECURITY.md).
 
