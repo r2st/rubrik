@@ -975,13 +975,31 @@ Schema evolution flows through Alembic — `db.init_db()`'s create-all is now an
 
 ## Performance & caching
 
-| Layer | Cache | Reason |
-|---|---|---|
-| Streamlit / FastAPI | Pipeline state cached at startup (thread-safe singleton) | Pipeline runs once per process, not per request |
-| Notebook | None | Re-running cells is the user's intent |
-| CLI | None | Designed for one-shot batch |
+A multi-layer cache stack — every layer has its own loader, invalidation hook, and degradation path:
 
-End-to-end runtime: ~10s at development volume. The bottleneck is silhouette-based `k` selection (fits 7 KMeans models). At ~10× that volume the silhouette sweep should run on a subset, not the full set; at ~100× MiniBatchKMeans replaces KMeans; beyond that the clustering is out-of-process via Spark MLlib (see ADR 0008's analytical tier).
+| Tier | Cache | Implementation | Invalidation |
+|---|---|---|---|
+| **Edge / CDN** | Static assets + cacheable GET reads | `Cache-Control: max-age=60, stale-while-revalidate=30, must-revalidate` + `ETag`. Operator-side at CloudFront / Fastly per `deploy/cdn-runbook.md`. | TTL + revalidation; admin paths bypass. |
+| **HTTP cache** | `If-None-Match` → 304 Not Modified | `api/caching.py::cached()` — weak ETag hashed from `PipelineState.metadata`. | New build → new ETag (automatic). |
+| **Pipeline state (in-memory)** | Full `PipelineState` (DataFrames + cluster + insights) per replica | `api/state.py::_state` — thread-safe singleton; `state.reload()` on refresh tick. | Refresh task or `state.set_repository()` (tests). |
+| **Pipeline snapshot (object storage)** | Pickled `PipelineState` blob — fixes HPA cold start | `api/snapshot.py` — gzipped pickle to local fs / `s3://` / `gs://` / `az://` via `fsspec`; manifest + SHA-256 checksum drives in-place reload. | Singleton CronJob writes; replicas poll the manifest. |
+| **Runtime settings (TTL + push)** | `settings` table reads | `src/runtime_settings.py` — 5 s in-process cache, push-invalidated via Postgres `LISTEN/NOTIFY` (< 100 ms propagation; SQLite uses TTL alone). | Every `set()` publishes `settings_changed`. |
+| **Cluster-wide rate limits** | Per-tenant + global IP counters | `api/limiter.py` (slowapi storage URI), strict admin limiter, `per_tenant_rate_limit_dep` — Redis when configured, in-process sliding window otherwise. | TTL on each window. |
+| **Idempotency-Key cache** | `(method, path, body)` hashed responses | `api/idempotency.py` — Redis `idempotency:{key}` (24 h default TTL); same key + same hash replays, mismatched returns 409. | TTL only; deterministic reads. |
+| **Entity-level Redis cache** | Read-through for individual rows (`meeting:{id}`, etc.) | `api/cache.py` — namespaced + TTL jitter (±10%) + single-flight + negative caching (`""` sentinel for "we know it's missing"). | `cache_invalidate(namespace, key)` on writes; namespace-wide drop available. |
+| **`CachedTranscriptRepository`** | Wraps any backing repository | `src/repository.py` — caches `get(meeting_id)`; bulk paths pass through. | Outbox-driven invalidation hook (`CachedTranscriptRepository.invalidate(id)`). |
+| **LLM Tier-2 response cache** | Frontier-API replies | `api/llm_gateway.py` — content-hashed `(provider, model, redacted_prompt, max_tokens)`; 1 h TTL; cache hits log `outcome=cache_hit` in audit. | TTL only; model-version change → new key. |
+| **Search query cache** | Search-index hits | `api/search.py::CachedSearchIndex` — 1-min TTL Redis cache wrapping any `SearchIndex`. | Index/delete writes drop the whole `search` namespace. |
+| **JWKS public keys** | RS256/ES256 JWT validation keys | `api/jwt_auth.py` — 10-min in-process cache. | TTL only; rotated when Identity Provider rolls keys. |
+| **Backpressure inflight count** | Per-replica live counter (not a "cache" but stateful) | `api/backpressure.py` | Resets to 0 in lifespan startup. |
+
+Cache discipline applies everywhere via three shared helpers (`api/caching.py` and `api/cache.py`):
+
+- **TTL jitter** — `ttl_with_jitter(base_seconds, ±10%)` prevents synchronized expiry herds.
+- **Single-flight** — `SingleFlight` collapses concurrent misses for the same key into one underlying compute.
+- **Negative caching** — `None` results are stored under a shorter TTL so probes for non-existent entities don't hammer the source.
+
+End-to-end runtime: ~10 s at development volume; the bottleneck is silhouette-based `k` selection (fits 7 KMeans models). At ~10× that volume the silhouette sweep runs on a subset; at ~100× MiniBatchKMeans replaces KMeans; beyond that the clustering is out-of-process via Spark MLlib (ADR 0008's analytical tier).
 
 ---
 

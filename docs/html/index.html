@@ -339,7 +339,7 @@ footer code {
 <p>An <strong>auto-scalable system</strong> that processes B2B meeting transcripts and surfaces topic categorization, sentiment trends, and strategic insights — exposed as a REST API with a lightweight web dashboard. <strong>Target scale: millions to 100M+ records.</strong></p>
 </blockquote>
 <p><a href=".github/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-blue" /></a>
-<a href="https://github.com/"><img alt="Tests" src="https://img.shields.io/badge/tests-278%20passing-brightgreen" /></a>
+<a href="https://github.com/"><img alt="Tests" src="https://img.shields.io/badge/tests-309%20passing-brightgreen" /></a>
 <a href="pyproject.toml"><img alt="Coverage" src="https://img.shields.io/badge/coverage-94%25-brightgreen" /></a>
 <a href="https://github.com/"><img alt="Validation" src="https://img.shields.io/badge/validation-9%2F10%20pass-brightgreen" /></a>
 <a href="pyproject.toml"><img alt="Python" src="https://img.shields.io/badge/python-3.9%2B-blue" /></a>
@@ -921,8 +921,24 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 <td><code>GZipMiddleware</code> (min 500 bytes, level 6). Typical <code>/api/v1/meetings</code> payload: 20 KB → 3.6 KB on the wire (5.5×).</td>
 </tr>
 <tr>
-<td><strong>HTTP cache (ETag)</strong></td>
-<td>Read endpoints return <code>ETag</code> + <code>Cache-Control: max-age=60</code>; clients revalidate cheaply via <code>If-None-Match</code> → 304 Not Modified (no body).</td>
+<td><strong>HTTP cache (ETag + SWR)</strong></td>
+<td>Read endpoints emit <code>ETag</code> + <code>Cache-Control: max-age=60, stale-while-revalidate=30, must-revalidate</code>. Clients revalidate via <code>If-None-Match</code> → 304. CDNs honour <code>stale-while-revalidate</code> for the cliff between fresh and expired.</td>
+</tr>
+<tr>
+<td><strong>Entity-level Redis cache</strong></td>
+<td><code>api/cache.py</code> — read-through helper with TTL jitter, single-flight, negative caching, namespaced invalidation. <code>CachedTranscriptRepository</code> wraps any backing repo with <code>get(meeting_id)</code> caching.</td>
+</tr>
+<tr>
+<td><strong>LLM Tier-2 response cache</strong></td>
+<td>Identical-input prompts replay in microseconds (Redis-backed, content-hashed key). Cached responses return with <code>latency_ms=0</code>, <code>cost=0</code>; audit trail marks them <code>cache_hit</code>.</td>
+</tr>
+<tr>
+<td><strong>Search query cache</strong></td>
+<td><code>CachedSearchIndex</code> wraps any <code>SearchIndex</code> (<code>LocalSearchIndex</code> for dev / small-corpus, <code>OpenSearchIndex</code> for production). 1-min TTL; index/delete writes invalidate the namespace.</td>
+</tr>
+<tr>
+<td><strong>TTL jitter + single-flight</strong></td>
+<td><code>api/caching.py::ttl_with_jitter()</code> (±10% TTL randomization breaks synchronized expiry herds) + <code>SingleFlight</code> (concurrent misses for the same key share one underlying compute).</td>
 </tr>
 <tr>
 <td><strong>Pinned dependencies</strong></td>
@@ -1047,7 +1063,7 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 </tr>
 <tr>
 <td><strong>Testing</strong></td>
-<td><code>pytest</code>, <strong>278 tests</strong> (autoscaling · distributed/<code>fakeredis</code> · outbox + DLQ · cache-stampede · adaptive-throttle · idempotency · secret-type masking · custom Prom metrics · PII redaction · JWT auth · DatabaseRepository · LLM gateway), FastAPI <code>TestClient</code>.</td>
+<td><code>pytest</code>, <strong>309 tests</strong> (autoscaling · distributed/<code>fakeredis</code> · outbox + DLQ · cache-stampede · adaptive-throttle · idempotency · secret-type masking · custom Prom metrics · PII redaction · JWT auth · DatabaseRepository · LLM gateway · entity-level Redis cache · cached repository · search index), FastAPI <code>TestClient</code>.</td>
 </tr>
 <tr>
 <td><strong>CI/CD</strong></td>
@@ -1109,6 +1125,7 @@ otel_endpoint = &quot;http://otel:4318/v1/traces&quot;
 <li><strong>idempotency</strong> — <code>Idempotency-Key</code> cache (enabled flag, TTL, max-body-bytes)</li>
 <li><strong>llm</strong> — Tier-1 vLLM endpoint, Tier-2 frontier provider/model/budget/timeout, <strong>Tier-2 API key (masked-on-read <code>secret</code> type)</strong></li>
 <li><strong>transcripts</strong> — repository backend (<code>local</code> filesystem · <code>database</code> Postgres-JSONB)</li>
+<li><strong>search</strong> — search backend (<code>local</code> in-memory · <code>opensearch</code> cluster), OpenSearch hosts CSV</li>
 </ul>
 <p>Changes propagate within 5 seconds (or &lt; 100 ms with Postgres <code>LISTEN/NOTIFY</code>). Every change is recorded in an audit log; <code>secret</code>-typed values store their masked form in the audit row so the raw key never persists in the historical record.</p>
 <h3 id="admin-panel">Admin panel<a class="anchor" href="#admin-panel" title="Permanent link">¶</a></h3>

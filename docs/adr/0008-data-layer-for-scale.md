@@ -76,7 +76,7 @@ The **categorization cascade** described in ADR 0002 doesn't change at scale —
 | 3. Add Redis cache for hot dashboard queries | p95 dashboard latency exceeds 200ms | ~3 days |
 | 4. Move ingestion to Kafka; workers compute insights as streaming jobs | Real-time use cases (call coaching) | ~2 weeks |
 | 5. Add ClickHouse / DuckDB-on-Iceberg for cross-time analytics | "How did sentiment trend over 18 months?" | ~1 week if data is already in S3 |
-| 6. Move full-text search to OpenSearch | Free-text dashboard queries become slow | ~3 days |
+| 6. Move full-text search to OpenSearch | Free-text dashboard queries become slow | ~3 days. **Application code shipped** in `api/search.py` (`SearchIndex` Protocol + `LocalSearchIndex` dev impl + `OpenSearchIndex` production impl + `CachedSearchIndex` Redis wrapper). Switch backends via `search.backend = "opensearch"` runtime setting. |
 | 7. Multi-tenancy: per-tenant isolation in Postgres + per-tenant fine-tuned LoRA adapters | First multi-tenant customer | ~2 weeks |
 
 Each step is independently shippable. No big-bang rewrite.

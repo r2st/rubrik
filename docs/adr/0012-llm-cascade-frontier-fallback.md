@@ -30,7 +30,7 @@ We add a **Tier 2 frontier-LLM gateway** in front of an external API (Claude / G
 | **PII redaction** (regex + spaCy NER) before any payload leaves the perimeter | Customer data must not exit without scrubbing. |
 | **Per-tenant policy** | Tenants requiring data residency or "no third-party LLM" are blocked at the hop and get the Tier-1 result flagged `low_confidence=true`. |
 | **Per-tenant daily $ cap** | Hard budget — over cap returns the Tier-1 result and alerts the operator. |
-| **Response cache** keyed on `(input_hash, prompt_version, model_id)` | Identical inputs don't re-pay. |
+| **Response cache** keyed on `(provider, model, redacted_prompt, max_tokens)` | Identical inputs don't re-pay. **Shipped:** Redis-backed via `api/cache.py`, 1-hour TTL. Cache hits return `GatewayResponse` with `latency_ms=0` and `estimated_cost_usd=0`; audit row marked `outcome=cache_hit`. |
 | **Audit-log entry** per call (model, latency, cost, redaction summary, tenant) | Compliance + debugging + cost attribution. |
 
 **Escalation triggers** (any one → Tier 2):

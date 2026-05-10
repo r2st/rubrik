@@ -3,7 +3,7 @@
 > An **auto-scalable system** that processes B2B meeting transcripts and surfaces topic categorization, sentiment trends, and strategic insights — exposed as a REST API with a lightweight web dashboard. **Target scale: millions to 100M+ records.**
 
 [![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue)](.github/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-278%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-309%20passing-brightgreen)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-94%25-brightgreen)](pyproject.toml)
 [![Validation](https://img.shields.io/badge/validation-9%2F10%20pass-brightgreen)](validate.py)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](pyproject.toml)
@@ -365,7 +365,11 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 | Concern | How it's handled |
 |---|---|
 | **Response compression** | `GZipMiddleware` (min 500 bytes, level 6). Typical `/api/v1/meetings` payload: 20 KB → 3.6 KB on the wire (5.5×). |
-| **HTTP cache (ETag)** | Read endpoints return `ETag` + `Cache-Control: max-age=60`; clients revalidate cheaply via `If-None-Match` → 304 Not Modified (no body). |
+| **HTTP cache (ETag + SWR)** | Read endpoints emit `ETag` + `Cache-Control: max-age=60, stale-while-revalidate=30, must-revalidate`. Clients revalidate via `If-None-Match` → 304. CDNs honour `stale-while-revalidate` for the cliff between fresh and expired. |
+| **Entity-level Redis cache** | `api/cache.py` — read-through helper with TTL jitter, single-flight, negative caching, namespaced invalidation. `CachedTranscriptRepository` wraps any backing repo with `get(meeting_id)` caching. |
+| **LLM Tier-2 response cache** | Identical-input prompts replay in microseconds (Redis-backed, content-hashed key). Cached responses return with `latency_ms=0`, `cost=0`; audit trail marks them `cache_hit`. |
+| **Search query cache** | `CachedSearchIndex` wraps any `SearchIndex` (`LocalSearchIndex` for dev / small-corpus, `OpenSearchIndex` for production). 1-min TTL; index/delete writes invalidate the namespace. |
+| **TTL jitter + single-flight** | `api/caching.py::ttl_with_jitter()` (±10% TTL randomization breaks synchronized expiry herds) + `SingleFlight` (concurrent misses for the same key share one underlying compute). |
 | **Pinned dependencies** | Frontend CDN scripts (Plotly, Mermaid) pinned to specific versions with **Subresource Integrity (SRI)** — browsers refuse tampered bytes. |
 | **Load-tested baseline** | `make load-test` — 11 endpoints, weighted traffic mix. Local reference: ~395 RPS, p95 ≤ 35ms. |
 
@@ -400,7 +404,7 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 | **Configuration** | Two-tier: `bootstrap.toml` (env, log, DB URL, admin secret, `[runtime]` knobs that need to be readable before the DB exists) + DB-backed `runtime_settings` for everything else (rate limits, risk weights, feature flags, Redis URL, snapshot URL, OTel sampling rate, …). Operator changes propagate via `LISTEN/NOTIFY` on Postgres. See [`bootstrap.toml.example`](bootstrap.toml.example). |
 | **Linting / formatting** | `ruff` (lint + format) configured in pyproject. |
 | **Type checking** | `mypy` for `src/` and `api/`. |
-| **Testing** | `pytest`, **278 tests** (autoscaling · distributed/`fakeredis` · outbox + DLQ · cache-stampede · adaptive-throttle · idempotency · secret-type masking · custom Prom metrics · PII redaction · JWT auth · DatabaseRepository · LLM gateway), FastAPI `TestClient`. |
+| **Testing** | `pytest`, **309 tests** (autoscaling · distributed/`fakeredis` · outbox + DLQ · cache-stampede · adaptive-throttle · idempotency · secret-type masking · custom Prom metrics · PII redaction · JWT auth · DatabaseRepository · LLM gateway · entity-level Redis cache · cached repository · search index), FastAPI `TestClient`. |
 | **CI/CD** | GitHub Actions: lint → type-check → test (3.9/3.11/3.12) → security scan → Docker build + image scan. |
 | **Containerization** | Multi-stage Dockerfile, non-root user, healthcheck, JSON logs, Caddy reverse proxy via compose. |
 | **Pipeline lifecycle** | State cached at startup; optional periodic refresh (`pipeline.refresh_minutes` runtime setting). At production volume, a singleton CronJob writes a snapshot (`api/snapshot_writer.py`); replicas warm from it instead of rebuilding. |
@@ -447,6 +451,7 @@ otel_endpoint = "http://otel:4318/v1/traces"
 - **idempotency** — `Idempotency-Key` cache (enabled flag, TTL, max-body-bytes)
 - **llm** — Tier-1 vLLM endpoint, Tier-2 frontier provider/model/budget/timeout, **Tier-2 API key (masked-on-read `secret` type)**
 - **transcripts** — repository backend (`local` filesystem · `database` Postgres-JSONB)
+- **search** — search backend (`local` in-memory · `opensearch` cluster), OpenSearch hosts CSV
 
 Changes propagate within 5 seconds (or < 100 ms with Postgres `LISTEN/NOTIFY`). Every change is recorded in an audit log; `secret`-typed values store their masked form in the audit row so the raw key never persists in the historical record.
 

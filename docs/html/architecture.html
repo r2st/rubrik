@@ -1416,33 +1416,104 @@ the codebase does today.</p>
 <p>Schema evolution flows through Alembic — <code>db.init_db()</code>'s create-all is now an idempotent fallback for low-volume tests; production-equivalent containers always run migrations on boot.</p>
 <hr />
 <h2 id="performance-caching">Performance &amp; caching<a class="anchor" href="#performance-caching" title="Permanent link">¶</a></h2>
+<p>A multi-layer cache stack — every layer has its own loader, invalidation hook, and degradation path:</p>
 <table>
 <thead>
 <tr>
-<th>Layer</th>
+<th>Tier</th>
 <th>Cache</th>
-<th>Reason</th>
+<th>Implementation</th>
+<th>Invalidation</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Streamlit / FastAPI</td>
-<td>Pipeline state cached at startup (thread-safe singleton)</td>
-<td>Pipeline runs once per process, not per request</td>
+<td><strong>Edge / CDN</strong></td>
+<td>Static assets + cacheable GET reads</td>
+<td><code>Cache-Control: max-age=60, stale-while-revalidate=30, must-revalidate</code> + <code>ETag</code>. Operator-side at CloudFront / Fastly per <code>deploy/cdn-runbook.md</code>.</td>
+<td>TTL + revalidation; admin paths bypass.</td>
 </tr>
 <tr>
-<td>Notebook</td>
-<td>None</td>
-<td>Re-running cells is the user's intent</td>
+<td><strong>HTTP cache</strong></td>
+<td><code>If-None-Match</code> → 304 Not Modified</td>
+<td><code>api/caching.py::cached()</code> — weak ETag hashed from <code>PipelineState.metadata</code>.</td>
+<td>New build → new ETag (automatic).</td>
 </tr>
 <tr>
-<td>CLI</td>
-<td>None</td>
-<td>Designed for one-shot batch</td>
+<td><strong>Pipeline state (in-memory)</strong></td>
+<td>Full <code>PipelineState</code> (DataFrames + cluster + insights) per replica</td>
+<td><code>api/state.py::_state</code> — thread-safe singleton; <code>state.reload()</code> on refresh tick.</td>
+<td>Refresh task or <code>state.set_repository()</code> (tests).</td>
+</tr>
+<tr>
+<td><strong>Pipeline snapshot (object storage)</strong></td>
+<td>Pickled <code>PipelineState</code> blob — fixes HPA cold start</td>
+<td><code>api/snapshot.py</code> — gzipped pickle to local fs / <code>s3://</code> / <code>gs://</code> / <code>az://</code> via <code>fsspec</code>; manifest + SHA-256 checksum drives in-place reload.</td>
+<td>Singleton CronJob writes; replicas poll the manifest.</td>
+</tr>
+<tr>
+<td><strong>Runtime settings (TTL + push)</strong></td>
+<td><code>settings</code> table reads</td>
+<td><code>src/runtime_settings.py</code> — 5 s in-process cache, push-invalidated via Postgres <code>LISTEN/NOTIFY</code> (&lt; 100 ms propagation; SQLite uses TTL alone).</td>
+<td>Every <code>set()</code> publishes <code>settings_changed</code>.</td>
+</tr>
+<tr>
+<td><strong>Cluster-wide rate limits</strong></td>
+<td>Per-tenant + global IP counters</td>
+<td><code>api/limiter.py</code> (slowapi storage URI), strict admin limiter, <code>per_tenant_rate_limit_dep</code> — Redis when configured, in-process sliding window otherwise.</td>
+<td>TTL on each window.</td>
+</tr>
+<tr>
+<td><strong>Idempotency-Key cache</strong></td>
+<td><code>(method, path, body)</code> hashed responses</td>
+<td><code>api/idempotency.py</code> — Redis <code>idempotency:{key}</code> (24 h default TTL); same key + same hash replays, mismatched returns 409.</td>
+<td>TTL only; deterministic reads.</td>
+</tr>
+<tr>
+<td><strong>Entity-level Redis cache</strong></td>
+<td>Read-through for individual rows (<code>meeting:{id}</code>, etc.)</td>
+<td><code>api/cache.py</code> — namespaced + TTL jitter (±10%) + single-flight + negative caching (<code>""</code> sentinel for "we know it's missing").</td>
+<td><code>cache_invalidate(namespace, key)</code> on writes; namespace-wide drop available.</td>
+</tr>
+<tr>
+<td><strong><code>CachedTranscriptRepository</code></strong></td>
+<td>Wraps any backing repository</td>
+<td><code>src/repository.py</code> — caches <code>get(meeting_id)</code>; bulk paths pass through.</td>
+<td>Outbox-driven invalidation hook (<code>CachedTranscriptRepository.invalidate(id)</code>).</td>
+</tr>
+<tr>
+<td><strong>LLM Tier-2 response cache</strong></td>
+<td>Frontier-API replies</td>
+<td><code>api/llm_gateway.py</code> — content-hashed <code>(provider, model, redacted_prompt, max_tokens)</code>; 1 h TTL; cache hits log <code>outcome=cache_hit</code> in audit.</td>
+<td>TTL only; model-version change → new key.</td>
+</tr>
+<tr>
+<td><strong>Search query cache</strong></td>
+<td>Search-index hits</td>
+<td><code>api/search.py::CachedSearchIndex</code> — 1-min TTL Redis cache wrapping any <code>SearchIndex</code>.</td>
+<td>Index/delete writes drop the whole <code>search</code> namespace.</td>
+</tr>
+<tr>
+<td><strong>JWKS public keys</strong></td>
+<td>RS256/ES256 JWT validation keys</td>
+<td><code>api/jwt_auth.py</code> — 10-min in-process cache.</td>
+<td>TTL only; rotated when Identity Provider rolls keys.</td>
+</tr>
+<tr>
+<td><strong>Backpressure inflight count</strong></td>
+<td>Per-replica live counter (not a "cache" but stateful)</td>
+<td><code>api/backpressure.py</code></td>
+<td>Resets to 0 in lifespan startup.</td>
 </tr>
 </tbody>
 </table>
-<p>End-to-end runtime: ~10s at development volume. The bottleneck is silhouette-based <code>k</code> selection (fits 7 KMeans models). At ~10× that volume the silhouette sweep should run on a subset, not the full set; at ~100× MiniBatchKMeans replaces KMeans; beyond that the clustering is out-of-process via Spark MLlib (see ADR 0008's analytical tier).</p>
+<p>Cache discipline applies everywhere via three shared helpers (<code>api/caching.py</code> and <code>api/cache.py</code>):</p>
+<ul>
+<li><strong>TTL jitter</strong> — <code>ttl_with_jitter(base_seconds, ±10%)</code> prevents synchronized expiry herds.</li>
+<li><strong>Single-flight</strong> — <code>SingleFlight</code> collapses concurrent misses for the same key into one underlying compute.</li>
+<li><strong>Negative caching</strong> — <code>None</code> results are stored under a shorter TTL so probes for non-existent entities don't hammer the source.</li>
+</ul>
+<p>End-to-end runtime: ~10 s at development volume; the bottleneck is silhouette-based <code>k</code> selection (fits 7 KMeans models). At ~10× that volume the silhouette sweep runs on a subset; at ~100× MiniBatchKMeans replaces KMeans; beyond that the clustering is out-of-process via Spark MLlib (ADR 0008's analytical tier).</p>
 <hr />
 <h2 id="extensibility">Extensibility<a class="anchor" href="#extensibility" title="Permanent link">¶</a></h2>
 <p>How to add new things without touching unrelated code:</p>

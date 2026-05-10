@@ -296,7 +296,7 @@
           <span class="tag">Postgres + Iceberg + Kafka</span>
           <span class="tag">Ray Train + vLLM</span>
           <span class="tag">14 ADRs</span>
-          <span class="tag">278 tests · 94% cov</span>
+          <span class="tag">309 tests · 94% cov</span>
         </div>
         <p class="meta">Take-home submission · Rubrik · 2026</p>
       </div>
@@ -556,15 +556,14 @@ flowchart LR
             </ul>
           </div>
           <div class="card">
-            <h4>Resilience</h4>
+            <h4>Resilience &amp; caching</h4>
             <ul>
               <li>Three-layer rate limit (global + concurrency + adaptive)</li>
               <li>Circuit breakers (state metric)</li>
-              <li>Cache-stampede protection (TTL jitter + single-flight + SWR)</li>
+              <li>Multi-tier cache: HTTP ETag · entity Redis · LLM response · search query</li>
+              <li>Cache-stampede protection (TTL jitter + single-flight + SWR + negative cache)</li>
               <li>Outbox + DLQ + admin replay endpoint</li>
-              <li>Graceful drain shutdown</li>
-              <li>Cold-start snapshot</li>
-              <li>Last-good-state on refresh fail</li>
+              <li>Graceful drain shutdown · Cold-start snapshot · Last-good-state</li>
             </ul>
           </div>
           <div class="card">
@@ -629,9 +628,11 @@ api/
   jobs.py           — Arq scaffolding
   outbox.py         — transactional outbox + DLQ + replay
   outbox_kafka.py   — Kafka publisher (confluent-kafka)
-  llm_gateway.py    — Tier-2 frontier scaffold
+  llm_gateway.py    — Tier-2 frontier + response cache
   jwt_auth.py       — Bearer-token verifier (opt-in)
   idempotency.py    — replay-safe writes
+  cache.py          — Redis read-through (jitter + single-flight)
+  search.py         — local + OpenSearch + cached wrapper
   limiter.py        — rate-limit + per-tenant
   circuit_breaker.py · backpressure.py · adaptive_throttle.py
   admin/            — session + settings + secret type
@@ -640,7 +641,7 @@ gemma-finetune/     — QLoRA recipes</code></pre>
           <div>
             <h3>Quality bar</h3>
             <ul>
-              <li><span class="green">278</span> tests · 94% coverage · <code>fakeredis</code> · LISTEN/NOTIFY · idempotency · PII · JWT · DB repo · LLM gateway · custom Prom metrics</li>
+              <li><span class="green">309</span> tests · 94% coverage · <code>fakeredis</code> · LISTEN/NOTIFY · idempotency · PII · JWT · DB repo · LLM gateway · custom Prom metrics · entity cache · search index</li>
               <li><code>ruff</code> clean · <code>mypy</code> on src + api · 14 ADRs · expand/contract migration template</li>
               <li>30+ Mermaid diagrams across docs</li>
               <li>K8s: HPA · KEDA · Cluster Autoscaler · Argo Rollouts · Gateway API · Kafka (Strimzi) · Redis · PgBouncer · OTel Collector · Prom SLO rules · migrate Job · snapshot CronJob · Arq workers</li>
