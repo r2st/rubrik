@@ -83,17 +83,26 @@ def delete_customer(
     # the upstream pipeline instead.
     try:
         with session_scope() as s:
-            # Postgres JSONB query — the customer name lives inside
-            # ``raw->'info'->>'customer'`` for meetings produced by
-            # data_loader. The pattern below also matches when the
-            # customer-name pattern is embedded in the title.
-            result = s.execute(
-                text(
+            # Structured JSONB match on the canonical customer field —
+            # NOT a free-text LIKE. A LIKE could delete unrelated rows
+            # whose title happened to contain the customer name as a
+            # substring (and a single-char customer name would scorch
+            # the table). The customer name lives in
+            # ``raw->'info'->>'customer'`` for everything data_loader
+            # writes; the SQLite dev path uses ``json_extract`` so the
+            # same logical query works on both backends.
+            is_pg = s.bind.dialect.name == "postgresql"
+            if is_pg:
+                stmt = text(
                     f"DELETE FROM {table_name} "
-                    f"WHERE raw::text LIKE :pat"
-                ),
-                {"pat": f"%{customer_name}%"},
-            )
+                    f"WHERE raw->'info'->>'customer' = :name"
+                )
+            else:
+                stmt = text(
+                    f"DELETE FROM {table_name} "
+                    f"WHERE json_extract(raw, '$.info.customer') = :name"
+                )
+            result = s.execute(stmt, {"name": customer_name})
             deleted_meetings = int(result.rowcount or 0)
 
             # Emit the outbox event in the SAME transaction as the

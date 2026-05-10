@@ -48,6 +48,8 @@ class AuditEntry(BaseModel):
     old_value: Any = None
     new_value: Any = None
     notes: Optional[str] = None
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
 
 
 class PasswordChangeRequest(BaseModel):

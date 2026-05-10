@@ -154,7 +154,30 @@ def admin_write_rate_limit(request: Request) -> None:
     bucket.append(now)
 
 
-router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
+async def _capture_audit_context(request: Request) -> None:
+    """Router-level dependency that mirrors the admin_app middleware so
+    audit-log forensics work even when the admin router is mounted on
+    the public app (api.main).
+
+    Async on purpose: a sync dependency runs in the threadpool, and
+    ContextVar mutations made inside that thread don't propagate back
+    to the route's threadpool task. Running here in the event-loop
+    coroutine context sets the var in the parent context that FastAPI
+    then copies into the route's threadpool — so the AuditLog write
+    inside ``runtime_settings.set()`` can read it back."""
+    from src.runtime_settings import set_audit_context
+    xff = request.headers.get("x-forwarded-for")
+    ip = xff.split(",")[0].strip() if xff else (
+        request.client.host if request.client else None
+    )
+    ua = request.headers.get("user-agent")
+    set_audit_context(ip=ip, user_agent=ua[:256] if ua else None)
+
+
+router = APIRouter(
+    prefix="/api/v1/admin", tags=["admin"],
+    dependencies=[Depends(_capture_audit_context)],
+)
 
 
 # ---------------------------------------------------------------------------
@@ -324,6 +347,8 @@ def get_audit(
             id=r.id, timestamp=r.timestamp, actor=r.actor, action=r.action,
             setting_key=r.setting_key,
             old_value=r.old_value, new_value=r.new_value, notes=r.notes,
+            ip_address=getattr(r, "ip_address", None),
+            user_agent=getattr(r, "user_agent", None),
         )
         for r in rows
     ]
@@ -483,3 +508,56 @@ def gdpr_delete_customer(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         ) from e
+
+
+# ---------------------------------------------------------------------------
+# Bulk export — streaming NDJSON, bounded memory regardless of total size
+# ---------------------------------------------------------------------------
+@router.get("/meetings/export.ndjson")
+def export_meetings_ndjson(
+    batch_size: int = 1000,
+    actor: str = Depends(require_admin),
+):
+    """Stream every meeting as newline-delimited JSON.
+
+    The repository's ``stream(batch_size=...)`` is the memory-bounded
+    iterator the whole pipeline already uses. Wrapping it in a
+    StreamingResponse means the API can export 100M+ meetings without
+    holding more than ``batch_size`` rows in memory at once.
+
+    Admin-gated. Tenants run their own scoped exports via the per-tenant
+    path (future work — wired when ``tenant_id`` actually lives in
+    request context end-to-end).
+    """
+    import json as _json
+
+    from fastapi.responses import StreamingResponse
+
+    from src.repository import default_repository
+
+    batch_size = max(1, min(batch_size, 10_000))
+    repo = default_repository()
+
+    def _generator():
+        for batch in repo.stream(batch_size=batch_size):
+            buf = "".join(
+                _json.dumps({
+                    "meeting_id": m.meeting_id,
+                    "info": m.info,
+                    "summary": m.summary,
+                    "speakers": m.speakers,
+                    "speaker_meta": m.speaker_meta,
+                    "events": m.events,
+                }, default=str) + "\n"
+                for m in batch
+            )
+            yield buf.encode("utf-8")
+
+    return StreamingResponse(
+        _generator(),
+        media_type="application/x-ndjson",
+        headers={
+            "Content-Disposition": 'attachment; filename="meetings.ndjson"',
+            "X-Export-Actor": actor,
+        },
+    )

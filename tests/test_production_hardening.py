@@ -281,3 +281,130 @@ def test_gdpr_audit_row_does_not_carry_customer_name():
         f"customer name leaked into audit_log: {raw[:200]}"
     )
     assert result["deletion_id"] in raw
+
+
+# ---------------------------------------------------------------------------
+# 7. GDPR structured match — NOT a free-text LIKE
+# ---------------------------------------------------------------------------
+def test_gdpr_does_not_match_customer_name_as_substring():
+    """Regression: previously a `raw::text LIKE '%name%'` would delete
+    unrelated rows whose title or body happened to contain the customer
+    name as a substring. The fix uses ``raw->info->>customer = :name``
+    (Postgres) / ``json_extract`` (SQLite) so only an exact match deletes.
+    """
+    from sqlalchemy import text as _text
+
+    from src.db import session_scope
+    # Set up the table + two rows; only one is owned by "Acme".
+    with session_scope() as s:
+        s.execute(_text("DROP TABLE IF EXISTS meetings"))
+        s.execute(_text(
+            "CREATE TABLE meetings ("
+            "  meeting_id VARCHAR(128) PRIMARY KEY, "
+            "  raw TEXT NOT NULL, "
+            "  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+        ))
+        import json as _json
+        s.execute(_text(
+            "INSERT INTO meetings (meeting_id, raw) VALUES (:m, :r)",
+        ), {"m": "m-owned",
+            "r": _json.dumps({"info": {"customer": "Acme"}})})
+        s.execute(_text(
+            "INSERT INTO meetings (meeting_id, raw) VALUES (:m, :r)",
+        ), {"m": "m-mentions",
+            "r": _json.dumps({
+                "info": {"customer": "Other"},
+                "transcript": {"text": "we mentioned Acme in passing"},
+            })})
+        s.commit()
+
+    try:
+        result = gdpr.delete_customer("Acme", confirmation="Acme", actor="test")
+        assert result["deleted_meetings"] == 1, (
+            "structured match must delete ONLY the row whose canonical "
+            "customer field equals 'Acme' — got "
+            f"{result['deleted_meetings']}"
+        )
+        # And the mention-only row must survive.
+        with session_scope() as s:
+            n = s.execute(_text(
+                "SELECT COUNT(*) FROM meetings WHERE meeting_id='m-mentions'",
+            )).scalar()
+            assert n == 1
+    finally:
+        with session_scope() as s:
+            s.execute(_text("DROP TABLE IF EXISTS meetings"))
+            s.commit()
+
+
+# ---------------------------------------------------------------------------
+# 8. Audit log — forensic IP + user-agent
+# ---------------------------------------------------------------------------
+def test_audit_log_captures_ip_and_user_agent():
+    """Settings changes made through an HTTP request must record the
+    caller's IP + UA in the audit row."""
+    from api.main import app
+    with TestClient(app) as c:
+        _login(c)
+        token = c.cookies.get("csrf_token")
+        r = c.put(
+            "/api/v1/admin/settings/rate_limit.default",
+            json={"value": "111/minute"},
+            headers={
+                "X-CSRF-Token": token,
+                "User-Agent": "pytest-forensics/1.0",
+            },
+        )
+    assert r.status_code == 200
+
+    rt = get_runtime()
+    rows = rt.audit_log(limit=10)
+    matching = [a for a in rows if a.setting_key == "rate_limit.default"]
+    assert matching, "expected an audit row for the settings change"
+    most_recent = matching[0]
+    # TestClient surfaces the local socket; we just assert *something* was
+    # captured rather than pinning the exact value (CI runners vary).
+    assert most_recent.user_agent == "pytest-forensics/1.0"
+    assert most_recent.ip_address  # non-empty string
+
+
+# ---------------------------------------------------------------------------
+# 9. Public surface — robots.txt + security.txt
+# ---------------------------------------------------------------------------
+def test_robots_txt_disallows_admin():
+    from api.main import app
+    with TestClient(app) as c:
+        r = c.get("/robots.txt")
+    assert r.status_code == 200
+    assert "Disallow: /admin" in r.text
+    assert "Disallow: /api/v1/admin" in r.text
+
+
+def test_security_txt_well_known_present():
+    from api.main import app
+    with TestClient(app) as c:
+        r = c.get("/.well-known/security.txt")
+    assert r.status_code == 200
+    assert "Contact:" in r.text
+    assert "Expires:" in r.text
+
+
+# ---------------------------------------------------------------------------
+# 10. Streaming NDJSON export
+# ---------------------------------------------------------------------------
+def test_meetings_ndjson_export_streams_one_line_per_meeting():
+    from api.admin_app import app as admin_app
+    with TestClient(admin_app) as c:
+        _login(c)
+        r = c.get("/api/v1/admin/meetings/export.ndjson?batch_size=50")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/x-ndjson")
+    # Header indicates the export actor — useful for audit pairing.
+    assert r.headers.get("x-export-actor") == "admin"
+    lines = [ln for ln in r.text.splitlines() if ln.strip()]
+    # The exact count depends on the dev-volume fixture; just assert
+    # we got at least one parseable NDJSON line.
+    import json as _json
+    assert lines, "expected at least one exported meeting"
+    parsed = _json.loads(lines[0])
+    assert "meeting_id" in parsed

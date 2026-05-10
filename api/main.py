@@ -20,7 +20,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
@@ -239,3 +239,29 @@ def favicon():
         if fpath.exists():
             return FileResponse(fpath)
     return FileResponse(WEB_DIR / "index.html", status_code=404)
+
+
+@app.get("/robots.txt", include_in_schema=False)
+def robots() -> Response:
+    """Block crawlers from the admin surface; the API itself is
+    self-describing via OpenAPI, so we allow the public root."""
+    body = (
+        "User-agent: *\n"
+        "Disallow: /admin\n"
+        "Disallow: /api/v1/admin\n"
+        "Allow: /\n"
+    )
+    return Response(content=body, media_type="text/plain")
+
+
+@app.get("/.well-known/security.txt", include_in_schema=False)
+def security_txt() -> Response:
+    """RFC 9116 — point researchers at the disclosure channel."""
+    body = (
+        "Contact: mailto:sumaninster7@gmail.com\n"
+        "Expires: 2027-01-01T00:00:00Z\n"
+        "Preferred-Languages: en\n"
+        "Canonical: /.well-known/security.txt\n"
+        "Policy: https://example.com/SECURITY.md\n"
+    )
+    return Response(content=body, media_type="text/plain")

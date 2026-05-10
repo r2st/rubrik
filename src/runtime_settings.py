@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import threading
 import time
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional
 
@@ -25,6 +26,25 @@ from sqlalchemy import select
 from .db import init_db, session_scope
 from .logging_config import get_logger
 from .models_db import AuditLog, Setting
+
+# Best-effort request-scoped forensic context. Admin routes set this via
+# ``set_audit_context()`` so every AuditLog row written during the request
+# carries IP + user-agent. Non-request callers (seed, CLI, tests) leave it
+# at the None default and rows get NULL.
+_audit_ctx: ContextVar[Optional[dict]] = ContextVar(
+    "_audit_ctx", default=None,
+)
+
+
+def set_audit_context(*, ip: Optional[str], user_agent: Optional[str]) -> None:
+    """Stash request context for subsequent AuditLog writes in this task."""
+    _audit_ctx.set({"ip_address": ip, "user_agent": user_agent})
+
+
+def _audit_ip_ua() -> tuple[Optional[str], Optional[str]]:
+    ctx = _audit_ctx.get() or {}
+    return ctx.get("ip_address"), ctx.get("user_agent")
+
 
 log = get_logger(__name__)
 
@@ -263,9 +283,11 @@ class RuntimeSettings:
             # masked form instead so the historical record can't leak the key.
             audit_old = mask_secret(old) if spec.type == "secret" else old
             audit_new = mask_secret(coerced) if spec.type == "secret" else coerced
+            _ip, _ua = _audit_ip_ua()
             s.add(AuditLog(
                 actor=actor, action="set", setting_key=key,
                 old_value=audit_old, new_value=audit_new, notes=notes,
+                ip_address=_ip, user_agent=_ua,
             ))
             s.commit()
             s.refresh(existing)

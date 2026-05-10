@@ -63,6 +63,10 @@ class AuditLog(Base):
     old_value: Mapped[Optional[object]] = mapped_column(JSON, nullable=True)
     new_value: Mapped[Optional[object]] = mapped_column(JSON, nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Forensic context — recorded best-effort by the admin routes. Nullable
+    # so legacy rows + unit-test writes (no request) don't break the schema.
+    ip_address: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    user_agent: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
 
 
 class OutboxEvent(Base):

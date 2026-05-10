@@ -126,6 +126,23 @@ app.add_middleware(idempotency_mod.IdempotencyMiddleware)
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(SecurityHeadersMiddleware, hsts=settings.is_prod)
 
+
+# Forensic context — every audit row written during this request will
+# carry the caller's IP + user-agent. Set as a tiny ASGI middleware so it
+# runs before any route handler can issue an AuditLog write.
+@app.middleware("http")
+async def _audit_context_middleware(request, call_next):
+    from src.runtime_settings import set_audit_context
+    # X-Forwarded-For wins when present (the deploy puts Caddy / a CDN
+    # in front of the admin app); fall back to the socket peer.
+    xff = request.headers.get("x-forwarded-for")
+    ip = xff.split(",")[0].strip() if xff else (
+        request.client.host if request.client else None
+    )
+    ua = request.headers.get("user-agent")
+    set_audit_context(ip=ip, user_agent=ua[:256] if ua else None)
+    return await call_next(request)
+
 # CORS — admin panel UI is same-origin in the typical deploy, but a
 # tight allowlist is cheap insurance.
 app.add_middleware(
