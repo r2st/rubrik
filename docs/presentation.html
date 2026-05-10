@@ -796,13 +796,10 @@ gemma-finetune/     — QLoRA recipes</code></pre>
       }
     });
 
-    // Click halves to navigate (left third = prev, right two-thirds = next)
-    document.getElementById('deck').addEventListener('click', (e) => {
-      if (e.target.closest('a, button, .nav-btn, .toc')) return;
-      const x = e.clientX;
-      if (x < window.innerWidth * 0.33) prev();
-      else next();
-    });
+    // Click-to-navigate is intentionally disabled — slides only advance
+    // via arrow keys / Space / PageUp-PageDown / the chrome buttons / the
+    // TOC dots. Clicking inside a slide (links, table cells, mermaid SVG)
+    // never accidentally moves the deck.
 
     // Restore from hash if present
     if (location.hash) {
