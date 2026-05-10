@@ -167,6 +167,15 @@ DEFAULTS: list[SettingDefault] = [
         "Repository backend: 'local' = filesystem (default, dev), "
         "'database' = SQL via DatabaseRepository (production per ADR 0008). "
         "Switching is a one-setting change — no app redeploy."),
+
+    # ---- Search index backend (in-memory dev → OpenSearch production) ----
+    SettingDefault("search.backend", "local", "str", "search",
+        "Search backend: 'local' = in-memory tokeniser (dev / small-corpus), "
+        "'opensearch' = remote cluster (production per ADR 0008 step 6). "
+        "Switching is a one-setting change."),
+    SettingDefault("search.opensearch_hosts", "", "str", "search",
+        "Comma-separated OpenSearch host URLs (e.g. 'https://node-1:9200'). "
+        "Required when search.backend = 'opensearch'."),
 ]
 
 

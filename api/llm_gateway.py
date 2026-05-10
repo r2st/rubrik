@@ -32,6 +32,7 @@ new code paths.
 """
 from __future__ import annotations
 
+import json as _json
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -109,6 +110,33 @@ class FrontierGateway:
 
         self._enforce_budget(tenant, cfg["daily_budget_usd"])
 
+        # Response cache — key on the redacted prompt + model + max_tokens.
+        # Hit means "we paid for this exact answer recently; replay it for
+        # free." Stays scoped per provider/model so a model-version change
+        # invalidates implicitly. Best-effort; failures fall through.
+        from . import cache as cache_mod
+        from . import metrics as metrics_mod
+        cache_key = cache_mod.content_hash(
+            cfg["provider"], cfg["model"], redacted, max_tokens,
+        )
+        cached = cache_mod.cache_get("llm_tier2_response", cache_key)
+        if cached:
+            try:
+                envelope = _json.loads(cached)
+                self._audit(tenant, cfg, "cache_hit", 0.0, summary)
+                metrics_mod.record_idempotency("hit")  # reuse counter — same shape
+                return GatewayResponse(
+                    text=envelope["text"],
+                    model=envelope.get("model", cfg["model"]),
+                    latency_ms=0.0,
+                    estimated_cost_usd=0.0,
+                    redaction=summary,
+                    tenant=tenant,
+                )
+            except Exception:  # noqa: BLE001
+                # Stale / malformed entry — fall through to a real call.
+                pass
+
         # Register the breaker (state changes flow into the Prometheus
         # circuit_breaker_state gauge via metrics hooks). The breaker is
         # consulted *inside* _call_provider's HTTP path in production —
@@ -126,6 +154,17 @@ class FrontierGateway:
             self._audit(tenant, cfg, "circuit_open", 0.0, summary)
             raise BudgetExceeded("Circuit breaker open — retry later.") from e
         latency_ms = (time.perf_counter() - started) * 1000.0
+
+        # Cache the response so identical-input calls become free replays.
+        # 1-hour default — short enough that model-side prompt changes show
+        # up promptly, long enough to absorb retry storms.
+        import contextlib
+        with contextlib.suppress(Exception):
+            cache_mod.cache_set(
+                "llm_tier2_response", cache_key,
+                _json.dumps({"text": text, "model": cfg["model"]}),
+                ttl_seconds=3600,
+            )
 
         # Estimate cost — ~$3 / 1M input + ~$15 / 1M output for Sonnet-class.
         # Operator overrides per-provider in a future runtime setting.

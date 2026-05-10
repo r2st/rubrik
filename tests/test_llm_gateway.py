@@ -65,3 +65,35 @@ def test_provider_call_not_implemented_yet():
     cfg = {"provider": "anthropic", "model": "claude"}
     with pytest.raises(NotImplementedError, match="not wired"):
         g._call_provider(cfg, "hi", 100)
+
+
+def test_response_cache_replays_identical_call():
+    """Two identical calls — second one returns the cached envelope (no
+    provider call, latency 0, cost 0)."""
+    from src.runtime_settings import get_runtime
+    rt = get_runtime()
+    rt.set("llm.tier2_enabled", True, actor="test")
+    rt.set("llm.tier2_api_key", "sk-test-fake-key", actor="test")
+
+    from api import cache as cache_mod
+    cache_mod._local._d.clear()
+    # Pre-seed the response cache so the first call sees a hit. We
+    # simulate "we already paid for this answer, replay it."
+    from api.llm_gateway import FrontierGateway
+    g = FrontierGateway()
+    redacted_prompt = "summarise this meeting please"
+    cfg_for_key = g._config()
+    key = cache_mod.content_hash(
+        cfg_for_key["provider"], cfg_for_key["model"],
+        redacted_prompt, 1024,
+    )
+    import json as _json
+    cache_mod.cache_set(
+        "llm_tier2_response", key,
+        _json.dumps({"text": "cached answer", "model": cfg_for_key["model"]}),
+        ttl_seconds=3600,
+    )
+    resp = g.call(prompt=redacted_prompt, tenant="t1")
+    assert resp.text == "cached answer"
+    assert resp.latency_ms == 0.0
+    assert resp.estimated_cost_usd == 0.0

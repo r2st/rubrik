@@ -229,6 +229,96 @@ def _meeting_to_dict(m: Meeting) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Backend: cache-wrapping decorator (Redis read-through over any backend)
+# ---------------------------------------------------------------------------
+class CachedTranscriptRepository:
+    """Decorator that adds Redis read-through caching to a backing repository.
+
+    Wraps ``get(meeting_id)`` only — ``stream`` and ``all`` are bulk paths
+    that already use bounded memory and shouldn't be cached at the
+    individual-row level (they'd evict everything else). ``count()`` is
+    cheap enough not to bother.
+
+    Production wiring::
+
+        backing = DatabaseRepository()
+        repo = CachedTranscriptRepository(backing)
+
+    Cache namespace: ``meeting``. Invalidation on writes is the caller's
+    responsibility — when a meeting row mutates, call
+    ``api/cache.cache_invalidate("meeting", meeting_id)``. The outbox
+    relayer is the natural hook for fanning invalidation events.
+    """
+
+    NAMESPACE = "meeting"
+    DEFAULT_TTL_SECONDS = 600  # 10 minutes — meetings rarely mutate post-ingest
+
+    def __init__(
+        self,
+        backing: TranscriptRepository,
+        *,
+        ttl_seconds: int = DEFAULT_TTL_SECONDS,
+    ) -> None:
+        self.backing = backing
+        self.ttl_seconds = ttl_seconds
+
+    def count(self) -> int:
+        return self.backing.count()
+
+    def get(self, meeting_id: str) -> Optional[Meeting]:
+        """Read-through Redis cache with TTL jitter + negative caching.
+
+        Sync wrapper around the async ``get_or_load`` helper — the
+        repository contract is sync, so we pump a one-shot loop.
+        """
+        from api import cache as cache_mod
+
+        # Cheap fast path: try the sync cache first to avoid the loop spin.
+        raw = cache_mod.cache_get(self.NAMESPACE, meeting_id)
+        if raw is not None:
+            if raw == "":
+                return None  # negative cache hit
+            try:
+                import json
+                return DatabaseRepository._row_to_meeting(
+                    meeting_id, json.loads(raw),
+                )
+            except Exception:  # noqa: BLE001
+                pass  # fall through to refresh
+
+        m = self.backing.get(meeting_id)
+        if m is None:
+            cache_mod.cache_set(
+                self.NAMESPACE, meeting_id, "", ttl_seconds=30,
+            )
+            return None
+        try:
+            import json
+            cache_mod.cache_set(
+                self.NAMESPACE, meeting_id,
+                json.dumps(_meeting_to_dict(m)),
+                ttl_seconds=self.ttl_seconds,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return m
+
+    def stream(self, *, batch_size: int = 1000) -> Iterator[list[Meeting]]:
+        return self.backing.stream(batch_size=batch_size)
+
+    def all(self) -> list[Meeting]:
+        return self.backing.all()
+
+    @staticmethod
+    def invalidate(meeting_id: str) -> None:
+        """Drop a single meeting from the cache. Call on write."""
+        from api import cache as cache_mod
+        cache_mod.cache_invalidate(
+            CachedTranscriptRepository.NAMESPACE, meeting_id,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Default-instance helper
 # ---------------------------------------------------------------------------
 def default_repository() -> TranscriptRepository:
