@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test cov lint format type-check validate validate-edge gen-synthetic run run-streaming migrate migrate-status api dev admin notebook docs slides docker-build docker-run start-all stop-all compose-up compose-down clean all
+.PHONY: help install install-dev test cov lint format type-check validate validate-edge gen-synthetic run run-streaming migrate migrate-status api dev admin notebook docs slides docker-build docker-run start-all stop-all compose-up compose-down compose-full-up compose-full-down smoke-test clean all
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -92,6 +92,17 @@ compose-up:  ## Bring up the docker-compose stack (API container)
 
 compose-down:  ## Tear down the docker-compose stack
 	docker compose down
+
+compose-full-up:  ## Full stack: Postgres + Redis + Kafka + API + admin
+	docker compose -f deploy/compose-full.yml up --build -d
+
+compose-full-down:  ## Tear down the full-stack compose
+	docker compose -f deploy/compose-full.yml down -v
+
+smoke-test:  ## End-to-end smoke test (hits every public + admin endpoint)
+	BASE_URL=$${BASE_URL:-http://127.0.0.1:8000} \
+	ADMIN_URL=$${ADMIN_URL:-http://127.0.0.1:8001} \
+	python -m tests.smoke_test
 
 clean:  ## Remove generated outputs and caches
 	rm -rf output/* htmlcov coverage.xml .coverage

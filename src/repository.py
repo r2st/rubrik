@@ -53,6 +53,15 @@ class TranscriptRepository(Protocol):
         call at production volume — use `stream()` instead."""
         ...
 
+    def delete(self, meeting_id: str) -> bool:
+        """Best-effort delete by id. Returns True iff a row existed.
+
+        Required by the GDPR right-to-be-forgotten path (``api/admin/gdpr.py``).
+        Backends that can't honor deletion (e.g. read-only filesystem
+        layouts) raise ``NotImplementedError`` so the caller can pick
+        the appropriate fallback path."""
+        ...
+
 
 # ---------------------------------------------------------------------------
 # Backend: local directory of JSON files (the development-volume default)
@@ -98,6 +107,16 @@ class LocalDirectoryRepository:
     def all(self) -> list[Meeting]:
         return [m for batch in self.stream(batch_size=10_000) for m in batch]
 
+    def delete(self, meeting_id: str) -> bool:
+        """Filesystem layout is treated as read-only — deletion happens
+        upstream. We raise so the GDPR path can fall through to the
+        DatabaseRepository when both are configured, and so a misconfigured
+        deployment surfaces the issue instead of silently lying."""
+        raise NotImplementedError(
+            "LocalDirectoryRepository is read-only; configure a "
+            "DatabaseRepository to honor GDPR deletes",
+        )
+
 
 # ---------------------------------------------------------------------------
 # Backend: SQL database (Postgres in production) via JSON blob storage
@@ -132,21 +151,52 @@ class DatabaseRepository:
                 .scalar() or 0
             )
 
-    def get(self, meeting_id: str) -> Optional[Meeting]:
+    def get(
+        self, meeting_id: str, *, tenant_id: Optional[str] = None,
+    ) -> Optional[Meeting]:
+        """Look up a single meeting. When ``tenant_id`` is provided the
+        query also filters on it — multi-tenant deployments MUST pass
+        the caller's tenant to keep one tenant from reading another's
+        data via id-guessing. Single-tenant callers can omit it."""
         from sqlalchemy import text
 
         from .db import session_scope
         with session_scope() as s:
-            row = s.execute(
-                text(
-                    f"SELECT raw FROM {self.table_name} "
-                    f"WHERE meeting_id = :mid"
-                ),
-                {"mid": meeting_id},
-            ).first()
+            if tenant_id is None:
+                row = s.execute(
+                    text(
+                        f"SELECT raw FROM {self.table_name} "
+                        f"WHERE meeting_id = :mid"
+                    ),
+                    {"mid": meeting_id},
+                ).first()
+            else:
+                row = s.execute(
+                    text(
+                        f"SELECT raw FROM {self.table_name} "
+                        f"WHERE meeting_id = :mid AND tenant_id = :tid"
+                    ),
+                    {"mid": meeting_id, "tid": tenant_id},
+                ).first()
         if row is None:
             return None
         return self._row_to_meeting(meeting_id, row[0])
+
+    def delete(self, meeting_id: str) -> bool:
+        """Delete by primary key. Returns True iff a row was removed."""
+        from sqlalchemy import text
+
+        from .db import session_scope
+        with session_scope() as s:
+            result = s.execute(
+                text(
+                    f"DELETE FROM {self.table_name} "
+                    f"WHERE meeting_id = :mid"
+                ),
+                {"mid": meeting_id},
+            )
+            s.commit()
+            return int(result.rowcount or 0) > 0
 
     def stream(self, *, batch_size: int = 1000) -> Iterator[list[Meeting]]:
         """Chunked fetch — bounded memory regardless of total size."""
@@ -308,6 +358,16 @@ class CachedTranscriptRepository:
 
     def all(self) -> list[Meeting]:
         return self.backing.all()
+
+    def delete(self, meeting_id: str) -> bool:
+        """Delete the row from the backing store + drop the cache entry.
+        Cache invalidation runs even if the backing delete returned False,
+        so we never serve a tombstoned row from cache."""
+        try:
+            removed = bool(self.backing.delete(meeting_id))
+        finally:
+            self.invalidate(meeting_id)
+        return removed
 
     @staticmethod
     def invalidate(meeting_id: str) -> None:

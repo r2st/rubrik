@@ -19,6 +19,8 @@
       </div>
       <p class="login-help">Sign in to manage runtime configuration. Initial password is set in <code>bootstrap.toml</code>.</p>
       <input type="password" id="password" autocomplete="current-password" placeholder="Admin password" required autofocus>
+      <input type="text" id="totp-code" inputmode="numeric" autocomplete="one-time-code"
+             pattern="[0-9]{6}" maxlength="6" placeholder="6-digit MFA code (if enabled)">
       <button type="submit">Sign in</button>
       <div id="login-error" class="login-error" hidden></div>
     </form>
@@ -67,6 +69,46 @@
             </label>
             <button type="submit">Update password</button>
             <div id="password-msg"></div>
+          </form>
+        </div>
+
+        <div class="card">
+          <h3>Two-factor authentication (TOTP)</h3>
+          <p class="caption">Authenticator app (1Password / Bitwarden / Google Authenticator). Once enabled, login requires a 6-digit code in addition to the password.</p>
+          <div id="totp-status">Checking…</div>
+          <div id="totp-setup" hidden>
+            <button type="button" id="totp-start-btn">Start setup</button>
+            <div id="totp-setup-panel" hidden>
+              <p>Scan this QR code in your authenticator app, or paste the secret manually.</p>
+              <pre id="totp-uri" class="totp-uri"></pre>
+              <code id="totp-secret" class="totp-secret"></code>
+              <form id="totp-verify-form">
+                <label>6-digit code
+                  <input type="text" id="totp-verify-code" inputmode="numeric"
+                         pattern="[0-9]{6}" maxlength="6" required>
+                </label>
+                <button type="submit">Verify &amp; enable</button>
+              </form>
+            </div>
+          </div>
+          <div id="totp-disable" hidden>
+            <p class="caption">MFA is currently <strong>enabled</strong>. Disabling will allow password-only login.</p>
+            <button type="button" id="totp-disable-btn" class="danger">Disable MFA</button>
+          </div>
+        </div>
+
+        <div class="card danger-zone">
+          <h3>GDPR — right to be forgotten</h3>
+          <p class="caption">Permanently delete all data for a customer. Audit row keeps a one-way SHA-256 hash of the name; the original is never recoverable. See <code>deploy/gdpr-runbook.md</code>.</p>
+          <form id="gdpr-form">
+            <label>Customer name
+              <input type="text" id="gdpr-customer" required>
+            </label>
+            <label>Type <code>DELETE</code> to confirm
+              <input type="text" id="gdpr-confirm" pattern="DELETE" required>
+            </label>
+            <button type="submit" class="danger">Delete customer data</button>
+            <div id="gdpr-msg"></div>
           </form>
         </div>
       </section>

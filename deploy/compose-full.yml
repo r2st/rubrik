@@ -1,0 +1,162 @@
+# compose-full.yml — full production-shaped local stack.
+#
+# Brings up everything the K8s manifests deploy in production, scaled to
+# a single laptop. The intent is to let an engineer reproduce a
+# representative environment with one command, including the dependency
+# graph that the smoke test exercises.
+#
+# Stack:
+#   - postgres   :5432   canonical OLTP store (settings, audit, outbox, meetings)
+#   - redis      :6379   rate-limit + idempotency + LLM cache + JWKS cache
+#   - kafka      :9092   outbox sink (KRaft mode, no Zookeeper)
+#   - api        :8000   public API + dashboard
+#   - admin      :8001   admin panel + admin API
+#   - migrate    once    runs `alembic upgrade head` and exits
+#
+# Usage:
+#   make compose-full-up      # build + start
+#   make compose-full-down    # tear down (also removes named volumes)
+#   make smoke-test           # against the running stack
+#
+# Differences from `docker-compose.yml`:
+#   This file wires real Postgres/Redis/Kafka instead of running the API
+#   on its in-process fallbacks. Use this when you want to verify the
+#   production code paths (cluster-wide rate limit, outbox relayer,
+#   GDPR delete + outbox event, etc).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ti-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ti
+      POSTGRES_PASSWORD: ti_local_dev
+      POSTGRES_DB: ti
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "ti"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: ti-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  kafka:
+    image: bitnami/kafka:3.7
+    container_name: ti-kafka
+    restart: unless-stopped
+    environment:
+      # KRaft single-node — no Zookeeper. Production uses Strimzi w/ replication.
+      KAFKA_CFG_NODE_ID: "1"
+      KAFKA_CFG_PROCESS_ROLES: "controller,broker"
+      KAFKA_CFG_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    ports:
+      - "9092:9092"
+    volumes:
+      - kafka_data:/bitnami/kafka
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: transcript-intelligence:latest
+    container_name: ti-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgresql://ti:ti_local_dev@postgres:5432/ti"
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
+  api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: transcript-intelligence:latest
+    container_name: ti-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      LOG_LEVEL: INFO
+      LOG_FORMAT: json
+      PORT: "8000"
+      # Bootstrap that points at the real services.
+      DATABASE_URL: "postgresql://ti:ti_local_dev@postgres:5432/ti"
+      REDIS_URL: "redis://redis:6379/0"
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../../interview-assignment:/interview-assignment:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health').status == 200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  admin:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: transcript-intelligence:latest
+    container_name: ti-admin
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      LOG_LEVEL: INFO
+      LOG_FORMAT: json
+      PORT: "8001"
+      DATABASE_URL: "postgresql://ti:ti_local_dev@postgres:5432/ti"
+      REDIS_URL: "redis://redis:6379/0"
+    command: ["uvicorn", "api.admin_app:app", "--host", "0.0.0.0", "--port", "8001"]
+    ports:
+      - "8001:8001"
+
+volumes:
+  pg_data:
+  redis_data:
+  kafka_data:

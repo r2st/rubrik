@@ -58,12 +58,22 @@ def test_estimate_cost_is_deterministic():
     assert a > 0
 
 
-def test_provider_call_not_implemented_yet():
-    """The provider HTTP layer is stubbed — production wires the real client."""
+def test_provider_call_requires_api_key():
+    """No API key configured → fail loud with a useful error rather
+    than silently degrade."""
     from api.llm_gateway import FrontierGateway
     g = FrontierGateway()
-    cfg = {"provider": "anthropic", "model": "claude"}
-    with pytest.raises(NotImplementedError, match="not wired"):
+    cfg = {"provider": "anthropic", "model": "claude", "api_key": "", "timeout_s": 30}
+    with pytest.raises(RuntimeError, match="no API key configured"):
+        g._call_provider(cfg, "hi", 100)
+
+
+def test_provider_call_unknown_provider():
+    """Unknown provider name → loud failure, not a confusing import error."""
+    from api.llm_gateway import FrontierGateway
+    g = FrontierGateway()
+    cfg = {"provider": "made-up", "model": "x", "api_key": "k", "timeout_s": 30}
+    with pytest.raises(RuntimeError, match="Unknown Tier-2 provider"):
         g._call_provider(cfg, "hi", 100)
 
 

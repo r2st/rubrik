@@ -1,0 +1,196 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 1,
+      "title": "p95 request latency (s)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prom"},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(http_request_duration_seconds_bucket{job=\"transcript-intel-api\"}[5m])))",
+          "legendFormat": "p95 · {{route}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.4},
+              {"color": "red", "value": 0.8}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "5xx rate (req/s)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prom"},
+      "targets": [
+        {
+          "expr": "sum by (route) (rate(http_requests_total{job=\"transcript-intel-api\", status=~\"5..\"}[5m]))",
+          "legendFormat": "5xx · {{route}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps"}}
+    },
+    {
+      "id": 3,
+      "title": "SLO error budget (1h burn rate)",
+      "type": "stat",
+      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prom"},
+      "targets": [
+        {
+          "expr": "(sum(rate(http_requests_total{job=\"transcript-intel-api\", status=~\"5..\"}[1h])) / sum(rate(http_requests_total{job=\"transcript-intel-api\"}[1h]))) / 0.001",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 6},
+              {"color": "red", "value": 14.4}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Adaptive throttle shed-rate",
+      "type": "timeseries",
+      "gridPos": {"h": 6, "w": 6, "x": 6, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prom"},
+      "targets": [
+        {
+          "expr": "rate(adaptive_throttle_shed_total[5m])",
+          "legendFormat": "shed/s",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Backpressure inflight",
+      "type": "timeseries",
+      "gridPos": {"h": 6, "w": 6, "x": 12, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prom"},
+      "targets": [
+        {"expr": "backpressure_inflight", "legendFormat": "inflight", "refId": "A"},
+        {"expr": "backpressure_max_inflight", "legendFormat": "cap", "refId": "B"}
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Circuit breaker state",
+      "type": "stat",
+      "gridPos": {"h": 6, "w": 6, "x": 18, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prom"},
+      "targets": [
+        {"expr": "circuit_breaker_state", "legendFormat": "{{name}}", "refId": "A"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {"type": "value", "options": {"0": {"text": "closed", "color": "green"}}},
+            {"type": "value", "options": {"1": {"text": "half-open", "color": "yellow"}}},
+            {"type": "value", "options": {"2": {"text": "open", "color": "red"}}}
+          ]
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Outbox unprocessed events",
+      "type": "timeseries",
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 14},
+      "datasource": {"type": "prometheus", "uid": "prom"},
+      "targets": [
+        {"expr": "outbox_events_unprocessed", "legendFormat": "pending", "refId": "A"},
+        {"expr": "outbox_events_dlq", "legendFormat": "DLQ", "refId": "B"}
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Tier-2 LLM spend (USD/day, per tenant)",
+      "type": "timeseries",
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 14},
+      "datasource": {"type": "prometheus", "uid": "prom"},
+      "targets": [
+        {
+          "expr": "sum by (tenant) (llm_tier2_spend_usd_day)",
+          "legendFormat": "{{tenant}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "currencyUSD"}}
+    },
+    {
+      "id": 9,
+      "title": "Per-tenant request rate (req/s)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 20},
+      "datasource": {"type": "prometheus", "uid": "prom"},
+      "targets": [
+        {
+          "expr": "sum by (tenant) (rate(http_requests_total{job=\"transcript-intel-api\"}[1m]))",
+          "legendFormat": "{{tenant}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Readiness (per replica)",
+      "type": "stat",
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 28},
+      "datasource": {"type": "prometheus", "uid": "prom"},
+      "targets": [
+        {"expr": "up{job=\"transcript-intel-api\"}", "legendFormat": "{{instance}}", "refId": "A"}
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Idempotency cache (hit / miss)",
+      "type": "timeseries",
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 28},
+      "datasource": {"type": "prometheus", "uid": "prom"},
+      "targets": [
+        {"expr": "rate(idempotency_total{result=\"hit\"}[5m])", "legendFormat": "hit/s", "refId": "A"},
+        {"expr": "rate(idempotency_total{result=\"miss\"}[5m])", "legendFormat": "miss/s", "refId": "B"},
+        {"expr": "rate(idempotency_total{result=\"conflict\"}[5m])", "legendFormat": "409/s", "refId": "C"}
+      ]
+    }
+  ],
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["transcript-intel", "slo"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "",
+  "title": "Transcript Intelligence · SLO overview",
+  "uid": "transcript-intel-slo",
+  "version": 1,
+  "weekStart": ""
+}

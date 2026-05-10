@@ -145,8 +145,10 @@ async def readiness(request: Request) -> JSONResponse:
 
     db_ok = True
     try:
-        await db_breaker.call(_probe_db)
-    except (CircuitOpenError, Exception):  # noqa: BLE001
+        # Hard 2 s deadline on the DB probe — we never want a slow
+        # Postgres to make readiness itself slow. Timeout = unhealthy.
+        await asyncio.wait_for(db_breaker.call(_probe_db), timeout=2.0)
+    except (CircuitOpenError, asyncio.TimeoutError, Exception):  # noqa: BLE001
         db_ok = False
 
     # Redis probe — only when configured. Reflects the health of the
@@ -165,8 +167,10 @@ async def readiness(request: Request) -> JSONResponse:
             def _ping():
                 import redis
                 redis.Redis.from_url(url, socket_timeout=0.25).ping()
-            await asyncio.to_thread(_ping)
-    except Exception:  # noqa: BLE001
+            # Outer wait_for guards against socket-timeout being honored
+            # but the connection-pool acquire stalling. Belt-and-braces.
+            await asyncio.wait_for(asyncio.to_thread(_ping), timeout=1.0)
+    except (asyncio.TimeoutError, Exception):  # noqa: BLE001
         redis_ok = False
 
     breakers = {n: b.state.value for n, b in all_breakers().items()}

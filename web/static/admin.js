@@ -5,10 +5,28 @@ const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 const ADMIN = "/api/v1/admin";
 
+// Read the CSRF token cookie issued at login. Non-HttpOnly by design so
+// JS can echo it on every state-changing request via X-CSRF-Token. The
+// server compares cookie + header via constant-time compare.
+function csrfToken() {
+  const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : "";
+}
+
 async function api(path, opts = {}) {
+  const method = (opts.method || "GET").toUpperCase();
+  const headers = {
+    "Content-Type": "application/json",
+    ...(opts.headers || {}),
+  };
+  // State-changing methods carry the CSRF token. GET/HEAD don't need it.
+  if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+    const t = csrfToken();
+    if (t) headers["X-CSRF-Token"] = t;
+  }
   const r = await fetch(ADMIN + path, {
     credentials: "include",
-    headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
+    headers,
     ...opts,
   });
   if (r.status === 401) {
@@ -56,14 +74,16 @@ $$(".tab").forEach((t) => t.addEventListener("click", () => {
 $("#login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const password = $("#password").value;
+  const totp = $("#totp-code").value.trim();
   const errBox = $("#login-error");
   errBox.hidden = true;
   try {
+    const body = totp ? { password, totp } : { password };
     const r = await fetch(ADMIN + "/login", {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password }),
+      body: JSON.stringify(body),
     });
     if (!r.ok) {
       errBox.textContent = "Invalid credentials.";
@@ -282,12 +302,96 @@ $("#password-form").addEventListener("submit", async (e) => {
   }
 });
 
+// -------- TOTP / MFA --------
+async function refreshTotpStatus() {
+  try {
+    const me = await api("/me");
+    const enabled = !!me.totp_required;
+    $("#totp-status").textContent = enabled
+      ? "MFA is enabled."
+      : "MFA is not enabled.";
+    $("#totp-setup").hidden = enabled;
+    $("#totp-disable").hidden = !enabled;
+    $("#totp-setup-panel").hidden = true;
+  } catch (e) {
+    if (e.message !== "not authenticated") toast(e.message, "error");
+  }
+}
+
+let _pendingTotpSecret = null;
+
+document.addEventListener("click", async (e) => {
+  if (e.target && e.target.id === "totp-start-btn") {
+    try {
+      const r = await api("/totp/setup", { method: "POST" });
+      _pendingTotpSecret = r.secret;
+      $("#totp-uri").textContent = r.uri;
+      $("#totp-secret").textContent = `secret: ${r.secret}`;
+      $("#totp-setup-panel").hidden = false;
+    } catch (err) { toast(err.message, "error"); }
+  }
+  if (e.target && e.target.id === "totp-disable-btn") {
+    if (!confirm("Disable MFA? Password-only login will be allowed.")) return;
+    try {
+      await api("/totp/disable", { method: "POST" });
+      toast("MFA disabled");
+      await refreshTotpStatus();
+    } catch (err) { toast(err.message, "error"); }
+  }
+});
+
+document.addEventListener("submit", async (e) => {
+  if (e.target && e.target.id === "totp-verify-form") {
+    e.preventDefault();
+    const code = $("#totp-verify-code").value.trim();
+    if (!_pendingTotpSecret) { toast("Start setup first", "error"); return; }
+    try {
+      await api("/totp/verify", {
+        method: "POST",
+        body: JSON.stringify({ secret: _pendingTotpSecret, code }),
+      });
+      _pendingTotpSecret = null;
+      $("#totp-verify-code").value = "";
+      toast("MFA enabled");
+      await refreshTotpStatus();
+    } catch (err) { toast(err.message, "error"); }
+  }
+  if (e.target && e.target.id === "gdpr-form") {
+    e.preventDefault();
+    const customer = $("#gdpr-customer").value.trim();
+    const confirmation = $("#gdpr-confirm").value.trim();
+    const msg = $("#gdpr-msg");
+    msg.className = "";
+    msg.textContent = "";
+    if (!confirm(`Permanently delete all data for "${customer}"? This is irreversible.`)) return;
+    try {
+      const r = await api("/gdpr/delete-customer", {
+        method: "POST",
+        body: JSON.stringify({ customer_name: customer, confirmation }),
+      });
+      msg.className = "ok";
+      msg.textContent = `Deleted ${r.deleted_meetings ?? 0} record(s). Deletion ID: ${r.deletion_id} · customer hash: ${r.customer_hash}`;
+      $("#gdpr-customer").value = "";
+      $("#gdpr-confirm").value = "";
+    } catch (err) {
+      msg.className = "err";
+      msg.textContent = err.message;
+    }
+  }
+});
+
+// Refresh TOTP status when Account tab opens.
+$$(".tab").forEach((t) => t.addEventListener("click", () => {
+  if (t.dataset.tab === "account") refreshTotpStatus();
+}));
+
 // -------- Boot --------
 (async function main() {
   try {
     await api("/me");
     showShell();
     await loadSettings();
+    await refreshTotpStatus();
   } catch (_) {
     showLogin();
   }

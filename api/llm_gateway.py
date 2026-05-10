@@ -201,12 +201,80 @@ class FrontierGateway:
     # ----- provider call ------------------------------------------------
     @staticmethod
     def _call_provider(cfg: dict, prompt: str, max_tokens: int) -> str:
-        """Provider-specific HTTP. Stubbed — production wires the real client."""
-        # In production, dispatch to anthropic / openai / google clients here.
-        # Keeping the scaffold provider-agnostic so the call site is stable.
-        raise NotImplementedError(
-            f"Provider {cfg['provider']!r} client not wired in this build. "
-            f"Install + dispatch in api/llm_gateway.py::_call_provider."
+        """Provider-specific HTTP dispatch.
+
+        Imports are deferred so the SDKs aren't required dependencies for
+        deployments that only run Tier 1 — installing ``anthropic`` /
+        ``openai`` / ``google-genai`` is opt-in via the ``llm`` extras.
+
+        Each branch is intentionally tiny: build the client, hand it the
+        already-PII-redacted prompt, return the model's text. Retry +
+        circuit-breaker live one layer up in ``call()``.
+        """
+        provider = (cfg.get("provider") or "anthropic").lower()
+        api_key = cfg.get("api_key") or ""
+        model = cfg.get("model") or ""
+        timeout_s = int(cfg.get("timeout_s") or 30)
+        if not api_key:
+            raise RuntimeError(
+                f"Tier-2 provider {provider!r} has no API key configured "
+                "(llm.tier2_api_key is empty)",
+            )
+
+        if provider == "anthropic":
+            try:
+                import anthropic  # type: ignore[import-not-found]
+            except ImportError as e:
+                raise RuntimeError(
+                    "anthropic SDK not installed — `pip install anthropic`",
+                ) from e
+            client = anthropic.Anthropic(api_key=api_key, timeout=timeout_s)
+            resp = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            # Concatenate text blocks; ignore tool-use blocks.
+            parts = [
+                getattr(b, "text", "") for b in resp.content
+                if getattr(b, "type", "") == "text"
+            ]
+            return "".join(parts)
+
+        if provider == "openai":
+            try:
+                import openai  # type: ignore[import-not-found]
+            except ImportError as e:
+                raise RuntimeError(
+                    "openai SDK not installed — `pip install openai`",
+                ) from e
+            client = openai.OpenAI(api_key=api_key, timeout=timeout_s)
+            resp = client.chat.completions.create(
+                model=model,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return resp.choices[0].message.content or ""
+
+        if provider in ("google", "gemini"):
+            try:
+                from google import genai  # type: ignore[import-not-found]
+            except ImportError as e:
+                raise RuntimeError(
+                    "google-genai SDK not installed — "
+                    "`pip install google-genai`",
+                ) from e
+            client = genai.Client(api_key=api_key)
+            resp = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config={"max_output_tokens": max_tokens},
+            )
+            return getattr(resp, "text", "") or ""
+
+        raise RuntimeError(
+            f"Unknown Tier-2 provider {provider!r} — "
+            "expected one of: anthropic, openai, google",
         )
 
     # ----- budget tracking ---------------------------------------------

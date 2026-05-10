@@ -216,8 +216,10 @@ def logout(response: Response) -> dict:
 
 @router.get("/me")
 def me(actor: str = Depends(require_admin)) -> dict:
-    """Cheap session-validity probe for the UI."""
-    return {"actor": actor}
+    """Cheap session-validity probe for the UI. Also surfaces MFA state
+    so the admin panel can show the correct TOTP card."""
+    from .totp import is_totp_required
+    return {"actor": actor, "totp_required": is_totp_required()}
 
 
 @router.post("/password", dependencies=[Depends(strict_rate_limit)])
