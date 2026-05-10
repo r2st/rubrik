@@ -66,6 +66,18 @@ DEFAULTS: list[SettingDefault] = [
         "Required 'aud' claim. Empty = audience check is skipped."),
     SettingDefault("auth.jwt_issuer", "", "str", "auth",
         "Required 'iss' claim. Empty = issuer check is skipped."),
+    # CSRF — double-submit cookie + Sec-Fetch-Site (api/csrf.py)
+    SettingDefault("auth.csrf_enabled", True, "bool", "auth",
+        "Enforce CSRF on admin write endpoints. Off = legacy migration mode."),
+    # TOTP / MFA for the admin account
+    SettingDefault("auth.admin_totp_secret", "", "secret", "auth",
+        "Base32 TOTP shared secret. Empty = MFA disabled. Set via "
+        "POST /api/v1/admin/totp/setup; rotate by clearing + re-running setup."),
+    SettingDefault("auth.admin_totp_required", False, "bool", "auth",
+        "When true, /admin/login rejects requests without a valid TOTP code."),
+    # PII scrubbing in structured logs
+    SettingDefault("observability.pii_scrub_logs", True, "bool", "observability",
+        "Run every log record through the PII redactor before emitting."),
 
     # ---- rate limiting ----
     SettingDefault("rate_limit.default", "120/minute", "str", "rate_limit",

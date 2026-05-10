@@ -14,7 +14,9 @@ import time
 from collections import defaultdict, deque
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from pydantic import BaseModel
 
+from api.csrf import require_csrf
 from src.runtime_settings import get_runtime
 from src.settings import Settings, get_settings
 
@@ -49,7 +51,9 @@ from .schemas import (
 # slowapi middleware applies on top. For a stricter cluster-wide bound,
 # move the counter to Redis.
 _STRICT_LIMIT_PER_MINUTE = 5
+_WRITE_LIMIT_PER_MINUTE = 60   # less aggressive — non-credential admin writes
 _strict_window: dict[str, deque[float]] = defaultdict(deque)
+_write_window: dict[str, deque[float]] = defaultdict(deque)
 
 
 def strict_rate_limit(request: Request) -> None:
@@ -102,6 +106,54 @@ def strict_rate_limit(request: Request) -> None:
     bucket.append(now)
 
 
+def admin_write_rate_limit(request: Request) -> None:
+    """Less-aggressive rate limit for non-credential admin write endpoints
+    (settings updates, snapshot rebuild, GDPR delete, outbox replay).
+
+    60/min/IP — high enough that legitimate operator usage never bumps
+    into it, low enough that a compromised-session attacker can't
+    rapidly spam state changes. Same Redis-or-fallback pattern as
+    ``strict_rate_limit``.
+    """
+    ip = (request.client.host if request.client else "unknown") or "unknown"
+    redis_url = None
+    try:
+        from src.settings import get_settings  # noqa: PLC0415
+        redis_url = get_settings().redis_url
+    except Exception:  # noqa: BLE001
+        pass
+    if redis_url:
+        try:
+            import redis as _redis  # noqa: PLC0415
+            client = _redis.Redis.from_url(redis_url, socket_timeout=0.25)
+            key = f"admin_write_rl:{ip}"
+            cnt = client.incr(key)
+            if cnt == 1:
+                client.expire(key, 60)
+            if cnt > _WRITE_LIMIT_PER_MINUTE:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Admin write rate limit exceeded; pause and retry.",
+                )
+            return
+        except HTTPException:
+            raise
+        except Exception:  # noqa: BLE001
+            pass
+
+    now = time.monotonic()
+    cutoff = now - 60.0
+    bucket = _write_window[ip]
+    while bucket and bucket[0] < cutoff:
+        bucket.popleft()
+    if len(bucket) >= _WRITE_LIMIT_PER_MINUTE:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Admin write rate limit exceeded; pause and retry.",
+        )
+    bucket.append(now)
+
+
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
 
@@ -117,6 +169,17 @@ def login(req: LoginRequest, response: Response,
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials",
         )
+
+    # MFA enforcement — when TOTP is required, the password alone isn't
+    # enough. The same 401 envelope is used so an attacker can't tell
+    # whether they got the password right (no oracle).
+    from .totp import is_totp_required, verify_login_code
+    if is_totp_required() and not verify_login_code(req.totp):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+        )
+
     token = issue_session("admin", settings)
     response.set_cookie(
         key=SESSION_COOKIE,
@@ -125,6 +188,20 @@ def login(req: LoginRequest, response: Response,
         httponly=True,
         samesite="strict",
         # `secure` is true in prod (TLS) but false in dev so localhost works
+        secure=settings.is_prod,
+        path="/",
+    )
+
+    # CSRF token cookie — JS reads it (so NOT HttpOnly) and echoes via
+    # X-CSRF-Token on every state-changing request. Server compares the
+    # two via constant-time compare in api/csrf.py::require_csrf.
+    from api.csrf import CSRF_COOKIE, issue_token
+    response.set_cookie(
+        key=CSRF_COOKIE,
+        value=issue_token(),
+        max_age=SESSION_TTL_SECONDS,
+        httponly=False,                # JS reads it; that's the pattern
+        samesite="strict",
         secure=settings.is_prod,
         path="/",
     )
@@ -197,7 +274,14 @@ def get_setting(key: str, actor: str = Depends(require_admin)) -> SettingOut:
     return _to_setting_out(matches[0])
 
 
-@router.put("/settings/{key}", response_model=SettingOut)
+@router.put(
+    "/settings/{key}",
+    response_model=SettingOut,
+    dependencies=[
+        Depends(admin_write_rate_limit),
+        Depends(require_csrf),
+    ],
+)
 def update_setting(
     key: str, req: UpdateSettingRequest,
     actor: str = Depends(require_admin),
@@ -211,7 +295,11 @@ def update_setting(
     return _to_setting_out(s)
 
 
-@router.post("/settings/{key}/reset", response_model=SettingOut)
+@router.post(
+    "/settings/{key}/reset",
+    response_model=SettingOut,
+    dependencies=[Depends(admin_write_rate_limit), Depends(require_csrf)],
+)
 def reset_setting(key: str, actor: str = Depends(require_admin)) -> SettingOut:
     try:
         s = get_runtime().reset(key, actor=actor)
@@ -254,7 +342,10 @@ def outbox_stuck_count(actor: str = Depends(require_admin)) -> dict:
     return {"stuck": count_stuck_rows(), "actor": actor}
 
 
-@router.post("/outbox/replay")
+@router.post(
+    "/outbox/replay",
+    dependencies=[Depends(admin_write_rate_limit), Depends(require_csrf)],
+)
 def outbox_replay(
     limit: int = 100,
     actor: str = Depends(require_admin),
@@ -275,7 +366,10 @@ def outbox_replay(
 # ---------------------------------------------------------------------------
 # Snapshot — manually trigger a rebuild (off-path via Arq when available)
 # ---------------------------------------------------------------------------
-@router.post("/snapshot/rebuild")
+@router.post(
+    "/snapshot/rebuild",
+    dependencies=[Depends(admin_write_rate_limit), Depends(require_csrf)],
+)
 async def rebuild_snapshot_endpoint(actor: str = Depends(require_admin)) -> dict:
     """Kick a snapshot rebuild.
 
@@ -293,3 +387,97 @@ async def rebuild_snapshot_endpoint(actor: str = Depends(require_admin)) -> dict
     payload = await jobs.rebuild_snapshot({}, url=None)
     return {"ok": True, "mode": "inline", "result": payload, "actor": actor,
             "queue_skip_reason": result.reason}
+
+
+# ---------------------------------------------------------------------------
+# TOTP / MFA (ADR 0006 — admin password is single-factor by default)
+# ---------------------------------------------------------------------------
+@router.post(
+    "/totp/setup",
+    dependencies=[Depends(admin_write_rate_limit), Depends(require_csrf)],
+)
+def totp_setup(actor: str = Depends(require_admin)) -> dict:
+    """Mint a fresh TOTP secret + provisioning URI.
+
+    The secret is NOT yet persisted — call ``/totp/verify`` with a code
+    derived from this secret to commit. Aborted setups leave no trace.
+    Returns ``{secret, uri, issuer, account}``; the UI renders the URI as
+    a QR + shows the raw secret as a fallback.
+    """
+    from .totp import setup as _setup
+    payload = _setup()
+    return {**payload, "actor": actor}
+
+
+class _TotpVerifyRequest(BaseModel):  # noqa: pydantic forwarded
+    secret: str
+    code: str
+
+
+@router.post(
+    "/totp/verify",
+    dependencies=[Depends(admin_write_rate_limit), Depends(require_csrf)],
+)
+def totp_verify(
+    req: _TotpVerifyRequest, actor: str = Depends(require_admin),
+) -> dict:
+    """Confirm the operator's authenticator computes valid codes for the
+    secret returned by ``/totp/setup``. On success, the secret persists
+    and ``auth.admin_totp_required`` flips to ``true``."""
+    from .totp import verify_setup_code
+    if not verify_setup_code(req.secret, req.code, actor=actor):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="TOTP code did not match. Try again or restart setup.",
+        )
+    return {"ok": True, "totp_required": True, "actor": actor}
+
+
+@router.post(
+    "/totp/disable",
+    dependencies=[Depends(admin_write_rate_limit), Depends(require_csrf)],
+)
+def totp_disable(actor: str = Depends(require_admin)) -> dict:
+    """Clear the TOTP secret and lower the required flag.
+
+    Used during recovery (lost authenticator). Logged in audit trail.
+    Re-running ``/totp/setup`` re-establishes MFA.
+    """
+    from .totp import disable
+    disable(actor=actor)
+    return {"ok": True, "totp_required": False, "actor": actor}
+
+
+# ---------------------------------------------------------------------------
+# GDPR right-to-be-forgotten
+# ---------------------------------------------------------------------------
+class _GDPRDeleteRequest(BaseModel):  # noqa: pydantic forwarded
+    customer_name: str
+    confirmation: str    # must equal customer_name; soft-confirm guard
+
+
+@router.post(
+    "/gdpr/delete-customer",
+    dependencies=[Depends(admin_write_rate_limit), Depends(require_csrf)],
+)
+def gdpr_delete_customer(
+    req: _GDPRDeleteRequest, actor: str = Depends(require_admin),
+) -> dict:
+    """Delete every meeting belonging to a customer + emit downstream event.
+
+    See ``deploy/gdpr-runbook.md`` for the operator procedure. The audit
+    log records *that* a deletion happened with a hashed customer ID +
+    deletion ID — never the raw customer name.
+    """
+    from .gdpr import GDPRConfirmationFailed, delete_customer
+    try:
+        return delete_customer(
+            req.customer_name,
+            confirmation=req.confirmation,
+            actor=actor,
+        )
+    except GDPRConfirmationFailed as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e

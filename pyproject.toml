@@ -44,6 +44,7 @@ dev = [
     "pre-commit>=3.5",
     "jupyter>=1.0",
     "fakeredis>=2.20",  # in-memory Redis for cluster-wide rate-limit + Arq tests
+    "pyotp>=2.9",       # TOTP-based admin MFA
 ]
 
 [project.scripts]
@@ -103,7 +104,11 @@ ignore = [
 "api/observability.py" = ["PLC0415"]         # lazy imports gated on settings
 "api/middleware.py" = ["PLC0415"]            # local state import avoids circular
 "api/admin/auth.py" = ["PLC0415", "PLR0911"] # lazy imports + multi-branch verify_password
-"api/admin/routes.py" = ["PLC0415"]          # lazy auth import
+"api/admin/routes.py" = ["PLC0415"]          # lazy auth + totp + gdpr imports
+"api/admin/totp.py" = ["PLC0415"]            # lazy runtime_settings via get_runtime
+"api/admin/gdpr.py" = ["PLC0415", "TRY401"]  # lazy state + sqlalchemy imports
+"api/csrf.py" = ["PLC0415"]                  # lazy runtime_settings import
+"src/logging_config.py" = ["PLC0415"]        # lazy pii + runtime_settings (bootstrap order)
 "api/main.py" = ["PLC0415"]                  # lazy router import
 "api/admin_app.py" = ["PLC0415"]             # lazy db imports inside readiness probe
 "api/idempotency.py" = ["PLC0415", "PLR0911"]  # lazy redis + runtime_settings + multiple return paths in dispatch

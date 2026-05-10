@@ -1,0 +1,100 @@
+# Alembic migration round-trip — runs upgrade head → downgrade -1 → upgrade
+# head against a real Postgres container. Catches the ~half of alembic
+# mistakes that pure forward-only deploys miss (broken downgrade, missing
+# index drop, default-on-add-NOT-NULL on a populated table, etc.).
+#
+# Per alembic/README.md §"Testing migrations" — this is the recommended
+# CI gate before merging any new migration.
+
+name: migration-round-trip
+
+on:
+  pull_request:
+    paths:
+      - 'alembic/**'
+      - 'src/models_db.py'
+      - '.github/workflows/migration-rt.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'alembic/**'
+      - 'src/models_db.py'
+
+jobs:
+  round-trip:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: transcript_intel_test
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[dev]" psycopg[binary]
+
+      - name: Write bootstrap.toml pointed at the Postgres service
+        run: |
+          cat > bootstrap.toml <<'EOF'
+          [app]
+          env = "dev"
+          log_level = "INFO"
+          log_format = "json"
+
+          [database]
+          url = "postgresql+psycopg://postgres:testpass@localhost:5432/transcript_intel_test"
+
+          [admin]
+          initial_password = "test-only-do-not-use"
+          session_secret = "test-only-session-secret-do-not-use-in-prod"
+
+          [paths]
+          dataset_path = ""
+          EOF
+
+      - name: alembic upgrade head
+        run: alembic upgrade head
+
+      - name: alembic downgrade -1
+        run: alembic downgrade -1
+
+      - name: alembic upgrade head (round-trip back)
+        run: alembic upgrade head
+
+      - name: Smoke check — every expected table is queryable
+        run: |
+          python - <<'PY'
+          from sqlalchemy import create_engine, inspect
+          eng = create_engine(
+              "postgresql+psycopg://postgres:testpass@localhost:5432/transcript_intel_test"
+          )
+          insp = inspect(eng)
+          tables = set(insp.get_table_names())
+          required = {"settings", "audit_log", "outbox_events"}
+          missing = required - tables
+          if missing:
+              raise SystemExit(f"missing tables after round-trip: {missing}")
+          print(f"OK — all required tables present ({sorted(tables)})")
+          PY
+
+      - name: Smoke check — alembic ledger is consistent
+        run: |
+          alembic current
+          alembic history --verbose | head -50

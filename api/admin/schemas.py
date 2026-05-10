@@ -9,6 +9,9 @@ from pydantic import BaseModel, Field
 
 class LoginRequest(BaseModel):
     password: str
+    # Optional TOTP code (6 digits). Required only when MFA is enabled
+    # via auth.admin_totp_required; the route enforces.
+    totp: Optional[str] = None
 
 
 class LoginResponse(BaseModel):
