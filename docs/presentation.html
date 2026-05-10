@@ -296,7 +296,7 @@
           <span class="tag">Postgres + Iceberg + Kafka</span>
           <span class="tag">Ray Train + vLLM</span>
           <span class="tag">14 ADRs</span>
-          <span class="tag">309 tests · 94% cov</span>
+          <span class="tag">327 tests · 94% cov</span>
         </div>
         <p class="meta">Take-home submission · Rubrik · 2026</p>
       </div>
@@ -545,13 +545,13 @@ flowchart LR
           <div class="card">
             <h4>Security</h4>
             <ul>
-              <li>API-key auth (DB-backed)</li>
-              <li>JWT auth (opt-in, HS/RS via JWKS)</li>
+              <li>API-key auth (DB-backed) · JWT (opt-in, JWKS) · <strong>TOTP MFA</strong></li>
               <li>PBKDF2-SHA256 admin pw + file-mountable session secret</li>
-              <li>5/min/IP login throttle · 1 MiB body cap</li>
-              <li><strong>Idempotency-Key cache</strong> (replay-safe writes)</li>
-              <li><strong>PII redactor</strong> (LLM gateway pre-egress)</li>
-              <li><code>secret</code> type masked everywhere it's read</li>
+              <li><strong>CSRF</strong> (double-submit cookie + <code>Sec-Fetch-Site</code>)</li>
+              <li>5/min/IP login + 60/min/IP admin-write throttles</li>
+              <li>1 MiB body cap · Idempotency-Key replay-safe writes</li>
+              <li>PII redactor (egress) + <strong>PII filter on logs</strong></li>
+              <li><code>secret</code> type masked everywhere; <strong>GDPR delete</strong> endpoint</li>
               <li>CSP / HSTS / CORS · Audit log on every write</li>
             </ul>
           </div>
@@ -630,18 +630,19 @@ api/
   outbox_kafka.py   — Kafka publisher (confluent-kafka)
   llm_gateway.py    — Tier-2 frontier + response cache
   jwt_auth.py       — Bearer-token verifier (opt-in)
+  csrf.py           — double-submit + Sec-Fetch-Site
   idempotency.py    — replay-safe writes
   cache.py          — Redis read-through (jitter + single-flight)
   search.py         — local + OpenSearch + cached wrapper
   limiter.py        — rate-limit + per-tenant
   circuit_breaker.py · backpressure.py · adaptive_throttle.py
-  admin/            — session + settings + secret type
+  admin/            — session · settings · TOTP MFA · GDPR delete
 gemma-finetune/     — QLoRA recipes</code></pre>
           </div>
           <div>
             <h3>Quality bar</h3>
             <ul>
-              <li><span class="green">309</span> tests · 94% coverage · <code>fakeredis</code> · LISTEN/NOTIFY · idempotency · PII · JWT · DB repo · LLM gateway · custom Prom metrics · entity cache · search index</li>
+              <li><span class="green">327</span> tests · 94% coverage · <code>fakeredis</code> · LISTEN/NOTIFY · idempotency · PII · JWT · DB repo · LLM gateway · custom Prom metrics · entity cache · search index · CSRF · TOTP · GDPR · log-PII filter</li>
               <li><code>ruff</code> clean · <code>mypy</code> on src + api · 14 ADRs · expand/contract migration template</li>
               <li>30+ Mermaid diagrams across docs</li>
               <li>K8s: HPA · KEDA · Cluster Autoscaler · Argo Rollouts · Gateway API · Kafka (Strimzi) · Redis · PgBouncer · OTel Collector · Prom SLO rules · migrate Job · snapshot CronJob · Arq workers</li>

@@ -339,7 +339,7 @@ footer code {
 <p>An <strong>auto-scalable system</strong> that processes B2B meeting transcripts and surfaces topic categorization, sentiment trends, and strategic insights — exposed as a REST API with a lightweight web dashboard. <strong>Target scale: millions to 100M+ records.</strong></p>
 </blockquote>
 <p><a href=".github/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-blue" /></a>
-<a href="https://github.com/"><img alt="Tests" src="https://img.shields.io/badge/tests-309%20passing-brightgreen" /></a>
+<a href="https://github.com/"><img alt="Tests" src="https://img.shields.io/badge/tests-327%20passing-brightgreen" /></a>
 <a href="pyproject.toml"><img alt="Coverage" src="https://img.shields.io/badge/coverage-94%25-brightgreen" /></a>
 <a href="https://github.com/"><img alt="Validation" src="https://img.shields.io/badge/validation-9%2F10%20pass-brightgreen" /></a>
 <a href="pyproject.toml"><img alt="Python" src="https://img.shields.io/badge/python-3.9%2B-blue" /></a>
@@ -850,8 +850,20 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 <td><code>require_jwt</code> dependency validates Bearer tokens (HS256 / RS256/ES256 via JWKS) when <code>auth.jwt_enabled = true</code>. Optional <code>aud</code>/<code>iss</code> claim checks. Co-exists with the API-key path during the migration window.</td>
 </tr>
 <tr>
+<td><strong>Admin MFA (TOTP)</strong></td>
+<td>Authenticator-app 2FA via <code>pyotp</code>. Setup flow (<code>POST /admin/totp/setup</code> → <code>/verify</code>) generates the secret + provisioning URI; once verified, login requires a 6-digit code in addition to the password. Same 401 envelope on missing/wrong code so attackers can't oracle the password.</td>
+</tr>
+<tr>
 <td><strong>Admin login brute-force guard</strong></td>
 <td>Stricter 5/min/IP rate limit on <code>/api/v1/admin/login</code> and <code>/api/v1/admin/password</code> via a dedicated FastAPI dependency (<code>strict_rate_limit</code>), layered on top of the global slowapi cap.</td>
+</tr>
+<tr>
+<td><strong>Admin-write rate limit</strong></td>
+<td>All admin write endpoints (settings update, snapshot rebuild, outbox replay, GDPR delete, TOTP setup/verify/disable) capped at 60/min/IP via <code>admin_write_rate_limit</code>. Bounds a compromised-session attacker.</td>
+</tr>
+<tr>
+<td><strong>CSRF protection</strong></td>
+<td><code>api/csrf.py</code> — double-submit cookie + <code>Sec-Fetch-Site</code> validation. Login issues <code>csrf_token</code> cookie; admin UI echoes it via <code>X-CSRF-Token</code>. <code>require_csrf</code> dep on every state-changing route. Toggleable via <code>auth.csrf_enabled</code>.</td>
 </tr>
 <tr>
 <td><strong>Body-size cap (DoS guard)</strong></td>
@@ -862,8 +874,16 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 <td>Opt-in via the <code>idempotency.enabled</code> runtime setting + per-request <code>Idempotency-Key</code> header. Cached replay = no duplicate writes; same key + different hash = 409. Redis storage when configured; in-process fallback otherwise.</td>
 </tr>
 <tr>
-<td><strong>PII redaction</strong></td>
+<td><strong>PII redaction (egress)</strong></td>
 <td><code>src/pii.py</code> — regex redactor for emails, phones, SSN, Luhn-validated credit cards, IPs, common API-key shapes. Returns redacted text + <code>RedactionSummary</code> (counts + match-density). Used by the LLM gateway before any prompt leaves the perimeter.</td>
+</tr>
+<tr>
+<td><strong>PII scrubbing in logs</strong></td>
+<td><code>_PiiScrubFilter</code> on the root logger runs every record's message + <code>ctx_*</code> string extras through the same redactor before any formatter sees it. Toggleable via <code>observability.pii_scrub_logs</code>.</td>
+</tr>
+<tr>
+<td><strong>GDPR right-to-be-forgotten</strong></td>
+<td><code>POST /admin/gdpr/delete-customer</code> (soft-confirm guard) — atomic delete from <code>meetings</code> + <code>customer.deleted</code> outbox event + hashed audit-log row + cache invalidation. Audit row never carries the raw customer name. Operator runbook: <a href="deploy/gdpr-runbook.md"><code>deploy/gdpr-runbook.md</code></a>.</td>
 </tr>
 <tr>
 <td><strong>CORS</strong></td>
@@ -1063,7 +1083,7 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 </tr>
 <tr>
 <td><strong>Testing</strong></td>
-<td><code>pytest</code>, <strong>309 tests</strong> (autoscaling · distributed/<code>fakeredis</code> · outbox + DLQ · cache-stampede · adaptive-throttle · idempotency · secret-type masking · custom Prom metrics · PII redaction · JWT auth · DatabaseRepository · LLM gateway · entity-level Redis cache · cached repository · search index), FastAPI <code>TestClient</code>.</td>
+<td><code>pytest</code>, <strong>327 tests</strong> (autoscaling · distributed/<code>fakeredis</code> · outbox + DLQ · cache-stampede · adaptive-throttle · idempotency · secret-type masking · custom Prom metrics · PII redaction · JWT auth · DatabaseRepository · LLM gateway · entity-level Redis cache · cached repository · search index · CSRF · TOTP MFA · GDPR delete · log-PII filter · admin-write rate limit), FastAPI <code>TestClient</code>.</td>
 </tr>
 <tr>
 <td><strong>CI/CD</strong></td>
@@ -1112,7 +1132,7 @@ otel_endpoint = &quot;http://otel:4318/v1/traces&quot;
 </code></pre>
 <p><strong>Runtime config</strong> — everything else lives in the DB and is managed through the admin panel at <strong><code>/admin</code></strong>. Categories:</p>
 <ul>
-<li><strong>auth</strong> — API key, CORS origins, JWT (algorithm, secret/JWKS, audience, issuer)</li>
+<li><strong>auth</strong> — API key, CORS origins, JWT (algorithm, secret/JWKS, audience, issuer), CSRF enabled, admin TOTP secret + required-flag</li>
 <li><strong>rate_limit</strong> — default + strict + per-tenant overrides</li>
 <li><strong>pipeline</strong> — refresh interval</li>
 <li><strong>risk</strong> — scoring weights + tier thresholds</li>

@@ -82,6 +82,10 @@ auth.jwt_secret                      ""              secret auth
 auth.jwt_jwks_url                    ""              str    auth
 auth.jwt_audience                    ""              str    auth
 auth.jwt_issuer                      ""              str    auth
+auth.csrf_enabled                    true            bool   auth
+auth.admin_totp_secret               ""              secret auth
+auth.admin_totp_required             false           bool   auth
+observability.pii_scrub_logs         true            bool   observability
 idempotency.enabled                  false           bool   idempotency
 idempotency.ttl_hours                24              int    idempotency
 idempotency.max_body_bytes           16384           int    idempotency

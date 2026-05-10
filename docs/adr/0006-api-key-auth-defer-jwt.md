@@ -61,7 +61,11 @@ The implementation is in `api/auth.py`. Total surface: ~30 lines.
 
 The migration path is clear: replace `require_api_key` with a JWT verifier, add an issuance endpoint or use an external IDP. Routes stay unchanged; only the dependency is swapped.
 
-**Update:** the JWT verifier is now shipped as `api/jwt_auth.py::require_jwt` (opt-in via the `auth.jwt_enabled` runtime setting). Supports HS256 (`auth.jwt_secret`, masked-on-read) and RS256/ES256 via JWKS endpoint (`auth.jwt_jwks_url`, cached 10 minutes). Optional `aud` / `iss` claim checks. The dependency co-exists with `require_api_key` so operators can run both during the migration window and flip routes one at a time.
+**Update — JWT shipped:** the JWT verifier is now shipped as `api/jwt_auth.py::require_jwt` (opt-in via the `auth.jwt_enabled` runtime setting). Supports HS256 (`auth.jwt_secret`, masked-on-read) and RS256/ES256 via JWKS endpoint (`auth.jwt_jwks_url`, cached 10 minutes). Optional `aud` / `iss` claim checks. The dependency co-exists with `require_api_key` so operators can run both during the migration window and flip routes one at a time.
+
+**Update — admin MFA shipped:** authenticator-app TOTP via `pyotp` is now wired via `api/admin/totp.py`. Operators set up MFA through `POST /admin/totp/setup` → `/verify`; once committed, `auth.admin_totp_required = true` and `/admin/login` rejects requests that don't include a valid 6-digit code. The 401 envelope is identical for missing-code and wrong-password cases so attackers can't oracle the password. Secret is stored as the masked `secret` runtime type — never round-trips through the UI in plaintext after setup. Recovery flow: `POST /admin/totp/disable` (audited).
+
+**Update — CSRF shipped:** `api/csrf.py::require_csrf` enforces a double-submit cookie + `Sec-Fetch-Site` check on every admin write route. Login issues a non-HttpOnly `csrf_token` cookie; the UI echoes it via `X-CSRF-Token`. Toggleable via `auth.csrf_enabled` for migration windows.
 
 ## Related
 

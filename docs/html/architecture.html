@@ -1365,6 +1365,21 @@ the codebase does today.</p>
 <td>Bearer-token validation when <code>auth.jwt_enabled = true</code>. HS256/RS256/ES256 (JWKS). Optional <code>aud</code>/<code>iss</code> checks. Co-exists with API-key auth during migration.</td>
 </tr>
 <tr>
+<td><strong>Admin MFA (TOTP)</strong></td>
+<td><code>api/admin/totp.py</code> + <code>POST /admin/totp/{setup,verify,disable}</code></td>
+<td>Authenticator-app 2FA via <code>pyotp</code>. Login requires 6-digit code when <code>auth.admin_totp_required = true</code>. Same 401 envelope on missing/wrong code (no oracle). Secret stored as the masked <code>secret</code> runtime type.</td>
+</tr>
+<tr>
+<td><strong>CSRF protection</strong></td>
+<td><code>api/csrf.py::require_csrf</code> on every admin write route</td>
+<td>Double-submit cookie + <code>Sec-Fetch-Site</code> validation. Login issues <code>csrf_token</code> cookie; UI echoes via <code>X-CSRF-Token</code>. Constant-time compare. Toggleable via <code>auth.csrf_enabled</code>.</td>
+</tr>
+<tr>
+<td><strong>Admin-write rate limit</strong></td>
+<td><code>Depends(admin_write_rate_limit)</code> on settings/snapshot/outbox/GDPR routes</td>
+<td>60/min/IP via Redis (cluster-wide) or per-process fallback. Bounds a compromised-session attacker beyond the credential-throttling layer.</td>
+</tr>
+<tr>
 <td>PBKDF2-SHA256 (200k iters)</td>
 <td><code>api/admin/auth.py</code></td>
 <td>Admin password hashing.</td>
@@ -1380,9 +1395,19 @@ the codebase does today.</p>
 <td>API keys + JWT secret are masked on every read path AND in audit-log rows. Raw value never leaves the DB.</td>
 </tr>
 <tr>
-<td>PII redactor</td>
+<td>PII redactor (egress)</td>
 <td><code>src/pii.py</code></td>
 <td>Regex-based scrubbing for emails/phones/SSN/CCs (Luhn-validated)/IPs/API-key shapes. Used by the LLM gateway before any prompt leaves the perimeter.</td>
+</tr>
+<tr>
+<td><strong>PII scrubbing in logs</strong></td>
+<td><code>_PiiScrubFilter</code> on the root logger (<code>src/logging_config.py</code>)</td>
+<td>Every log record's message + <code>ctx_*</code> string extras run through the redactor before any formatter sees it. Toggleable via <code>observability.pii_scrub_logs</code>.</td>
+</tr>
+<tr>
+<td><strong>GDPR right-to-be-forgotten</strong></td>
+<td><code>api/admin/gdpr.py</code> + <code>POST /admin/gdpr/delete-customer</code></td>
+<td>Atomic delete from <code>meetings</code> + <code>customer.deleted</code> outbox event + hashed audit-log row + cache invalidation. Audit row never carries the raw customer name. Operator runbook: <code>deploy/gdpr-runbook.md</code>.</td>
 </tr>
 <tr>
 <td><code>SecurityHeadersMiddleware</code></td>

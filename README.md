@@ -3,7 +3,7 @@
 > An **auto-scalable system** that processes B2B meeting transcripts and surfaces topic categorization, sentiment trends, and strategic insights — exposed as a REST API with a lightweight web dashboard. **Target scale: millions to 100M+ records.**
 
 [![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue)](.github/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-309%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-327%20passing-brightgreen)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-94%25-brightgreen)](pyproject.toml)
 [![Validation](https://img.shields.io/badge/validation-9%2F10%20pass-brightgreen)](validate.py)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](pyproject.toml)
@@ -346,10 +346,15 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 |---|---|
 | **API key auth** | `X-API-Key` header check on every `/api/v1/*` route. Disabled when `auth.api_key` runtime setting is empty (dev). Probes stay public. |
 | **JWT auth (opt-in)** | `require_jwt` dependency validates Bearer tokens (HS256 / RS256/ES256 via JWKS) when `auth.jwt_enabled = true`. Optional `aud`/`iss` claim checks. Co-exists with the API-key path during the migration window. |
+| **Admin MFA (TOTP)** | Authenticator-app 2FA via `pyotp`. Setup flow (`POST /admin/totp/setup` → `/verify`) generates the secret + provisioning URI; once verified, login requires a 6-digit code in addition to the password. Same 401 envelope on missing/wrong code so attackers can't oracle the password. |
 | **Admin login brute-force guard** | Stricter 5/min/IP rate limit on `/api/v1/admin/login` and `/api/v1/admin/password` via a dedicated FastAPI dependency (`strict_rate_limit`), layered on top of the global slowapi cap. |
+| **Admin-write rate limit** | All admin write endpoints (settings update, snapshot rebuild, outbox replay, GDPR delete, TOTP setup/verify/disable) capped at 60/min/IP via `admin_write_rate_limit`. Bounds a compromised-session attacker. |
+| **CSRF protection** | `api/csrf.py` — double-submit cookie + `Sec-Fetch-Site` validation. Login issues `csrf_token` cookie; admin UI echoes it via `X-CSRF-Token`. `require_csrf` dep on every state-changing route. Toggleable via `auth.csrf_enabled`. |
 | **Body-size cap (DoS guard)** | `BodySizeLimitMiddleware` rejects requests >1 MiB with a 413 envelope before any handler allocates buffers. Checks `Content-Length` first, then enforces the cap on streaming/chunked bodies. |
 | **Idempotency-Key cache** | Opt-in via the `idempotency.enabled` runtime setting + per-request `Idempotency-Key` header. Cached replay = no duplicate writes; same key + different hash = 409. Redis storage when configured; in-process fallback otherwise. |
-| **PII redaction** | `src/pii.py` — regex redactor for emails, phones, SSN, Luhn-validated credit cards, IPs, common API-key shapes. Returns redacted text + `RedactionSummary` (counts + match-density). Used by the LLM gateway before any prompt leaves the perimeter. |
+| **PII redaction (egress)** | `src/pii.py` — regex redactor for emails, phones, SSN, Luhn-validated credit cards, IPs, common API-key shapes. Returns redacted text + `RedactionSummary` (counts + match-density). Used by the LLM gateway before any prompt leaves the perimeter. |
+| **PII scrubbing in logs** | `_PiiScrubFilter` on the root logger runs every record's message + `ctx_*` string extras through the same redactor before any formatter sees it. Toggleable via `observability.pii_scrub_logs`. |
+| **GDPR right-to-be-forgotten** | `POST /admin/gdpr/delete-customer` (soft-confirm guard) — atomic delete from `meetings` + `customer.deleted` outbox event + hashed audit-log row + cache invalidation. Audit row never carries the raw customer name. Operator runbook: [`deploy/gdpr-runbook.md`](deploy/gdpr-runbook.md). |
 | **CORS** | Configurable origins (runtime setting). Tighten in prod. |
 | **Rate limiting** | Three layers (ADR 0014): per-tenant slowapi (default 120/min, Redis-backed) + concurrency cap (`BackpressureMiddleware`) + adaptive throttle (sheds when p95 > SLO). Per-tenant overrides via `rate_limit.per_tenant`. |
 | **Security headers** | CSP, HSTS (prod only), X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy — all on every response. |
@@ -404,7 +409,7 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 | **Configuration** | Two-tier: `bootstrap.toml` (env, log, DB URL, admin secret, `[runtime]` knobs that need to be readable before the DB exists) + DB-backed `runtime_settings` for everything else (rate limits, risk weights, feature flags, Redis URL, snapshot URL, OTel sampling rate, …). Operator changes propagate via `LISTEN/NOTIFY` on Postgres. See [`bootstrap.toml.example`](bootstrap.toml.example). |
 | **Linting / formatting** | `ruff` (lint + format) configured in pyproject. |
 | **Type checking** | `mypy` for `src/` and `api/`. |
-| **Testing** | `pytest`, **309 tests** (autoscaling · distributed/`fakeredis` · outbox + DLQ · cache-stampede · adaptive-throttle · idempotency · secret-type masking · custom Prom metrics · PII redaction · JWT auth · DatabaseRepository · LLM gateway · entity-level Redis cache · cached repository · search index), FastAPI `TestClient`. |
+| **Testing** | `pytest`, **327 tests** (autoscaling · distributed/`fakeredis` · outbox + DLQ · cache-stampede · adaptive-throttle · idempotency · secret-type masking · custom Prom metrics · PII redaction · JWT auth · DatabaseRepository · LLM gateway · entity-level Redis cache · cached repository · search index · CSRF · TOTP MFA · GDPR delete · log-PII filter · admin-write rate limit), FastAPI `TestClient`. |
 | **CI/CD** | GitHub Actions: lint → type-check → test (3.9/3.11/3.12) → security scan → Docker build + image scan. |
 | **Containerization** | Multi-stage Dockerfile, non-root user, healthcheck, JSON logs, Caddy reverse proxy via compose. |
 | **Pipeline lifecycle** | State cached at startup; optional periodic refresh (`pipeline.refresh_minutes` runtime setting). At production volume, a singleton CronJob writes a snapshot (`api/snapshot_writer.py`); replicas warm from it instead of rebuilding. |
@@ -438,7 +443,7 @@ otel_endpoint = "http://otel:4318/v1/traces"
 
 **Runtime config** — everything else lives in the DB and is managed through the admin panel at **`/admin`**. Categories:
 
-- **auth** — API key, CORS origins, JWT (algorithm, secret/JWKS, audience, issuer)
+- **auth** — API key, CORS origins, JWT (algorithm, secret/JWKS, audience, issuer), CSRF enabled, admin TOTP secret + required-flag
 - **rate_limit** — default + strict + per-tenant overrides
 - **pipeline** — refresh interval
 - **risk** — scoring weights + tier thresholds

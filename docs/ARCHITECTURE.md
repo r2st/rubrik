@@ -943,10 +943,15 @@ Defense-in-depth controls layered onto the request path:
 | Global slowapi rate limiter | app-wide | Per-tenant fairness via `tenant_aware_key`; admin-tunable via `rate_limit.default`. |
 | API-key auth | `Depends(require_api_key)` on `/api/v1/*` | Single shared secret today; `auth.api_key` runtime setting; rotated via `/admin`. |
 | JWT auth (opt-in) | `Depends(require_jwt)` | Bearer-token validation when `auth.jwt_enabled = true`. HS256/RS256/ES256 (JWKS). Optional `aud`/`iss` checks. Co-exists with API-key auth during migration. |
+| **Admin MFA (TOTP)** | `api/admin/totp.py` + `POST /admin/totp/{setup,verify,disable}` | Authenticator-app 2FA via `pyotp`. Login requires 6-digit code when `auth.admin_totp_required = true`. Same 401 envelope on missing/wrong code (no oracle). Secret stored as the masked `secret` runtime type. |
+| **CSRF protection** | `api/csrf.py::require_csrf` on every admin write route | Double-submit cookie + `Sec-Fetch-Site` validation. Login issues `csrf_token` cookie; UI echoes via `X-CSRF-Token`. Constant-time compare. Toggleable via `auth.csrf_enabled`. |
+| **Admin-write rate limit** | `Depends(admin_write_rate_limit)` on settings/snapshot/outbox/GDPR routes | 60/min/IP via Redis (cluster-wide) or per-process fallback. Bounds a compromised-session attacker beyond the credential-throttling layer. |
 | PBKDF2-SHA256 (200k iters) | `api/admin/auth.py` | Admin password hashing. |
 | HMAC-signed session cookie | `api/admin/auth.py` | `Secure` (prod) + `HttpOnly` + `SameSite=Strict`. Session secret loadable from a file path (`session_secret_path`) for K8s Secret mounts. |
 | `secret`-typed runtime settings | `api/admin/routes.py::_to_setting_out` + `runtime_settings.set()` | API keys + JWT secret are masked on every read path AND in audit-log rows. Raw value never leaves the DB. |
-| PII redactor | `src/pii.py` | Regex-based scrubbing for emails/phones/SSN/CCs (Luhn-validated)/IPs/API-key shapes. Used by the LLM gateway before any prompt leaves the perimeter. |
+| PII redactor (egress) | `src/pii.py` | Regex-based scrubbing for emails/phones/SSN/CCs (Luhn-validated)/IPs/API-key shapes. Used by the LLM gateway before any prompt leaves the perimeter. |
+| **PII scrubbing in logs** | `_PiiScrubFilter` on the root logger (`src/logging_config.py`) | Every log record's message + `ctx_*` string extras run through the redactor before any formatter sees it. Toggleable via `observability.pii_scrub_logs`. |
+| **GDPR right-to-be-forgotten** | `api/admin/gdpr.py` + `POST /admin/gdpr/delete-customer` | Atomic delete from `meetings` + `customer.deleted` outbox event + hashed audit-log row + cache invalidation. Audit row never carries the raw customer name. Operator runbook: `deploy/gdpr-runbook.md`. |
 | `SecurityHeadersMiddleware` | per response | CSP, HSTS (prod), X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy. |
 | Audit log | `audit_log` table | Every admin mutation recorded with actor + before/after value. `secret`-typed values are masked in audit rows. |
 | Outbox + DLQ | `OutboxEvent` table + `DLQPublisher` + `POST /admin/outbox/replay` | At-least-once event fan-out without dual-writes. Poison rows route to DLQ; operator can replay via the admin endpoint. |
