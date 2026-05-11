@@ -584,24 +584,261 @@ flowchart LR
       </div>
     </section>
 
+    <!-- 9b. Request lifecycle — every middleware that sees a request -->
+    <section class="slide" data-title="Request lifecycle">
+      <div class="body">
+        <h2>Request lifecycle — every gate a request passes</h2>
+        <p class="lead">Each middleware is a single-responsibility class; order is load-bearing. A 5xx at any gate produces the same standardized envelope.</p>
+        <div class="diagram"><div class="mermaid">
+flowchart LR
+    Client[Client]
+    GZ["GZip<br/>(decompress)"]
+    Lim["SlowAPI<br/>tenant_aware_key<br/>per-tenant + global"]
+    Body["BodySizeLimit<br/>1 MiB cap"]
+    BP["Backpressure<br/>inflight cap → 503"]
+    AT["AdaptiveThrottle<br/>sheds when p95&gt;SLO"]
+    Idem["Idempotency-Key<br/>replay cache"]
+    Tenant["TenantContext<br/>(ASGI, pure)<br/>JWT/API-key → ContextVar"]
+    ReqID["RequestID<br/>X-Request-ID"]
+    Sec["SecurityHeaders<br/>CSP / HSTS / etc."]
+    CORS["CORS<br/>safe origins (strip * in prod)"]
+    Auth["Auth<br/>API key + JWT + CSRF"]
+    Route["Route handler"]
+    Audit["Audit log<br/>actor + IP + UA"]
+
+    Client --> GZ --> Lim --> Body --> BP --> AT --> Idem --> Tenant --> ReqID --> Sec --> CORS --> Auth --> Route
+    Route -.-> Audit
+
+    classDef hot fill:#1f242c,stroke:#f85149,color:#e6edf3
+    classDef perf fill:#1f242c,stroke:#ffa657,color:#e6edf3
+    classDef ident fill:#1f242c,stroke:#56d364,color:#e6edf3
+    classDef head fill:#1f242c,stroke:#58a6ff,color:#e6edf3
+    classDef sink fill:#1f242c,stroke:#d2a8ff,color:#e6edf3
+    class Lim,Body,Auth hot
+    class BP,AT,Idem perf
+    class Tenant,ReqID ident
+    class Sec,CORS head
+    class Audit sink
+        </div></div>
+        <p class="small">TenantContext is pure-ASGI on purpose — the <code>@app.middleware('http')</code> decorator wraps in starlette's <code>BaseHTTPMiddleware</code> which breaks <code>StreamingResponse</code> (the NDJSON export trips it). Real engineering note from shipping this.</p>
+      </div>
+    </section>
+
+    <!-- 9c. Security architecture — the five pillars -->
+    <section class="slide" data-title="Security architecture">
+      <div class="body">
+        <h2>Security — five pillars, every control wired</h2>
+        <p class="lead">Defence in depth, not a single layer. Each control is testable; the suite covers every box below.</p>
+        <div class="diagram"><div class="mermaid">
+flowchart TB
+    subgraph Auth["🔐 Authentication"]
+        A1["API key<br/>X-API-Key"]
+        A2["JWT (HS256 / RS256/ES256)<br/>JWKS · aud · iss"]
+        A3["TOTP MFA<br/>+ 8 backup codes (hashed)"]
+        A4["PBKDF2-SHA256 admin pw<br/>HMAC session cookie"]
+        A5["Per-tenant ContextVar<br/>(JWT claim → repo + cache)"]
+    end
+    subgraph Req["🛡️ Request hardening"]
+        R1["CSRF<br/>double-submit + Sec-Fetch-Site"]
+        R2["3-layer rate limit<br/>slowapi + concurrency + adaptive"]
+        R3["1 MiB body cap"]
+        R4["Idempotency-Key cache"]
+        R5["Strict 5/min on /login + /password"]
+    end
+    subgraph Head["📨 Headers + responses"]
+        H1["CSP · HSTS · XFO · XCTO · RP · PP"]
+        H2["CORS default []<br/>strip * in prod"]
+        H3["robots.txt + RFC 9116<br/>security.txt"]
+        H4["Standardized error envelope"]
+    end
+    subgraph Data["🔒 Data privacy"]
+        D1["PII redactor (egress)<br/>LLM gateway · outbox"]
+        D2["PII scrubber on logs<br/>_PiiScrubFilter"]
+        D3["GDPR delete<br/>structured JSONB match"]
+        D4["Streaming export<br/>+ per-day quota"]
+    end
+    subgraph Ops["⚙️ Operational integrity"]
+        O1["Audit log<br/>actor + IP + UA + before/after"]
+        O2["Snapshot HMAC<br/>(bootstrap-only key)"]
+        O3["Outbox + DLQ + reaper<br/>traceparent propagation"]
+        O4["Migration round-trip CI gate"]
+        O5["Sev-1 / GDPR / DR runbooks"]
+    end
+
+    classDef pillar fill:#1f242c,stroke:#58a6ff,color:#e6edf3
+    class A1,A2,A3,A4,A5,R1,R2,R3,R4,R5,H1,H2,H3,H4,D1,D2,D3,D4,O1,O2,O3,O4,O5 pillar
+        </div></div>
+      </div>
+    </section>
+
+    <!-- 9d. Tenant isolation + GDPR — data flow guarantees -->
+    <section class="slide" data-title="Data flow guarantees">
+      <div class="body">
+        <h2>Data flow guarantees — tenant scoping + irreversible delete</h2>
+        <p class="lead">Two flows that have to be right: read-side tenant isolation, and write-side right-to-be-forgotten.</p>
+        <div class="two-col">
+          <div>
+            <h3>Per-tenant read isolation</h3>
+            <div class="diagram"><div class="mermaid">
+flowchart TB
+    REQ["incoming request<br/>Authorization: Bearer ..."]
+    MID["TenantContext middleware<br/>(pure ASGI)"]
+    CV["ContextVar<br/>current_tenant"]
+    REPO["DatabaseRepository.get(id)<br/>WHERE meeting_id=? AND tenant_id=?"]
+    CACHE["CachedRepo cache key<br/>{tenant}:{meeting_id}"]
+    DERIVE{"derive_tenant_id<br/>JWT > API-key hash > None"}
+
+    REQ --> MID --> DERIVE --> CV
+    CV -.read.-> REPO
+    CV -.read.-> CACHE
+
+    classDef hot fill:#1f242c,stroke:#56d364,color:#e6edf3
+    classDef store fill:#1f242c,stroke:#58a6ff,color:#e6edf3
+    class MID,CV,DERIVE hot
+    class REPO,CACHE store
+            </div></div>
+            <p class="small">JWT claim <code>tid</code>/<code>tenant</code> wins. Cross-tenant cache hit impossible — the key itself encodes tenant.</p>
+          </div>
+          <div>
+            <h3>GDPR delete — atomic + auditable</h3>
+            <div class="diagram"><div class="mermaid">
+flowchart TB
+    OP["operator<br/>POST /admin/gdpr/delete-customer<br/>{customer, confirmation}"]
+    GUARD["soft-confirm guard<br/>confirmation == customer"]
+    TX[("single Postgres tx")]
+    DEL["DELETE FROM meetings<br/>WHERE raw->'info'->>'customer' = ?"]
+    OB["outbox_events insert<br/>customer.deleted"]
+    AUD["audit_log insert<br/>SHA-256(customer)[:16]"]
+    INV["cache invalidate"]
+    KAFKA[("Kafka<br/>downstreams consume")]
+
+    OP --> GUARD --> TX
+    TX --> DEL
+    TX --> OB
+    TX --> AUD
+    TX --> INV
+    OB -.outbox relayer.-> KAFKA
+
+    classDef hot fill:#1f242c,stroke:#f85149,color:#e6edf3
+    classDef tx fill:#1f242c,stroke:#d2a8ff,color:#e6edf3
+    class OP,GUARD hot
+    class TX,DEL,OB,AUD,INV tx
+            </div></div>
+            <p class="small">Structured JSONB match — not <code>LIKE '%name%'</code>. Substring collisions can't delete unrelated rows.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 9e. Snapshot HMAC integrity -->
+    <section class="slide" data-title="Snapshot integrity">
+      <div class="body">
+        <h2>Snapshot integrity — closing the pickle-RCE primitive</h2>
+        <p class="lead">A replica warming from a tampered snapshot is an unsigned-code-execution path. HMAC-signing the manifest closes it.</p>
+        <div class="diagram"><div class="mermaid">
+flowchart LR
+    subgraph Write["Write path · singleton CronJob"]
+        W1["build PipelineState"]
+        W2["pickle + gzip"]
+        W3["sha256 → checksum"]
+        W4["manifest.json<br/>{format, n, checksum, ...}"]
+        W5["HMAC-SHA256(manifest, K)<br/>→ signature field"]
+        W6[("S3<br/>manifest.json + payload.pkl.gz")]
+    end
+    subgraph Read["Read path · every replica"]
+        R1["fetch manifest"]
+        R2{"format_version<br/>matches?"}
+        R3{"key K configured?"}
+        R4{"signature present<br/>+ verifies?"}
+        R5["fetch payload"]
+        R6{"sha256 matches<br/>manifest.checksum?"}
+        R7["pickle.loads<br/>→ PipelineState"]
+        R8["fall back to build"]
+    end
+    K[("bootstrap secret<br/>admin.snapshot_signing_secret<br/>file-mounted, NOT a runtime setting")]
+
+    W1 --> W2 --> W3 --> W4 --> W5 --> W6
+    K -.->|sign| W5
+    R1 --> R2
+    R2 -- no --> R8
+    R2 -- yes --> R3
+    R3 -- yes --> R4
+    R3 -- no --> R5
+    R4 -- no --> R8
+    R4 -- yes --> R5
+    R5 --> R6
+    R6 -- no --> R8
+    R6 -- yes --> R7
+    K -.->|verify| R4
+
+    classDef good fill:#1f242c,stroke:#56d364,color:#e6edf3
+    classDef bad fill:#1f242c,stroke:#f85149,color:#e6edf3
+    classDef key fill:#1f242c,stroke:#d2a8ff,color:#e6edf3
+    class W1,W2,W3,W4,W5,W6,R5,R6,R7 good
+    class R8 bad
+    class K key
+        </div></div>
+        <p class="small">Signing key lives in bootstrap, not <code>runtime_settings</code>. A compromised admin cannot disable signing — they'd need filesystem access to the K8s Secret mount. Audit-of-an-audit.</p>
+      </div>
+    </section>
+
+    <!-- 9f. Outbox + reaper + trace propagation -->
+    <section class="slide" data-title="Outbox lifecycle">
+      <div class="body">
+        <h2>Outbox lifecycle — exactly-once intent, at-least-once delivery</h2>
+        <p class="lead">Transactional outbox + DLQ + reaper. Traces flow end-to-end so producer → relayer → consumer shows as one Tempo span tree.</p>
+        <div class="diagram"><div class="mermaid">
+flowchart TB
+    APP["application code<br/>emit(s, aggregate=..., trace_id=current_span)"]
+    PG[("Postgres<br/>outbox_events")]
+    REL["outbox relayer<br/>processed_at = NULL ORDER BY created_at"]
+    PUB{"publish OK?"}
+    KAFKA[("Kafka<br/>traceparent: 00-trace-span-01")]
+    DLQ[("DLQ topic<br/>delivery_attempts ≥ 5")]
+    REPLAY["POST /admin/outbox/replay<br/>(reset attempts → 0)"]
+    REAP["background reaper<br/>DELETE WHERE processed_at &lt; now() - 7d"]
+    OVERRIDE["POST /admin/outbox/reap<br/>(operator override)"]
+
+    APP -- same tx as entity write --> PG
+    PG --> REL --> PUB
+    PUB -- yes --> KAFKA
+    PUB -- no, attempts++ --> PG
+    PUB -.attempts ≥ 5.-> DLQ
+    DLQ -.fix root cause.-> REPLAY -.-> PG
+    PG -.processed > 7d.-> REAP
+    OVERRIDE -.-> REAP
+
+    classDef good fill:#1f242c,stroke:#56d364,color:#e6edf3
+    classDef warn fill:#1f242c,stroke:#ffa657,color:#e6edf3
+    classDef bad fill:#1f242c,stroke:#f85149,color:#e6edf3
+    class APP,PG,REL,KAFKA good
+    class REAP,OVERRIDE,REPLAY warn
+    class DLQ bad
+        </div></div>
+        <p class="small">Trace ID captured at <code>emit()</code> from the active OTel span; the Kafka publisher injects W3C <code>traceparent</code> headers (<code>api/outbox_kafka.py</code> lines 93–95). Consumers extend the trace.</p>
+      </div>
+    </section>
+
     <!-- 10. ADRs -->
     <section class="slide" data-title="Decisions (ADRs)">
       <div class="body">
-        <h2>Decisions on record (ADRs 0001–0013)</h2>
+        <h2>Decisions on record (14 ADRs)</h2>
         <table>
           <tbody>
             <tr><td class="mono">0002</td><td>Hybrid categorization</td><td class="muted">Rules + KMeans, not LLM.</td></tr>
             <tr><td class="mono">0003</td><td>Self-host summarization with Gemma 4</td><td class="muted">QLoRA fine-tune, $1.40 PoC, ROUGE-L 0.39.</td></tr>
             <tr><td class="mono">0004</td><td>FastAPI + static frontend over Streamlit</td><td class="muted">Production-shaped, multi-consumer.</td></tr>
-            <tr><td class="mono">0006</td><td>API-key auth; defer JWT</td><td class="muted">Single-tenant today; clean migration path.</td></tr>
+            <tr><td class="mono">0006</td><td>API-key auth; defer JWT</td><td class="muted">JWT + TOTP MFA + backup codes + CSRF + tenant ContextVar all shipped as Updates.</td></tr>
             <tr><td class="mono">0008</td><td>Tiered storage for 100M+</td><td class="muted">Postgres + Iceberg + columnar warehouse.</td></tr>
-            <tr><td class="mono">0009</td><td>Admin panel + runtime config</td><td class="muted">No env vars; LISTEN/NOTIFY propagation.</td></tr>
+            <tr><td class="mono">0009</td><td>Admin panel + runtime config</td><td class="muted">No env vars; LISTEN/NOTIFY propagation; outbox reaper + export quota settings.</td></tr>
             <tr><td class="mono">0010</td><td>Auto-scaling ML pipeline</td><td class="muted">Ray Data + FSDP + vLLM + active learning.</td></tr>
-            <tr><td class="mono">0011</td><td>Repository pattern + streaming</td><td class="muted">Mergeable folds; in-memory ↔ streaming verified.</td></tr>
-            <tr><td class="mono">0012</td><td>LLM cascade (tier-2 frontier)</td><td class="muted">Bulk economics + edge-case quality.</td></tr>
+            <tr><td class="mono">0011</td><td>Repository pattern + streaming</td><td class="muted">Mergeable folds; <code>delete()</code> + per-tenant filter for GDPR.</td></tr>
+            <tr><td class="mono">0012</td><td>LLM cascade (tier-2 frontier)</td><td class="muted">Bulk economics + edge-case quality. Anthropic/OpenAI/Google clients wired.</td></tr>
             <tr><td class="mono">0013</td><td>API tier auto-scaling</td><td class="muted">15 items implemented; manifests under <code>deploy/k8s/</code>.</td></tr>
+            <tr><td class="mono">0014</td><td>Cloud-agnostic split-plane architecture</td><td class="muted">Control plane vs. data plane; portable across AWS / GCP / Azure.</td></tr>
           </tbody>
         </table>
+        <p class="small">Each ADR has a "When to revisit" section — every transition has a measurable trigger, not a vibe.</p>
       </div>
     </section>
 
@@ -668,8 +905,56 @@ gemma-finetune/     — QLoRA recipes</code></pre>
           <li><strong class="orange">No streaming clustering.</strong> Streaming pipeline skips clustering + viz; those run separately at scale (Spark MLlib / sampled). ADR 0011.</li>
           <li><strong class="orange">Frontier-LLM gateway scaffold shipped, provider HTTP layer stubbed.</strong> ADR 0012 — gateway, PII redactor, circuit breaker, daily $ budget, audit log all wired; production deploys plug in the real <code>anthropic</code> / <code>openai</code> / <code>google</code> client where the scaffold raises <code>NotImplementedError</code>.</li>
           <li><strong class="orange">Kafka client class shipped; broker is deploy-time.</strong> <code>KafkaPublisher</code> in <code>api/outbox_kafka.py</code> + Strimzi manifest + KEDA scaler + outbox DLQ wrapper are all in place; pointing at a real broker is one URL in <code>bootstrap.toml</code>.</li>
-          <li><strong class="orange">DatabaseRepository ships; Postgres provisioning is operator-side.</strong> <code>transcripts.repository = database</code> flips backend at runtime; the <code>meetings</code> table itself is owned at the data-platform layer per ADR 0008.</li>
+          <li><strong class="orange">DatabaseRepository + alembic migration ship together.</strong> <code>transcripts.repository = database</code> flips backend at runtime; <code>alembic upgrade head</code> creates the <code>meetings</code> table with the <code>tenant_id</code> column (migration 0004).</li>
+          <li><strong class="orange">Tenant ContextVar plumbed, JWT issuance isn't.</strong> The read path is tenant-scoped end-to-end (repo + cache). Token issuance is still operator-side via an external IDP — out of scope for a single-admin take-home.</li>
+          <li><strong class="orange">DR runbook documents cross-region; no live drill.</strong> Quarterly drill is the next step. The PITR + 35-day backup + monthly restore drill are wired.</li>
+          <li><strong class="orange">No SOC-2 certification.</strong> Control inventory exists in SECURITY.md + the security architecture slide; audit doesn't.</li>
         </ul>
+      </div>
+    </section>
+
+    <!-- 12b. Test surface — every box ticked has a test -->
+    <section class="slide" data-title="Test surface">
+      <div class="body">
+        <h2>Test surface — 345 tests, 94% coverage</h2>
+        <p class="lead">Every hardening control has at least one regression test. The suite runs in &lt;3 min; alembic round-trip CI gate runs against ephemeral Postgres 16.</p>
+        <div class="three-col">
+          <div class="card">
+            <h4>Analytics core</h4>
+            <ul>
+              <li>Categorizer rules + edge cases</li>
+              <li>Sentiment math (trajectory + drop)</li>
+              <li>Clustering silhouette + assignment</li>
+              <li>Insight functions (6 modules)</li>
+              <li><code>validate.py</code> — 9 pass · 1 warn · 0 fail</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h4>Production hardening</h4>
+            <ul>
+              <li>CSRF (cookie + Sec-Fetch-Site)</li>
+              <li>TOTP MFA + backup codes single-use</li>
+              <li>GDPR structured-match (no substring)</li>
+              <li>Per-tenant repo filter + ContextVar</li>
+              <li>Snapshot HMAC (tamper + unsigned)</li>
+              <li>Outbox reaper · export quota · CORS strip</li>
+              <li>Audit forensics (IP + UA captured)</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h4>Resilience &amp; ops</h4>
+            <ul>
+              <li>Backpressure shed + adaptive throttle</li>
+              <li>Cache stampede (TTL jitter + single-flight)</li>
+              <li>Outbox + DLQ + replay</li>
+              <li>Idempotency-Key cache (hit/miss/conflict)</li>
+              <li>Circuit breaker state transitions</li>
+              <li>LLM gateway budget + redaction</li>
+              <li><code>fakeredis</code>-backed distributed tests</li>
+            </ul>
+          </div>
+        </div>
+        <p class="small"><code>make smoke-test BASE_URL=… ADMIN_URL=…</code> hits every public endpoint + admin login + a CSRF-protected POST against any live deploy. Catches deployment-wiring failures that unit tests can't.</p>
       </div>
     </section>
 
@@ -681,7 +966,7 @@ gemma-finetune/     — QLoRA recipes</code></pre>
         <div>
           <span class="tag">README</span>
           <span class="tag">ARCHITECTURE.md</span>
-          <span class="tag">ADRs 0001–0013</span>
+          <span class="tag">14 ADRs</span>
           <span class="tag">SECURITY.md</span>
           <span class="tag">deploy/cdn-runbook.md</span>
         </div>
