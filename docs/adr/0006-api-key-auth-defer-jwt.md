@@ -67,6 +67,10 @@ The migration path is clear: replace `require_api_key` with a JWT verifier, add 
 
 **Update — CSRF shipped:** `api/csrf.py::require_csrf` enforces a double-submit cookie + `Sec-Fetch-Site` check on every admin write route. Login issues a non-HttpOnly `csrf_token` cookie; the UI echoes it via `X-CSRF-Token`. Toggleable via `auth.csrf_enabled` for migration windows.
 
+**Update — TOTP backup codes shipped:** the "lost-device recovery requires shell access" gap is closed. `verify_setup_code` mints 8 cryptographically random `XXXX-XXXX` codes at TOTP setup; their SHA-256 hashes persist as the `auth.admin_totp_backup_codes` secret-typed setting. `verify_login_code` falls through to a constant-time backup-code consumer when the TOTP path fails; each code is atomically consumed on use. `POST /admin/totp/backup-codes/regenerate` rotates the batch. Disabling MFA burns outstanding codes.
+
+**Update — per-tenant identity plumbed end-to-end:** `src/tenant.py` introduces a request-scoped ContextVar set by a pure-ASGI middleware on the public app (NOT `@app.middleware('http')`, which routes through starlette's `BaseHTTPMiddleware` and breaks `StreamingResponse`). `derive_tenant_id()` prefers JWT claims (`tid`/`tenant`/`tenant_id`) over the hashed-API-key fallback. `DatabaseRepository.get` and the cached repo read it automatically. Single-tenant callers see no change (the ContextVar stays `None`).
+
 ## Related
 
 - `api/auth.py` — current implementation

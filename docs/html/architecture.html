@@ -1370,6 +1370,16 @@ the codebase does today.</p>
 <td>Authenticator-app 2FA via <code>pyotp</code>. Login requires 6-digit code when <code>auth.admin_totp_required = true</code>. Same 401 envelope on missing/wrong code (no oracle). Secret stored as the masked <code>secret</code> runtime type.</td>
 </tr>
 <tr>
+<td><strong>TOTP backup codes</strong></td>
+<td><code>api/admin/totp.py</code> + <code>POST /admin/totp/backup-codes/regenerate</code></td>
+<td>8 single-use <code>XXXX-XXXX</code> codes minted at setup, SHA-256 hashed as the <code>auth.admin_totp_backup_codes</code> secret-typed setting. Substitute for a TOTP code on login (constant-time match, atomic consume). Recovery without shell access.</td>
+</tr>
+<tr>
+<td><strong>Per-tenant isolation</strong></td>
+<td><code>src/tenant.py</code> ContextVar + <code>_TenantContextMiddleware</code> (pure ASGI)</td>
+<td>Tenant id derived per request from JWT claims (<code>tid</code>/<code>tenant</code>/<code>tenant_id</code>) &gt; hashed <code>X-API-Key</code>. <code>DatabaseRepository.get</code> auto-scopes by tenant; <code>CachedTranscriptRepository</code> keys entries <code>{tenant}:{meeting_id}</code> so cache hits can't cross tenants.</td>
+</tr>
+<tr>
 <td><strong>CSRF protection</strong></td>
 <td><code>api/csrf.py::require_csrf</code> on every admin write route</td>
 <td>Double-submit cookie + <code>Sec-Fetch-Site</code> validation. Login issues <code>csrf_token</code> cookie; UI echoes via <code>X-CSRF-Token</code>. Constant-time compare. Toggleable via <code>auth.csrf_enabled</code>.</td>
@@ -1407,7 +1417,17 @@ the codebase does today.</p>
 <tr>
 <td><strong>GDPR right-to-be-forgotten</strong></td>
 <td><code>api/admin/gdpr.py</code> + <code>POST /admin/gdpr/delete-customer</code></td>
-<td>Atomic delete from <code>meetings</code> + <code>customer.deleted</code> outbox event + hashed audit-log row + cache invalidation. Audit row never carries the raw customer name. Operator runbook: <code>deploy/gdpr-runbook.md</code>.</td>
+<td>Atomic delete from <code>meetings</code> + <code>customer.deleted</code> outbox event + hashed audit-log row + cache invalidation. <strong>Structured JSONB match</strong> on <code>raw-&gt;'info'-&gt;&gt;'customer'</code> (Postgres) / <code>json_extract</code> (SQLite) — never a free-text LIKE. Audit row never carries the raw customer name. Operator runbook: <code>deploy/gdpr-runbook.md</code>.</td>
+</tr>
+<tr>
+<td><strong>Streaming bulk export + quotas</strong></td>
+<td><code>GET /admin/meetings/export.ndjson</code></td>
+<td>Repository <code>stream()</code> iterator → NDJSON via <code>StreamingResponse</code>. Constant memory at 100M+ rows. Gated by the admin-write rate limit AND a per-actor per-UTC-day cap (<code>export.max_per_day</code>, default 4).</td>
+</tr>
+<tr>
+<td><strong>Snapshot HMAC integrity</strong></td>
+<td><code>api/snapshot.py</code> + <code>admin.snapshot_signing_secret</code> (bootstrap-only, file-mounted)</td>
+<td>HMAC-SHA256-signs the manifest at write; read refuses unsigned or signature-mismatched manifests once a key is configured. Closes the pickle-RCE primitive an unsigned S3 snapshot creates. Signing key is <em>not</em> a runtime setting — a compromised admin can't disable it.</td>
 </tr>
 <tr>
 <td><code>SecurityHeadersMiddleware</code></td>
@@ -1415,14 +1435,24 @@ the codebase does today.</p>
 <td>CSP, HSTS (prod), X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy.</td>
 </tr>
 <tr>
-<td>Audit log</td>
-<td><code>audit_log</code> table</td>
-<td>Every admin mutation recorded with actor + before/after value. <code>secret</code>-typed values are masked in audit rows.</td>
+<td><strong>CORS</strong></td>
+<td><code>api/main.py::_safe_cors_origins</code></td>
+<td>Default <code>auth.cors_origins=[]</code>. In prod, <code>"*"</code> is stripped + a warning logged when <code>allow_credentials=True</code>.</td>
 </tr>
 <tr>
-<td>Outbox + DLQ</td>
-<td><code>OutboxEvent</code> table + <code>DLQPublisher</code> + <code>POST /admin/outbox/replay</code></td>
-<td>At-least-once event fan-out without dual-writes. Poison rows route to DLQ; operator can replay via the admin endpoint.</td>
+<td><strong>robots.txt + RFC 9116</strong></td>
+<td><code>GET /robots.txt</code> + <code>GET /.well-known/security.txt</code></td>
+<td>Disallow crawlers from <code>/admin</code> + <code>/api/v1/admin</code>. Point researchers at the disclosure channel.</td>
+</tr>
+<tr>
+<td>Audit log</td>
+<td><code>audit_log</code> table</td>
+<td>Every admin mutation recorded with actor + before/after value + <code>ip_address</code> + <code>user_agent</code> (migration 0005). <code>secret</code>-typed values are masked.</td>
+</tr>
+<tr>
+<td>Outbox + DLQ + reaper</td>
+<td><code>OutboxEvent</code> table + <code>DLQPublisher</code> + <code>POST /admin/outbox/{replay,reap}</code></td>
+<td>At-least-once event fan-out without dual-writes. Poison rows route to DLQ. Background reaper deletes processed rows older than <code>outbox.reap_processed_days</code> (default 7d); operator override at <code>POST /admin/outbox/reap</code>. Trace IDs from <code>emit()</code> propagate into Kafka <code>traceparent</code> headers.</td>
 </tr>
 </tbody>
 </table>

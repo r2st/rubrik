@@ -3,7 +3,7 @@
 > An **auto-scalable system** that processes B2B meeting transcripts and surfaces topic categorization, sentiment trends, and strategic insights — exposed as a REST API with a lightweight web dashboard. **Target scale: millions to 100M+ records.**
 
 [![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue)](.github/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-327%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-345%20passing-brightgreen)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-94%25-brightgreen)](pyproject.toml)
 [![Validation](https://img.shields.io/badge/validation-9%2F10%20pass-brightgreen)](validate.py)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](pyproject.toml)
@@ -347,6 +347,8 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 | **API key auth** | `X-API-Key` header check on every `/api/v1/*` route. Disabled when `auth.api_key` runtime setting is empty (dev). Probes stay public. |
 | **JWT auth (opt-in)** | `require_jwt` dependency validates Bearer tokens (HS256 / RS256/ES256 via JWKS) when `auth.jwt_enabled = true`. Optional `aud`/`iss` claim checks. Co-exists with the API-key path during the migration window. |
 | **Admin MFA (TOTP)** | Authenticator-app 2FA via `pyotp`. Setup flow (`POST /admin/totp/setup` → `/verify`) generates the secret + provisioning URI; once verified, login requires a 6-digit code in addition to the password. Same 401 envelope on missing/wrong code so attackers can't oracle the password. |
+| **TOTP backup codes** | 8 single-use `XXXX-XXXX` codes minted at setup, SHA-256 hashed at rest as a `secret`-typed setting. Substitute for a TOTP code on `/admin/login`; each consumed atomically. Recovery path that doesn't require shell access. Rotate via `POST /admin/totp/backup-codes/regenerate`. |
+| **Per-tenant data isolation** | `src/tenant.py` ContextVar set by an ASGI middleware from JWT claims (`tid`/`tenant`/`tenant_id`) or hashed `X-API-Key`. `DatabaseRepository.get` automatically scopes by tenant; `CachedTranscriptRepository` keys entries `{tenant}:{meeting_id}` so a cache hit can't cross tenants. |
 | **Admin login brute-force guard** | Stricter 5/min/IP rate limit on `/api/v1/admin/login` and `/api/v1/admin/password` via a dedicated FastAPI dependency (`strict_rate_limit`), layered on top of the global slowapi cap. |
 | **Admin-write rate limit** | All admin write endpoints (settings update, snapshot rebuild, outbox replay, GDPR delete, TOTP setup/verify/disable) capped at 60/min/IP via `admin_write_rate_limit`. Bounds a compromised-session attacker. |
 | **CSRF protection** | `api/csrf.py` — double-submit cookie + `Sec-Fetch-Site` validation. Login issues `csrf_token` cookie; admin UI echoes it via `X-CSRF-Token`. `require_csrf` dep on every state-changing route. Toggleable via `auth.csrf_enabled`. |
@@ -354,8 +356,12 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 | **Idempotency-Key cache** | Opt-in via the `idempotency.enabled` runtime setting + per-request `Idempotency-Key` header. Cached replay = no duplicate writes; same key + different hash = 409. Redis storage when configured; in-process fallback otherwise. |
 | **PII redaction (egress)** | `src/pii.py` — regex redactor for emails, phones, SSN, Luhn-validated credit cards, IPs, common API-key shapes. Returns redacted text + `RedactionSummary` (counts + match-density). Used by the LLM gateway before any prompt leaves the perimeter. |
 | **PII scrubbing in logs** | `_PiiScrubFilter` on the root logger runs every record's message + `ctx_*` string extras through the same redactor before any formatter sees it. Toggleable via `observability.pii_scrub_logs`. |
-| **GDPR right-to-be-forgotten** | `POST /admin/gdpr/delete-customer` (soft-confirm guard) — atomic delete from `meetings` + `customer.deleted` outbox event + hashed audit-log row + cache invalidation. Audit row never carries the raw customer name. Operator runbook: [`deploy/gdpr-runbook.md`](deploy/gdpr-runbook.md). |
-| **CORS** | Configurable origins (runtime setting). Tighten in prod. |
+| **GDPR right-to-be-forgotten** | `POST /admin/gdpr/delete-customer` (soft-confirm guard) — atomic delete from `meetings` + `customer.deleted` outbox event + hashed audit-log row + cache invalidation. Structured JSONB match on `raw->'info'->>'customer'` (NOT a free-text LIKE), so a substring collision can't delete unrelated rows. Audit row never carries the raw customer name. Operator runbook: [`deploy/gdpr-runbook.md`](deploy/gdpr-runbook.md). |
+| **Streaming bulk export + quotas** | `GET /admin/meetings/export.ndjson` streams every meeting via the repository's bounded `stream()` iterator (constant memory at 100M+ rows). Gated by the 60/min/IP admin-write limit AND a per-actor per-UTC-day cap (`export.max_per_day`, default 4) so a stolen session can't exfiltrate in a loop. |
+| **Snapshot HMAC signing** | `admin.snapshot_signing_secret` (bootstrap-only, file-mounted) HMAC-SHA256-signs the snapshot manifest at write. Read refuses any unsigned or mismatched manifest once a key is configured — closes the pickle-RCE primitive an unsigned S3 snapshot otherwise creates. Deliberately not a runtime setting: a compromised admin can't disable it. |
+| **Audit forensics** | Every audit row records `ip_address` + `user_agent` (migration 0005) alongside actor + before/after value. Captured via a request ContextVar from both a public-app ASGI dep and the admin-app middleware. |
+| **CORS** | Default `auth.cors_origins=[]` forces explicit allowlist. `_safe_cors_origins()` strips `"*"` in prod and warns when combined with `allow_credentials=True`. |
+| **robots.txt + RFC 9116 security.txt** | `/robots.txt` blocks crawlers from `/admin` + `/api/v1/admin`. `/.well-known/security.txt` advertises the disclosure channel. |
 | **Rate limiting** | Three layers (ADR 0014): per-tenant slowapi (default 120/min, Redis-backed) + concurrency cap (`BackpressureMiddleware`) + adaptive throttle (sheds when p95 > SLO). Per-tenant overrides via `rate_limit.per_tenant`. |
 | **Security headers** | CSP, HSTS (prod only), X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy — all on every response. |
 | **Admin password storage** | PBKDF2-SHA256 (200k iters); HMAC-signed session cookie with `Secure` (prod) + `HttpOnly` + `SameSite=Strict`. Session secret loadable from a file path (`session_secret_path`) so K8s Secret mounts work. |
@@ -409,7 +415,7 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 | **Configuration** | Two-tier: `bootstrap.toml` (env, log, DB URL, admin secret, `[runtime]` knobs that need to be readable before the DB exists) + DB-backed `runtime_settings` for everything else (rate limits, risk weights, feature flags, Redis URL, snapshot URL, OTel sampling rate, …). Operator changes propagate via `LISTEN/NOTIFY` on Postgres. See [`bootstrap.toml.example`](bootstrap.toml.example). |
 | **Linting / formatting** | `ruff` (lint + format) configured in pyproject. |
 | **Type checking** | `mypy` for `src/` and `api/`. |
-| **Testing** | `pytest`, **327 tests** (autoscaling · distributed/`fakeredis` · outbox + DLQ · cache-stampede · adaptive-throttle · idempotency · secret-type masking · custom Prom metrics · PII redaction · JWT auth · DatabaseRepository · LLM gateway · entity-level Redis cache · cached repository · search index · CSRF · TOTP MFA · GDPR delete · log-PII filter · admin-write rate limit), FastAPI `TestClient`. |
+| **Testing** | `pytest`, **345 tests** (autoscaling · distributed/`fakeredis` · outbox + DLQ + reaper · cache-stampede · adaptive-throttle · idempotency · secret-type masking · custom Prom metrics · PII redaction · JWT auth · DatabaseRepository · per-tenant filter · LLM gateway · entity-level Redis cache · cached repository · search index · CSRF · TOTP MFA + backup codes · GDPR structured-match · log-PII filter · admin-write rate limit · audit forensics · streaming export · snapshot HMAC · tenant context · CORS strip), FastAPI `TestClient`. |
 | **CI/CD** | GitHub Actions: lint → type-check → test (3.9/3.11/3.12) → security scan → Docker build + image scan. |
 | **Containerization** | Multi-stage Dockerfile, non-root user, healthcheck, JSON logs, Caddy reverse proxy via compose. |
 | **Pipeline lifecycle** | State cached at startup; optional periodic refresh (`pipeline.refresh_minutes` runtime setting). At production volume, a singleton CronJob writes a snapshot (`api/snapshot_writer.py`); replicas warm from it instead of rebuilding. |
@@ -443,7 +449,7 @@ otel_endpoint = "http://otel:4318/v1/traces"
 
 **Runtime config** — everything else lives in the DB and is managed through the admin panel at **`/admin`**. Categories:
 
-- **auth** — API key, CORS origins, JWT (algorithm, secret/JWKS, audience, issuer), CSRF enabled, admin TOTP secret + required-flag
+- **auth** — API key, CORS origins (default `[]`), JWT (algorithm, secret/JWKS, audience, issuer), CSRF enabled, admin TOTP secret + required-flag + backup-code hashes
 - **rate_limit** — default + strict + per-tenant overrides
 - **pipeline** — refresh interval
 - **risk** — scoring weights + tier thresholds
@@ -457,6 +463,8 @@ otel_endpoint = "http://otel:4318/v1/traces"
 - **llm** — Tier-1 vLLM endpoint, Tier-2 frontier provider/model/budget/timeout, **Tier-2 API key (masked-on-read `secret` type)**
 - **transcripts** — repository backend (`local` filesystem · `database` Postgres-JSONB)
 - **search** — search backend (`local` in-memory · `opensearch` cluster), OpenSearch hosts CSV
+- **outbox** — `reap_processed_days` (default 7, 0 = disabled) + `reap_interval_hours` (default 24) drive the background reaper that prunes processed events
+- **export** — `max_per_day` per-actor daily cap on the streaming NDJSON bulk export
 
 Changes propagate within 5 seconds (or < 100 ms with Postgres `LISTEN/NOTIFY`). Every change is recorded in an audit log; `secret`-typed values store their masked form in the audit row so the raw key never persists in the historical record.
 

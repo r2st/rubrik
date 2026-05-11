@@ -296,7 +296,7 @@
           <span class="tag">Postgres + Iceberg + Kafka</span>
           <span class="tag">Ray Train + vLLM</span>
           <span class="tag">14 ADRs</span>
-          <span class="tag">327 tests · 94% cov</span>
+          <span class="tag">345 tests · 94% cov</span>
         </div>
         <p class="meta">Take-home submission · Rubrik · 2026</p>
       </div>
@@ -545,14 +545,17 @@ flowchart LR
           <div class="card">
             <h4>Security</h4>
             <ul>
-              <li>API-key auth (DB-backed) · JWT (opt-in, JWKS) · <strong>TOTP MFA</strong></li>
+              <li>API-key auth (DB-backed) · JWT (opt-in, JWKS) · <strong>TOTP MFA + backup codes</strong></li>
               <li>PBKDF2-SHA256 admin pw + file-mountable session secret</li>
               <li><strong>CSRF</strong> (double-submit cookie + <code>Sec-Fetch-Site</code>)</li>
               <li>5/min/IP login + 60/min/IP admin-write throttles</li>
               <li>1 MiB body cap · Idempotency-Key replay-safe writes</li>
               <li>PII redactor (egress) + <strong>PII filter on logs</strong></li>
-              <li><code>secret</code> type masked everywhere; <strong>GDPR delete</strong> endpoint</li>
-              <li>CSP / HSTS / CORS · Audit log on every write</li>
+              <li><code>secret</code> type masked everywhere; <strong>GDPR delete</strong> (structured match)</li>
+              <li><strong>Per-tenant data isolation</strong> via ContextVar (JWT claim → repo + cache)</li>
+              <li><strong>Snapshot HMAC signing</strong> closes the pickle-RCE primitive</li>
+              <li>Streaming bulk export with per-day quota; audit rows carry IP + UA</li>
+              <li>CSP / HSTS / CORS (default <code>[]</code>, strip <code>*</code> in prod) · robots.txt + security.txt</li>
             </ul>
           </div>
           <div class="card">
@@ -642,7 +645,7 @@ gemma-finetune/     — QLoRA recipes</code></pre>
           <div>
             <h3>Quality bar</h3>
             <ul>
-              <li><span class="green">327</span> tests · 94% coverage · <code>fakeredis</code> · LISTEN/NOTIFY · idempotency · PII · JWT · DB repo · LLM gateway · custom Prom metrics · entity cache · search index · CSRF · TOTP · GDPR · log-PII filter</li>
+              <li><span class="green">345</span> tests · 94% coverage · <code>fakeredis</code> · LISTEN/NOTIFY · idempotency · PII · JWT · DB repo + per-tenant filter · LLM gateway · custom Prom metrics · entity cache · search index · CSRF · TOTP MFA + backup codes · GDPR structured-match · log-PII filter · audit forensics · streaming export · snapshot HMAC · tenant context · CORS strip</li>
               <li><code>ruff</code> clean · <code>mypy</code> on src + api · 14 ADRs · expand/contract migration template</li>
               <li>30+ Mermaid diagrams across docs</li>
               <li>K8s: HPA · KEDA · Cluster Autoscaler · Argo Rollouts · Gateway API · Kafka (Strimzi) · Redis · PgBouncer · OTel Collector · Prom SLO rules · migrate Job · snapshot CronJob · Arq workers</li>

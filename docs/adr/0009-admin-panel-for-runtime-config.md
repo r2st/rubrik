@@ -85,12 +85,25 @@ auth.jwt_issuer                      ""              str    auth
 auth.csrf_enabled                    true            bool   auth
 auth.admin_totp_secret               ""              secret auth
 auth.admin_totp_required             false           bool   auth
+auth.admin_totp_backup_codes         ""              secret auth
 observability.pii_scrub_logs         true            bool   observability
 idempotency.enabled                  false           bool   idempotency
 idempotency.ttl_hours                24              int    idempotency
 idempotency.max_body_bytes           16384           int    idempotency
+outbox.reap_processed_days           7               int    outbox
+outbox.reap_interval_hours           24              int    outbox
+export.max_per_day                   4               int    export
 transcripts.repository               "local"         str    transcripts
 ```
+
+**Update (2026-05):** `auth.cors_origins` default flipped from `["*"]` to
+`[]` so operators must set an explicit allowlist before the API is
+exposed publicly. `_safe_cors_origins()` strips `"*"` in production
+when `allow_credentials=True`. The newer keys above
+(`admin_totp_backup_codes`, the `outbox.reap_*` pair,
+`export.max_per_day`) close the corresponding production gaps: lost-device
+recovery without shell access, automatic outbox table maintenance,
+and a daily export cap on top of the per-IP admin-write throttle.
 
 Reads go through a **5-second TTL cache**. On Postgres, every `set()` additionally publishes a `settings_changed` `NOTIFY`, and a listener thread on each replica drops the cache locally — operator changes propagate in < 100 ms instead of waiting for the TTL. SQLite (dev) silently skips the publish; the TTL is the safety net.
 

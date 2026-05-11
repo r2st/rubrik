@@ -339,7 +339,7 @@ footer code {
 <p>An <strong>auto-scalable system</strong> that processes B2B meeting transcripts and surfaces topic categorization, sentiment trends, and strategic insights — exposed as a REST API with a lightweight web dashboard. <strong>Target scale: millions to 100M+ records.</strong></p>
 </blockquote>
 <p><a href=".github/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/badge/CI-GitHub%20Actions-blue" /></a>
-<a href="https://github.com/"><img alt="Tests" src="https://img.shields.io/badge/tests-327%20passing-brightgreen" /></a>
+<a href="https://github.com/"><img alt="Tests" src="https://img.shields.io/badge/tests-345%20passing-brightgreen" /></a>
 <a href="pyproject.toml"><img alt="Coverage" src="https://img.shields.io/badge/coverage-94%25-brightgreen" /></a>
 <a href="https://github.com/"><img alt="Validation" src="https://img.shields.io/badge/validation-9%2F10%20pass-brightgreen" /></a>
 <a href="pyproject.toml"><img alt="Python" src="https://img.shields.io/badge/python-3.9%2B-blue" /></a>
@@ -854,6 +854,14 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 <td>Authenticator-app 2FA via <code>pyotp</code>. Setup flow (<code>POST /admin/totp/setup</code> → <code>/verify</code>) generates the secret + provisioning URI; once verified, login requires a 6-digit code in addition to the password. Same 401 envelope on missing/wrong code so attackers can't oracle the password.</td>
 </tr>
 <tr>
+<td><strong>TOTP backup codes</strong></td>
+<td>8 single-use <code>XXXX-XXXX</code> codes minted at setup, SHA-256 hashed at rest as a <code>secret</code>-typed setting. Substitute for a TOTP code on <code>/admin/login</code>; each consumed atomically. Recovery path that doesn't require shell access. Rotate via <code>POST /admin/totp/backup-codes/regenerate</code>.</td>
+</tr>
+<tr>
+<td><strong>Per-tenant data isolation</strong></td>
+<td><code>src/tenant.py</code> ContextVar set by an ASGI middleware from JWT claims (<code>tid</code>/<code>tenant</code>/<code>tenant_id</code>) or hashed <code>X-API-Key</code>. <code>DatabaseRepository.get</code> automatically scopes by tenant; <code>CachedTranscriptRepository</code> keys entries <code>{tenant}:{meeting_id}</code> so a cache hit can't cross tenants.</td>
+</tr>
+<tr>
 <td><strong>Admin login brute-force guard</strong></td>
 <td>Stricter 5/min/IP rate limit on <code>/api/v1/admin/login</code> and <code>/api/v1/admin/password</code> via a dedicated FastAPI dependency (<code>strict_rate_limit</code>), layered on top of the global slowapi cap.</td>
 </tr>
@@ -883,11 +891,27 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 </tr>
 <tr>
 <td><strong>GDPR right-to-be-forgotten</strong></td>
-<td><code>POST /admin/gdpr/delete-customer</code> (soft-confirm guard) — atomic delete from <code>meetings</code> + <code>customer.deleted</code> outbox event + hashed audit-log row + cache invalidation. Audit row never carries the raw customer name. Operator runbook: <a href="deploy/gdpr-runbook.md"><code>deploy/gdpr-runbook.md</code></a>.</td>
+<td><code>POST /admin/gdpr/delete-customer</code> (soft-confirm guard) — atomic delete from <code>meetings</code> + <code>customer.deleted</code> outbox event + hashed audit-log row + cache invalidation. Structured JSONB match on <code>raw-&gt;'info'-&gt;&gt;'customer'</code> (NOT a free-text LIKE), so a substring collision can't delete unrelated rows. Audit row never carries the raw customer name. Operator runbook: <a href="deploy/gdpr-runbook.md"><code>deploy/gdpr-runbook.md</code></a>.</td>
+</tr>
+<tr>
+<td><strong>Streaming bulk export + quotas</strong></td>
+<td><code>GET /admin/meetings/export.ndjson</code> streams every meeting via the repository's bounded <code>stream()</code> iterator (constant memory at 100M+ rows). Gated by the 60/min/IP admin-write limit AND a per-actor per-UTC-day cap (<code>export.max_per_day</code>, default 4) so a stolen session can't exfiltrate in a loop.</td>
+</tr>
+<tr>
+<td><strong>Snapshot HMAC signing</strong></td>
+<td><code>admin.snapshot_signing_secret</code> (bootstrap-only, file-mounted) HMAC-SHA256-signs the snapshot manifest at write. Read refuses any unsigned or mismatched manifest once a key is configured — closes the pickle-RCE primitive an unsigned S3 snapshot otherwise creates. Deliberately not a runtime setting: a compromised admin can't disable it.</td>
+</tr>
+<tr>
+<td><strong>Audit forensics</strong></td>
+<td>Every audit row records <code>ip_address</code> + <code>user_agent</code> (migration 0005) alongside actor + before/after value. Captured via a request ContextVar from both a public-app ASGI dep and the admin-app middleware.</td>
 </tr>
 <tr>
 <td><strong>CORS</strong></td>
-<td>Configurable origins (runtime setting). Tighten in prod.</td>
+<td>Default <code>auth.cors_origins=[]</code> forces explicit allowlist. <code>_safe_cors_origins()</code> strips <code>"*"</code> in prod and warns when combined with <code>allow_credentials=True</code>.</td>
+</tr>
+<tr>
+<td><strong>robots.txt + RFC 9116 security.txt</strong></td>
+<td><code>/robots.txt</code> blocks crawlers from <code>/admin</code> + <code>/api/v1/admin</code>. <code>/.well-known/security.txt</code> advertises the disclosure channel.</td>
 </tr>
 <tr>
 <td><strong>Rate limiting</strong></td>
@@ -1083,7 +1107,7 @@ docker compose --profile proxy up -d   # with Caddy reverse proxy on :80
 </tr>
 <tr>
 <td><strong>Testing</strong></td>
-<td><code>pytest</code>, <strong>327 tests</strong> (autoscaling · distributed/<code>fakeredis</code> · outbox + DLQ · cache-stampede · adaptive-throttle · idempotency · secret-type masking · custom Prom metrics · PII redaction · JWT auth · DatabaseRepository · LLM gateway · entity-level Redis cache · cached repository · search index · CSRF · TOTP MFA · GDPR delete · log-PII filter · admin-write rate limit), FastAPI <code>TestClient</code>.</td>
+<td><code>pytest</code>, <strong>345 tests</strong> (autoscaling · distributed/<code>fakeredis</code> · outbox + DLQ + reaper · cache-stampede · adaptive-throttle · idempotency · secret-type masking · custom Prom metrics · PII redaction · JWT auth · DatabaseRepository · per-tenant filter · LLM gateway · entity-level Redis cache · cached repository · search index · CSRF · TOTP MFA + backup codes · GDPR structured-match · log-PII filter · admin-write rate limit · audit forensics · streaming export · snapshot HMAC · tenant context · CORS strip), FastAPI <code>TestClient</code>.</td>
 </tr>
 <tr>
 <td><strong>CI/CD</strong></td>
@@ -1132,7 +1156,7 @@ otel_endpoint = &quot;http://otel:4318/v1/traces&quot;
 </code></pre>
 <p><strong>Runtime config</strong> — everything else lives in the DB and is managed through the admin panel at <strong><code>/admin</code></strong>. Categories:</p>
 <ul>
-<li><strong>auth</strong> — API key, CORS origins, JWT (algorithm, secret/JWKS, audience, issuer), CSRF enabled, admin TOTP secret + required-flag</li>
+<li><strong>auth</strong> — API key, CORS origins (default <code>[]</code>), JWT (algorithm, secret/JWKS, audience, issuer), CSRF enabled, admin TOTP secret + required-flag + backup-code hashes</li>
 <li><strong>rate_limit</strong> — default + strict + per-tenant overrides</li>
 <li><strong>pipeline</strong> — refresh interval</li>
 <li><strong>risk</strong> — scoring weights + tier thresholds</li>
@@ -1146,6 +1170,8 @@ otel_endpoint = &quot;http://otel:4318/v1/traces&quot;
 <li><strong>llm</strong> — Tier-1 vLLM endpoint, Tier-2 frontier provider/model/budget/timeout, <strong>Tier-2 API key (masked-on-read <code>secret</code> type)</strong></li>
 <li><strong>transcripts</strong> — repository backend (<code>local</code> filesystem · <code>database</code> Postgres-JSONB)</li>
 <li><strong>search</strong> — search backend (<code>local</code> in-memory · <code>opensearch</code> cluster), OpenSearch hosts CSV</li>
+<li><strong>outbox</strong> — <code>reap_processed_days</code> (default 7, 0 = disabled) + <code>reap_interval_hours</code> (default 24) drive the background reaper that prunes processed events</li>
+<li><strong>export</strong> — <code>max_per_day</code> per-actor daily cap on the streaming NDJSON bulk export</li>
 </ul>
 <p>Changes propagate within 5 seconds (or &lt; 100 ms with Postgres <code>LISTEN/NOTIFY</code>). Every change is recorded in an audit log; <code>secret</code>-typed values store their masked form in the audit row so the raw key never persists in the historical record.</p>
 <h3 id="admin-panel">Admin panel<a class="anchor" href="#admin-panel" title="Permanent link">¶</a></h3>
