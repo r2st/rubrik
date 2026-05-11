@@ -305,3 +305,61 @@ def prune_processed(older_than_seconds: int = 7 * 24 * 3600) -> int:
         s.commit()
     log.info("Outbox pruned: %d rows older than %ds", deleted or 0, older_than_seconds)
     return deleted or 0
+
+
+# ---------------------------------------------------------------------------
+# Scheduled reaper loop — started by the public-app lifespan when enabled
+# ---------------------------------------------------------------------------
+_reaper_task = None
+
+
+async def start_reaper_task() -> None:
+    """Run ``prune_processed`` every ``outbox.reap_interval_hours`` hours.
+
+    Driven by two runtime settings:
+      - ``outbox.reap_processed_days`` (0 = disabled)
+      - ``outbox.reap_interval_hours`` (default 24)
+
+    Single replica is fine — the operation is idempotent and the DELETE
+    is cheap (the WHERE clause hits the indexed ``processed_at`` column).
+    Running it on every replica would just race for the same rows.
+    """
+    import asyncio as _asyncio
+
+    global _reaper_task  # noqa: PLW0603
+    if _reaper_task is not None:
+        return
+
+    async def _loop() -> None:
+        # Lazy import to keep top-of-module clean.
+        from src.runtime_settings import get_runtime
+        log.info("Outbox reaper loop starting")
+        while True:
+            try:
+                rt = get_runtime()
+                days = int(rt.get("outbox.reap_processed_days", 7) or 0)
+                interval_h = max(1, int(rt.get("outbox.reap_interval_hours", 24) or 24))
+                if days > 0:
+                    prune_processed(older_than_seconds=days * 24 * 3600)
+                await _asyncio.sleep(interval_h * 3600)
+            except _asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                log.exception("Outbox reaper iteration failed; sleeping 1h")
+                await _asyncio.sleep(3600)
+
+    _reaper_task = _asyncio.create_task(_loop(), name="outbox-reaper")
+
+
+async def stop_reaper_task() -> None:
+    """Cancel the reaper loop. Idempotent — safe to call on shutdown
+    even when the loop never started (e.g. tests)."""
+    import asyncio as _asyncio
+    import contextlib as _contextlib
+    global _reaper_task  # noqa: PLW0603
+    if _reaper_task is None:
+        return
+    _reaper_task.cancel()
+    with _contextlib.suppress(_asyncio.CancelledError, Exception):
+        await _reaper_task
+    _reaper_task = None

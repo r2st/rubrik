@@ -87,6 +87,11 @@ async def lifespan(app_: FastAPI):
     state.get_state()  # warm pipeline cache (snapshot if available)
     await state.start_refresh_task(runtime.pipeline_refresh_minutes)
     await state.start_snapshot_poll()  # no-op if snapshot.url is unset
+    # Outbox reaper loop — idempotent, cheap, prevents outbox_events
+    # from growing forever. Configured via the outbox.reap_* settings;
+    # the loop itself self-disables when reap_processed_days = 0.
+    from api.outbox import start_reaper_task
+    await start_reaper_task()
 
     log.info("Ready to serve")
     yield
@@ -99,6 +104,8 @@ async def lifespan(app_: FastAPI):
 
     await state.stop_snapshot_poll()
     await state.stop_refresh_task()
+    from api.outbox import stop_reaper_task
+    await stop_reaper_task()
     if listener is not None:
         listener.stop()
 
@@ -177,14 +184,68 @@ app.add_middleware(adaptive_throttle_mod.AdaptiveThrottleMiddleware)
 # the auth + business logic so cache lookups bypass downstream work.
 app.add_middleware(idempotency_mod.IdempotencyMiddleware)
 app.add_middleware(RequestIDMiddleware)
+
+
+# Tenant identity — pure ASGI middleware (NOT the @app.middleware decorator,
+# which routes through starlette's BaseHTTPMiddleware and breaks streaming
+# responses). Runs in the event-loop coroutine context so the ContextVar
+# set here propagates into the route's threadpool task; the sync route
+# then reads ``src.tenant.current_tenant()`` to scope DB queries.
+class _TenantContextMiddleware:
+    """Pure ASGI middleware setting the tenant ContextVar per request."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        from src.tenant import derive_tenant_id, set_current_tenant
+        headers = {
+            k.decode("latin-1").lower(): v.decode("latin-1")
+            for k, v in scope.get("headers") or []
+        }
+        api_key = headers.get("x-api-key") or None
+        # JWT claims aren't available at the ASGI layer (require_jwt is a
+        # route dep that runs later); the API-key hash is a reasonable
+        # tenant proxy until the route handler upgrades the ContextVar
+        # via the JWT-aware dep when JWT auth is enabled.
+        tenant = derive_tenant_id(jwt_claims=None, api_key=api_key)
+        set_current_tenant(tenant)
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(_TenantContextMiddleware)
+
 app.add_middleware(
     SecurityHeadersMiddleware,
     hsts=settings.is_prod,  # only assert HSTS when actually behind TLS
 )
 app.add_middleware(StateAgeMiddleware)
+
+# CORS — refuse the most common foot-gun: ``allow_origins=["*"]`` plus
+# ``allow_credentials=True`` is silently downgraded by browsers but
+# remains exploitable by some legacy stacks. If the operator left the
+# default at "*" in prod, log loudly and strip the wildcard. Empty
+# list (the new default) blocks cross-origin entirely — operators must
+# set an explicit allowlist to enable the dashboard from another origin.
+def _safe_cors_origins() -> list[str]:
+    raw = list(get_runtime_view().cors_origins or [])
+    if "*" in raw and settings.is_prod:
+        import logging as _logging
+        _logging.getLogger("api.main").warning(
+            "CORS: auth.cors_origins contains '*' in production — stripping "
+            "wildcard because allow_credentials=True. Set an explicit "
+            "allowlist (e.g., ['https://dashboard.example.com']).",
+        )
+        raw = [o for o in raw if o != "*"]
+    return raw
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=get_runtime_view().cors_origins,
+    allow_origins=_safe_cors_origins(),
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*", "X-API-Key", "X-Request-ID"],
     allow_credentials=True,  # admin session cookie needs this

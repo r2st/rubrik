@@ -126,10 +126,39 @@ class _FsspecAdapter:  # pragma: no cover — exercised only when fsspec is inst
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+def _signing_secret() -> str:
+    """Read the bootstrap-mounted snapshot signing key, if any.
+
+    Lazy import so ``api.snapshot`` stays importable in standalone tools
+    that don't load the full settings stack.
+    """
+    try:
+        from src.settings import get_settings
+        return get_settings().resolved_snapshot_signing_secret()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _sign_manifest(manifest: dict, secret: str) -> str:
+    """HMAC-SHA256 over the canonical-JSON manifest. Stable encoding so
+    operators can verify out-of-band with `openssl dgst -hmac`.
+    """
+    import hmac as _hmac
+    canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return _hmac.new(secret.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
+
+
 def write_snapshot(url: str, payload: Any, *, n_meetings: int) -> dict:
     """Serialize + write to ``url``. Returns the manifest dict.
 
     Atomic at the filesystem level (write-tmp-then-rename).
+
+    If the admin section's ``snapshot_signing_secret`` (or its
+    file-mounted variant) is set, an HMAC-SHA256 signature is added to
+    the manifest. ``read_snapshot`` then refuses to load any payload
+    whose signature doesn't verify — closing the pickle-RCE primitive
+    that an unsigned snapshot otherwise creates if the storage backend
+    is ever compromised.
     """
     storage = _resolve(url)
     raw = pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL)
@@ -145,10 +174,15 @@ def write_snapshot(url: str, payload: Any, *, n_meetings: int) -> dict:
         "payload": PAYLOAD_NAME,
         "size_bytes": len(blob),
     }
+    secret = _signing_secret()
+    if secret:
+        # Sign the manifest's content fields (NOT the signature itself).
+        manifest["signature"] = _sign_manifest(manifest, secret)
+        manifest["signature_alg"] = "HMAC-SHA256"
     storage.write_bytes(MANIFEST_NAME, json.dumps(manifest, indent=2).encode("utf-8"))
     log.info(
-        "Snapshot written: url=%s n_meetings=%d size=%d bytes checksum=%s…",
-        url, n_meetings, len(blob), checksum[:12],
+        "Snapshot written: url=%s n_meetings=%d size=%d bytes checksum=%s… signed=%s",
+        url, n_meetings, len(blob), checksum[:12], bool(secret),
     )
     return manifest
 
@@ -165,7 +199,7 @@ def read_manifest(url: str) -> Optional[dict]:
         return None
 
 
-def read_snapshot(url: str) -> Optional[Any]:
+def read_snapshot(url: str) -> Optional[Any]:  # noqa: PLR0911
     """Read + verify the snapshot payload. Returns the unpickled object or None.
 
     Returns None on any error (missing file, checksum mismatch, version skew) —
@@ -181,6 +215,32 @@ def read_snapshot(url: str) -> Optional[Any]:
             manifest.get("format_version"), SNAPSHOT_FORMAT_VERSION,
         )
         return None
+
+    # Signature gate — runs BEFORE we touch the payload. An unsigned
+    # snapshot is silently accepted only when no signing secret is
+    # configured (legacy / dev). Once the operator mounts a key, every
+    # snapshot must verify against it: a missing or bad signature is a
+    # hard "refuse to load + log loudly" outcome, NOT a fall-through.
+    secret = _signing_secret()
+    if secret:
+        sig = manifest.get("signature")
+        if not sig:
+            log.warning(
+                "Snapshot is unsigned but a signing key is configured — "
+                "refusing to load (possible storage compromise)",
+            )
+            return None
+        unsigned = {k: v for k, v in manifest.items()
+                    if k not in ("signature", "signature_alg")}
+        expected = _sign_manifest(unsigned, secret)
+        import hmac as _hmac
+        if not _hmac.compare_digest(sig, expected):
+            log.error(
+                "Snapshot signature mismatch — refusing to load. "
+                "Either the signing key rotated or the snapshot was tampered.",
+            )
+            return None
+
     try:
         storage = _resolve(url)
         blob = storage.read_bytes(manifest["payload"])

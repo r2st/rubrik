@@ -192,7 +192,10 @@ def test_totp_verify_setup_persists_when_code_matches():
     payload = totp.setup()
     secret = payload["secret"]
     code = pyotp.TOTP(secret).now()
-    assert totp.verify_setup_code(secret, code, actor="test") is True
+    # Now returns the freshly-minted backup codes on success (was bool).
+    raw_codes = totp.verify_setup_code(secret, code, actor="test")
+    assert raw_codes is not None
+    assert len(raw_codes) == 8
     rt = get_runtime()
     assert rt.get("auth.admin_totp_secret") == secret
     assert rt.get("auth.admin_totp_required") is True
@@ -200,7 +203,10 @@ def test_totp_verify_setup_persists_when_code_matches():
 
 def test_totp_verify_rejects_wrong_code():
     payload = totp.setup()
-    assert totp.verify_setup_code(payload["secret"], "000000", actor="test") is False
+    # Failure returns None (was False).
+    assert totp.verify_setup_code(
+        payload["secret"], "000000", actor="test",
+    ) is None
 
 
 def test_login_blocked_when_totp_required_and_missing():
@@ -408,3 +414,203 @@ def test_meetings_ndjson_export_streams_one_line_per_meeting():
     assert lines, "expected at least one exported meeting"
     parsed = _json.loads(lines[0])
     assert "meeting_id" in parsed
+
+
+# ---------------------------------------------------------------------------
+# 11. TOTP backup codes
+# ---------------------------------------------------------------------------
+def test_totp_backup_codes_can_satisfy_login():
+    """A freshly-minted backup code substitutes for a TOTP code on
+    /admin/login and is consumed (single-use)."""
+    payload = totp.setup()
+    secret = payload["secret"]
+    raw_codes = totp.verify_setup_code(
+        secret, pyotp.TOTP(secret).now(), actor="test",
+    )
+    assert raw_codes and len(raw_codes) == 8
+    backup = raw_codes[0]
+    # Backup code accepted in place of TOTP.
+    assert totp.verify_login_code(backup, actor="test") is True
+    # But only once — the second attempt fails (consumed).
+    assert totp.verify_login_code(backup, actor="test") is False
+
+
+def test_totp_regenerate_invalidates_old_backup_codes():
+    payload = totp.setup()
+    secret = payload["secret"]
+    old_codes = totp.verify_setup_code(
+        secret, pyotp.TOTP(secret).now(), actor="test",
+    )
+    assert old_codes
+    new_codes = totp.regenerate_backup_codes(actor="test")
+    assert len(new_codes) == 8
+    assert set(new_codes).isdisjoint(set(old_codes))
+    # Old codes no longer satisfy login.
+    assert totp.verify_login_code(old_codes[0], actor="test") is False
+    # New codes do.
+    assert totp.verify_login_code(new_codes[0], actor="test") is True
+
+
+# ---------------------------------------------------------------------------
+# 12. Tenant context — request-scoped ContextVar plumbed to repository
+# ---------------------------------------------------------------------------
+def test_tenant_contextvar_default_is_none():
+    from src.tenant import current_tenant
+    assert current_tenant() is None
+
+
+def test_derive_tenant_id_prefers_jwt_over_api_key():
+    from src.tenant import derive_tenant_id
+    # JWT wins
+    assert derive_tenant_id(
+        jwt_claims={"tid": "acme"}, api_key="some-key",
+    ) == "acme"
+    # Falls back to hashed API key when no JWT claim
+    h = derive_tenant_id(jwt_claims=None, api_key="some-key")
+    assert h and len(h) == 16
+    # None when neither
+    assert derive_tenant_id(jwt_claims=None, api_key=None) is None
+
+
+# ---------------------------------------------------------------------------
+# 13. Snapshot HMAC signing
+# ---------------------------------------------------------------------------
+def test_snapshot_signing_rejects_tampered_manifest(tmp_path, monkeypatch):
+    """A snapshot written with a signing key + then tampered must not load."""
+    import json as _json
+
+    from api import snapshot as snap
+
+    monkeypatch.setattr(snap, "_signing_secret", lambda: "test-signing-key")
+
+    snap.write_snapshot(str(tmp_path), {"hello": "world"}, n_meetings=1)
+    # First read succeeds.
+    assert snap.read_snapshot(str(tmp_path)) == {"hello": "world"}
+
+    # Tamper with the manifest — bump n_meetings without re-signing.
+    manifest_path = tmp_path / snap.MANIFEST_NAME
+    m = _json.loads(manifest_path.read_text())
+    m["n_meetings"] = 999_999
+    manifest_path.write_text(_json.dumps(m, indent=2))
+    # Now read refuses to load.
+    assert snap.read_snapshot(str(tmp_path)) is None
+
+
+def test_snapshot_signed_required_when_key_configured(tmp_path, monkeypatch):
+    """An unsigned snapshot can't load once a signing key is configured."""
+    import json as _json
+
+    from api import snapshot as snap
+
+    # Write without a key.
+    monkeypatch.setattr(snap, "_signing_secret", lambda: "")
+    snap.write_snapshot(str(tmp_path), {"hello": "world"}, n_meetings=1)
+    manifest_path = tmp_path / snap.MANIFEST_NAME
+    assert "signature" not in _json.loads(manifest_path.read_text())
+
+    # Now turn on signing — the existing unsigned snapshot is refused.
+    monkeypatch.setattr(snap, "_signing_secret", lambda: "test-key")
+    assert snap.read_snapshot(str(tmp_path)) is None
+
+
+# ---------------------------------------------------------------------------
+# 14. Outbox reap admin endpoint
+# ---------------------------------------------------------------------------
+def test_outbox_reap_endpoint_deletes_old_processed_rows():
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import text as _text
+
+    from api.main import app
+    from src.db import session_scope
+    from src.models_db import OutboxEvent
+
+    # Disable the background reaper so its startup pass doesn't race
+    # the test's seed-then-reap sequence.
+    rt = get_runtime()
+    rt.set("outbox.reap_processed_days", 0, actor="test")
+
+    with TestClient(app) as c:
+        _login(c)
+        # Seed AFTER lifespan startup — the reaper's first pass (if any)
+        # has already run by now.
+        old = datetime.now(timezone.utc) - timedelta(days=30)
+        recent = datetime.now(timezone.utc) - timedelta(days=1)
+        with session_scope() as s:
+            s.execute(_text("DELETE FROM outbox_events"))
+            s.add(OutboxEvent(
+                aggregate_type="x", aggregate_id="1", event_type="x.y",
+                sequence=0, payload={}, processed_at=old, delivery_attempts=1,
+                created_at=old,
+            ))
+            s.add(OutboxEvent(
+                aggregate_type="x", aggregate_id="2", event_type="x.y",
+                sequence=0, payload={}, processed_at=recent, delivery_attempts=1,
+                created_at=recent,
+            ))
+            s.commit()
+
+        token = c.cookies.get("csrf_token")
+        r = c.post(
+            "/api/v1/admin/outbox/reap?older_than_days=7",
+            headers={"X-CSRF-Token": token},
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["deleted"] >= 1
+    # Recent row survived.
+    with session_scope() as s:
+        remaining = s.execute(_text(
+            "SELECT COUNT(*) FROM outbox_events WHERE aggregate_id='2'",
+        )).scalar()
+        assert remaining == 1
+
+
+# ---------------------------------------------------------------------------
+# 15. Export per-day quota
+# ---------------------------------------------------------------------------
+def test_export_quota_blocks_after_cap():
+    """Direct unit test of the quota guard. The HTTP-level test path
+    exercises StreamingResponse + Starlette BaseHTTPMiddleware which has
+    a known interaction bug under TestClient; the guard itself is what
+    we care about."""
+    from fastapi import HTTPException
+
+    from api.admin import routes as _routes
+
+    _routes._export_quota.clear()
+    rt = get_runtime()
+    rt.set("export.max_per_day", 2, actor="test")
+
+    # First two calls increment cleanly.
+    _routes._enforce_export_quota("admin")
+    _routes._enforce_export_quota("admin")
+    # Third hits the cap.
+    with pytest.raises(HTTPException) as excinfo:
+        _routes._enforce_export_quota("admin")
+    assert excinfo.value.status_code == 429
+    assert "Daily export quota exhausted" in excinfo.value.detail
+
+    # cap=0 disables the quota entirely.
+    rt.set("export.max_per_day", 0, actor="test")
+    _routes._enforce_export_quota("admin")  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# 16. CORS — '*' stripped in prod when allow_credentials is True
+# ---------------------------------------------------------------------------
+def test_cors_wildcard_safely_stripped_in_prod(monkeypatch):
+    """The _safe_cors_origins helper drops '*' when running in prod."""
+    from api import main as _main
+
+    class _FakeSettings:
+        is_prod = True
+    monkeypatch.setattr(_main, "settings", _FakeSettings)
+
+    class _FakeRuntime:
+        cors_origins = ["*", "https://dashboard.example.com"]
+    monkeypatch.setattr(_main, "get_runtime_view", lambda: _FakeRuntime)
+
+    out = _main._safe_cors_origins()
+    assert "*" not in out
+    assert "https://dashboard.example.com" in out

@@ -157,7 +157,17 @@ class DatabaseRepository:
         """Look up a single meeting. When ``tenant_id`` is provided the
         query also filters on it — multi-tenant deployments MUST pass
         the caller's tenant to keep one tenant from reading another's
-        data via id-guessing. Single-tenant callers can omit it."""
+        data via id-guessing. Single-tenant callers can omit it.
+
+        If ``tenant_id`` is not passed explicitly the repository falls
+        back to ``src.tenant.current_tenant()`` (a request-scoped
+        ContextVar set by the public-app tenant middleware), so route
+        handlers automatically get tenant-scoped reads without
+        re-plumbing the value through every layer."""
+        if tenant_id is None:
+            from .tenant import current_tenant
+            tenant_id = current_tenant()
+
         from sqlalchemy import text
 
         from .db import session_scope
@@ -320,11 +330,23 @@ class CachedTranscriptRepository:
 
         Sync wrapper around the async ``get_or_load`` helper — the
         repository contract is sync, so we pump a one-shot loop.
+
+        The cache key is tenant-scoped so two tenants asking for the
+        same ``meeting_id`` never share a cached entry — without this,
+        a tenant could read another tenant's data the moment they
+        guessed the id.
         """
         from api import cache as cache_mod
 
+        # Tenant-scoped cache key — None tenant collapses to the
+        # historical "meeting:{id}" namespace so single-tenant callers
+        # see no behaviour change.
+        from .tenant import current_tenant
+        tid = current_tenant()
+        cache_key = meeting_id if tid is None else f"{tid}:{meeting_id}"
+
         # Cheap fast path: try the sync cache first to avoid the loop spin.
-        raw = cache_mod.cache_get(self.NAMESPACE, meeting_id)
+        raw = cache_mod.cache_get(self.NAMESPACE, cache_key)
         if raw is not None:
             if raw == "":
                 return None  # negative cache hit
@@ -339,13 +361,13 @@ class CachedTranscriptRepository:
         m = self.backing.get(meeting_id)
         if m is None:
             cache_mod.cache_set(
-                self.NAMESPACE, meeting_id, "", ttl_seconds=30,
+                self.NAMESPACE, cache_key, "", ttl_seconds=30,
             )
             return None
         try:
             import json
             cache_mod.cache_set(
-                self.NAMESPACE, meeting_id,
+                self.NAMESPACE, cache_key,
                 json.dumps(_meeting_to_dict(m)),
                 ttl_seconds=self.ttl_seconds,
             )

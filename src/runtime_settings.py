@@ -69,8 +69,12 @@ DEFAULTS: list[SettingDefault] = [
     SettingDefault("auth.api_key", "", "str", "auth",
         "If set, every /api/v1/* request requires this in the X-API-Key header. "
         "Empty string = auth disabled (dev mode)."),
-    SettingDefault("auth.cors_origins", ["*"], "list", "auth",
-        "Allowed CORS origins. Tighten in prod (e.g., ['https://dashboard.example.com'])."),
+    SettingDefault("auth.cors_origins", [], "list", "auth",
+        "Allowed CORS origins. Empty default forces operators to think "
+        "about this — set explicitly (e.g., ['https://dashboard.example.com']) "
+        "before exposing the API publicly. The api.main startup logs a "
+        "warning if this is left empty in prod, and refuses to honour '*' "
+        "alongside allow_credentials=true."),
     # JWT — opt-in upgrade path from API-key auth (ADR 0006 migration trigger)
     SettingDefault("auth.jwt_enabled", False, "bool", "auth",
         "Enable Bearer-token JWT validation alongside the API-key check. "
@@ -95,6 +99,10 @@ DEFAULTS: list[SettingDefault] = [
         "POST /api/v1/admin/totp/setup; rotate by clearing + re-running setup."),
     SettingDefault("auth.admin_totp_required", False, "bool", "auth",
         "When true, /admin/login rejects requests without a valid TOTP code."),
+    SettingDefault("auth.admin_totp_backup_codes", "", "secret", "auth",
+        "JSON list of SHA-256 hashes of single-use backup codes. Minted at "
+        "TOTP setup; each code consumed on use. Treated as secret so the "
+        "audit log records changes without echoing the hashes."),
     # PII scrubbing in structured logs
     SettingDefault("observability.pii_scrub_logs", True, "bool", "observability",
         "Run every log record through the PII redactor before emitting."),
@@ -193,6 +201,19 @@ DEFAULTS: list[SettingDefault] = [
     SettingDefault("idempotency.max_body_bytes", 16384, "int", "idempotency",
         "Bodies larger than this skip idempotency caching entirely. "
         "Large uploads aren't idempotency-key targets in practice."),
+
+    # ---- Outbox maintenance ----
+    SettingDefault("outbox.reap_processed_days", 7, "int", "outbox",
+        "Daily background job deletes processed outbox_events rows older "
+        "than this many days. Set to 0 to disable the scheduled reaper "
+        "(operator override at POST /api/v1/admin/outbox/reap still works)."),
+    SettingDefault("outbox.reap_interval_hours", 24, "int", "outbox",
+        "How often the scheduled reaper runs. Default = once a day."),
+
+    # ---- Export quotas — guard rails on the streaming NDJSON export ----
+    SettingDefault("export.max_per_day", 4, "int", "export",
+        "Maximum number of bulk-export downloads per admin session per day. "
+        "Defence against a stolen session being used to exfiltrate the dataset."),
 
     # ---- Repository backend (filesystem dev → DB production swap) ----
     SettingDefault("transcripts.repository", "local", "str", "transcripts",

@@ -197,7 +197,7 @@ def login(req: LoginRequest, response: Response,
     # enough. The same 401 envelope is used so an attacker can't tell
     # whether they got the password right (no oracle).
     from .totp import is_totp_required, verify_login_code
-    if is_totp_required() and not verify_login_code(req.totp):
+    if is_totp_required() and not verify_login_code(req.totp, actor="admin"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials",
@@ -390,6 +390,33 @@ def outbox_replay(
     return {"ok": True, "reset": reset, "actor": actor}
 
 
+@router.post(
+    "/outbox/reap",
+    dependencies=[Depends(admin_write_rate_limit), Depends(require_csrf)],
+)
+def outbox_reap(
+    older_than_days: int = 7,
+    actor: str = Depends(require_admin),
+) -> dict:
+    """Delete rows the relayer already marked processed.
+
+    Operationally, the outbox table only grows. The relayer doesn't
+    delete on publish (rows are kept for audit / lineage), but at
+    100M-record scale you don't want that table forever. This endpoint
+    reaps anything older than ``older_than_days`` (default 7) that the
+    relayer has already processed — stuck rows are untouched.
+
+    Also invoked automatically by a background task on a 24h cycle
+    when ``outbox.reap_processed_days`` is set; this endpoint is the
+    operator override for when the scheduled job hasn't run recently.
+    """
+    from api.outbox import prune_processed
+    days = max(1, min(older_than_days, 365))
+    deleted = prune_processed(older_than_seconds=days * 24 * 3600)
+    return {"ok": True, "deleted": deleted, "older_than_days": days,
+            "actor": actor}
+
+
 # ---------------------------------------------------------------------------
 # Snapshot — manually trigger a rebuild (off-path via Arq when available)
 # ---------------------------------------------------------------------------
@@ -452,12 +479,39 @@ def totp_verify(
     secret returned by ``/totp/setup``. On success, the secret persists
     and ``auth.admin_totp_required`` flips to ``true``."""
     from .totp import verify_setup_code
-    if not verify_setup_code(req.secret, req.code, actor=actor):
+    raw_codes = verify_setup_code(req.secret, req.code, actor=actor)
+    if raw_codes is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="TOTP code did not match. Try again or restart setup.",
         )
-    return {"ok": True, "totp_required": True, "actor": actor}
+    # Backup codes are returned EXACTLY ONCE — the UI must show them and
+    # the operator must write them down. After this response there is no
+    # API path that surfaces the raw values; only the hashes persist.
+    return {
+        "ok": True, "totp_required": True, "actor": actor,
+        "backup_codes": raw_codes,
+        "backup_codes_note": (
+            "Save these somewhere safe — they're the recovery path if "
+            "you lose your authenticator. Each code works exactly once."
+        ),
+    }
+
+
+@router.post(
+    "/totp/backup-codes/regenerate",
+    dependencies=[Depends(admin_write_rate_limit), Depends(require_csrf)],
+)
+def totp_regenerate_backup_codes(actor: str = Depends(require_admin)) -> dict:
+    """Mint a fresh batch of backup codes, invalidating every prior code.
+
+    Use when codes have been used up, exposed, or are unaccounted for.
+    Returns the raw codes once — the UI must show them; the audit log
+    records the rotation but not the values.
+    """
+    from .totp import regenerate_backup_codes
+    raw = regenerate_backup_codes(actor=actor)
+    return {"ok": True, "backup_codes": raw, "actor": actor}
 
 
 @router.post(
@@ -513,7 +567,37 @@ def gdpr_delete_customer(
 # ---------------------------------------------------------------------------
 # Bulk export — streaming NDJSON, bounded memory regardless of total size
 # ---------------------------------------------------------------------------
-@router.get("/meetings/export.ndjson")
+_export_quota: dict[tuple[str, str], int] = defaultdict(int)
+
+
+def _enforce_export_quota(actor: str) -> None:
+    """Per-actor per-UTC-day cap on bulk exports.
+
+    A stolen admin session is still bounded — they can't drain the
+    dataset in a loop. The cap is configurable via the ``export.max_per_day``
+    runtime setting; ``0`` disables the quota for emergencies.
+    """
+    import datetime as _dt
+    cap = int(get_runtime().get("export.max_per_day", 4) or 0)
+    if cap <= 0:
+        return
+    day = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
+    key = (actor, day)
+    if _export_quota[key] >= cap:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                f"Daily export quota exhausted ({cap}/day). "
+                f"Raise export.max_per_day or wait until UTC midnight."
+            ),
+        )
+    _export_quota[key] += 1
+
+
+@router.get(
+    "/meetings/export.ndjson",
+    dependencies=[Depends(admin_write_rate_limit)],
+)
 def export_meetings_ndjson(
     batch_size: int = 1000,
     actor: str = Depends(require_admin),
@@ -535,6 +619,7 @@ def export_meetings_ndjson(
 
     from src.repository import default_repository
 
+    _enforce_export_quota(actor)
     batch_size = max(1, min(batch_size, 10_000))
     repo = default_repository()
 

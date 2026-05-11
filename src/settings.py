@@ -52,6 +52,14 @@ class AdminSection(BaseModel):
     # bootstrap.toml is then never the production secret.
     session_secret: str = "replace-with-a-long-random-string-in-production"
     session_secret_path: str = ""
+    # HMAC key the snapshot writer/reader use to sign the manifest. Empty
+    # = unsigned (legacy / dev). In production this MUST be set to a
+    # file-mounted secret; an unsigned snapshot is a pickle-RCE primitive
+    # if the storage backend ever gets owned. NOT a runtime_setting on
+    # purpose — runtime_settings are mutable through the admin UI; a
+    # compromised admin must not be able to disable snapshot signing.
+    snapshot_signing_secret: str = ""
+    snapshot_signing_secret_path: str = ""
 
     def resolved_session_secret(self) -> str:
         """Read ``session_secret_path`` if set and readable; otherwise the
@@ -66,6 +74,20 @@ class AdminSection(BaseModel):
                 except OSError:  # pragma: no cover — permission error
                     pass
         return self.session_secret
+
+    def resolved_snapshot_signing_secret(self) -> str:
+        """Same file-mount-overrides-literal pattern as session_secret.
+        Returns empty string when unconfigured — snapshot code treats
+        empty as "signing disabled (legacy / dev)"."""
+        if self.snapshot_signing_secret_path:
+            from pathlib import Path as _P
+            p = _P(self.snapshot_signing_secret_path)
+            if p.exists():
+                try:
+                    return p.read_text().strip()
+                except OSError:  # pragma: no cover
+                    pass
+        return self.snapshot_signing_secret
 
 
 class PathsSection(BaseModel):
